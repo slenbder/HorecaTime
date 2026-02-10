@@ -1,0 +1,7 @@
+.env
+.venv
+*.pyc
+__pycache__/
+logs/
+*.log
+airy-deployment-485712-q4-6adaa621c636.json

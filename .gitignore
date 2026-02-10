@@ -1,7 +1,38 @@
-.env
-.venv
-*.pyc
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets (НЕ КОММИТИТЬ!)
+.env
+credentials.json
+*.json  # все JSON ключи Google
+
+# Database
+db/
+*.db
+*.sqlite3
+
+# Logs
 logs/
 *.log
-airy-deployment-485712-q4-6adaa621c636.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.bak

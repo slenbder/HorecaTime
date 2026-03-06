@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from gspread.exceptions import WorksheetNotFound
+
+
 import logging
 import time
 from pathlib import Path
@@ -28,7 +34,41 @@ COL_IN_STAFF_TABLE = 10  # "ДА", если одобрен и есть в таб
 COL_DEPARTMENT = 11      # Отдел (Зал/Бар/Кухня)
 COL_POSITION = 12        # Позиция (Runner/Официант/и т.д.)
 
+MONTH_NAMES_RU = {
+    1: "Январь",
+    2: "Февраль",
+    3: "Март",
+    4: "Апрель",
+    5: "Май",
+    6: "Июнь",
+    7: "Июль",
+    8: "Август",
+    9: "Сентябрь",
+    10: "Октябрь",
+    11: "Ноябрь",
+    12: "Декабрь",
+}
 
+POSITION_TO_SECTION = {
+    "Су-шеф": "Руководящий состав",
+    "Горячий цех": "Горячий цех",
+    "Холодный цех": "Холодный цех",
+    "Кондитерский цех": "Кондитерский цех",
+    "Заготовочный цех": "Заготовочный цех",
+    "Коренной цех": "Коренной цех",
+    "МОП": "МОП",
+    "Бармен": "Бармены",
+    "Барбэк": "Барбэки",
+    "Официант": "Официанты",
+    "Раннер": "Раннеры",
+    "Хостесс": "Хостесс",
+}
+
+DEPARTMENT_TO_HEADER = {
+    "Кухня": "КУХНЯ",
+    "Бар": "БАР",
+    "Зал": "ЗАЛ",
+}
 
 class GoogleSheetsClient:
     def __init__(self) -> None:
@@ -171,6 +211,34 @@ class GoogleSheetsClient:
         if not data:
             return False
         return str(data.get("in_staff_table", "")).strip().upper() == "ДА"
+    
+    def is_user_fully_authorized(self, telegram_id: int) -> bool:
+        if not self.is_user_approved(telegram_id):
+            return False
+
+        try:
+            month_ws = self._get_current_month_worksheet()
+        except Exception as e:
+            logger.warning(
+                "Не удалось получить текущий лист месяца при проверке полной авторизации %s: %s",
+                telegram_id,
+                e,
+            )
+            return False
+
+        all_rows = month_ws.get_all_values()
+        if not all_rows:
+            return False
+
+        all_data = self._normalize_first_three_cols(all_rows)
+
+        for row in all_data[1:]:
+            existing_tg_id = row[1]
+            if existing_tg_id == str(telegram_id):
+                return True
+
+        return False
+
 
     def mark_user_approved(self, row_index: int) -> None:
         """
@@ -184,3 +252,137 @@ class GoogleSheetsClient:
         Alias для get_user_by_telegram_id (для читаемости кода).
         """
         return self.get_user_by_telegram_id(telegram_id)
+
+    def _get_month_sheet_name(self) -> str:
+        now = datetime.now(ZoneInfo("Europe/Moscow"))
+        return f"{MONTH_NAMES_RU[now.month]} {now.year}"
+
+    def _get_current_month_worksheet(self):
+        sheet_name = self._get_month_sheet_name()
+        try:
+            return self._spreadsheet.worksheet(sheet_name)
+        except WorksheetNotFound as exc:
+            raise ValueError(f"Лист текущего месяца '{sheet_name}' не найден") from exc
+
+    @staticmethod
+    def _normalize_first_three_cols(rows: List[List[Any]]) -> List[List[str]]:
+        normalized: List[List[str]] = []
+        for row in rows:
+            padded = (row + ["", "", ""])[:3]
+            normalized.append([str(padded[0]).strip(), str(padded[1]).strip(), str(padded[2]).strip()])
+        return normalized
+
+    @staticmethod
+    def _find_insert_row_for_section(all_data: List[List[str]], section_header: str) -> int:
+        section_header_row = -1
+
+        for i, row in enumerate(all_data, start=1):
+            a, b, c = row
+            if a == "" and b == "" and c == section_header:
+                section_header_row = i
+                break
+
+        if section_header_row == -1:
+            return -1
+
+        insert_after_row = section_header_row
+
+        for r in range(section_header_row, len(all_data)):
+            a = all_data[r][0]
+            b = all_data[r][1]
+
+            if a == "" and b == "":
+                break
+
+            insert_after_row = r + 1
+
+        return insert_after_row
+
+    @staticmethod
+    def _find_end_of_department_block(all_data: List[List[str]], department_header: str) -> int:
+        if not department_header:
+            return -1
+
+        dept_header_row = -1
+        for i, row in enumerate(all_data, start=1):
+            a, b, c = row
+            if a == "" and b == "" and c == department_header:
+                dept_header_row = i
+                break
+
+        if dept_header_row == -1:
+            return -1
+
+        all_dept_headers = set(DEPARTMENT_TO_HEADER.values())
+        last_employee_row = dept_header_row
+
+        for r in range(dept_header_row, len(all_data)):
+            a, b, c = all_data[r]
+
+            if a == "" and b == "" and c in all_dept_headers and c != department_header:
+                break
+
+            if a != "" or b != "":
+                last_employee_row = r + 1
+
+        return last_employee_row
+
+    def ensure_user_in_current_month_hours(self, telegram_id: int) -> bool:
+        user_info = self.get_user_by_telegram_id(telegram_id)
+        if not user_info:
+            raise ValueError(f"Пользователь {telegram_id} не найден в Техлисте")
+
+        month_ws = self._get_current_month_worksheet()
+
+        full_name = str(user_info.get("fio_from_user", "")).strip()
+        department = str(user_info.get("department", "")).strip()
+        position = str(user_info.get("position", "")).strip()
+
+        all_rows = month_ws.get_all_values()
+        if not all_rows:
+            raise ValueError(f"Лист '{month_ws.title}' пуст")
+
+        all_data = self._normalize_first_three_cols(all_rows)
+
+        for row in all_data[1:]:
+            existing_tg_id = row[1]
+            if existing_tg_id == str(telegram_id):
+                logger.info(
+                    "Пользователь %s уже есть в листе '%s', повторная вставка не требуется",
+                    telegram_id,
+                    month_ws.title,
+                )
+                return False
+
+        last_row_month = len(all_data)
+        target_section = POSITION_TO_SECTION.get(position)
+        department_header = DEPARTMENT_TO_HEADER.get(department)
+
+        insert_after_row = -1
+
+        if target_section:
+            insert_after_row = self._find_insert_row_for_section(all_data, target_section)
+
+        if not target_section or insert_after_row == -1:
+            insert_after_row = self._find_end_of_department_block(all_data, department_header)
+
+        if insert_after_row == -1:
+            insert_after_row = last_row_month
+
+        new_row = insert_after_row + 1
+
+        month_ws.insert_row(
+            [full_name, str(telegram_id), position],
+            index=new_row,
+            value_input_option="USER_ENTERED",
+        )
+
+        logger.info(
+            "Пользователь %s добавлен в лист '%s' в строку %s (department=%s, position=%s)",
+            telegram_id,
+            month_ws.title,
+            new_row,
+            department,
+            position,
+        )
+        return True

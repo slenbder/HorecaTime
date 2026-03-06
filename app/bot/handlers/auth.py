@@ -59,7 +59,7 @@ async def cmd_start(message: Message, state: FSMContext):
     # 1. Проверяем, есть ли пользователь и одобрен ли он
     try:
         logger.info(f"Проверка авторизации пользователя {tg_id}")
-        is_approved = sheets_client.is_user_approved(tg_id)
+        is_approved = sheets_client.is_user_fully_authorized(tg_id)
         logger.info(f"Результат проверки авторизации: {is_approved}")
 
         if is_approved:
@@ -274,9 +274,36 @@ async def process_approve(callback: CallbackQuery):
         department = user_info.get("department", "")
         position = user_info.get("position", "")
 
-        # Одобряем пользователя в таблице
+                # Одобряем пользователя в таблице
         sheets_client.mark_user_approved(row_index)
-        logger.info(f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})")
+        logger.info(
+            f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
+        )
+
+        # Сразу добавляем пользователя в график текущего месяца
+        try:
+            inserted = sheets_client.ensure_user_in_current_month_hours(user_tg_id)
+            logger.info(
+                "Синхронизация в график завершена для %s, inserted=%s",
+                user_tg_id,
+                inserted,
+            )
+        except Exception as sync_error:
+            logger.exception(
+                "Пользователь %s помечен как одобренный, но не был добавлен в график: %s",
+                user_tg_id,
+                sync_error,
+            )
+
+            await callback.message.edit_text(
+                text=callback.message.text + "\n\n⚠️ ОДОБРЕНО, НО НЕ ДОБАВЛЕН В ГРАФИК",
+                reply_markup=None,
+            )
+            await callback.answer(
+                "В Техлисте проставлено ДА, но добавить пользователя в график не удалось. Проверь лист месяца и данные в Техлисте.",
+                show_alert=True,
+            )
+            return
 
         # Записываем в кеш ролей
         RolesCacheService.update_user_role(
@@ -301,6 +328,7 @@ async def process_approve(callback: CallbackQuery):
             text=callback.message.text + "\n\n✅ ОДОБРЕНО",
             reply_markup=None
         )
+
         await callback.answer("Пользователь одобрен!")
 
     except Exception as e:

@@ -32,6 +32,19 @@ ADMIN_HALL = ADMIN_HALL_IDS
 ADMIN_BAR = ADMIN_BAR_IDS
 ADMIN_KITCHEN = ADMIN_KITCHEN_IDS
 
+VALID_POSITIONS: dict[str, list[str]] = {
+    "Зал":   ["Официант", "Раннер", "Хостесс"],
+    "Бар":   ["Бармен", "Барбэк"],
+    "Кухня": ["Су-шеф", "Горячий цех", "Холодный цех",
+               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "МОП"],
+}
+
+POSITION_KEYBOARDS = {
+    "Зал":   hall_positions_keyboard,
+    "Бар":   bar_positions_keyboard,
+    "Кухня": kitchen_positions_keyboard,
+}
+
 logger.info(f"Загружены SUPERADMINS: {SUPERADMINS}")
 logger.info(f"Загружены ADMIN_HALL: {ADMIN_HALL}")
 logger.info(f"Загружены ADMIN_BAR: {ADMIN_BAR}")
@@ -124,16 +137,28 @@ async def process_department_invalid(message: Message):
 async def process_position(message: Message, state: FSMContext):
     position = message.text
     data = await state.get_data()
-    department = data.get("department")
+    department = data.get("department", "")
+
+    # ↓ ДОБАВЛЕНО: валидация позиции
+    allowed = VALID_POSITIONS.get(department, [])
+    if position not in allowed:
+        logger.warning(
+            f"Пользователь {message.from_user.id} ввёл недопустимую позицию: "
+            f"'{position}' для отдела '{department}'"
+        )
+        kb_func = POSITION_KEYBOARDS.get(department, department_keyboard)
+        await message.answer(
+            "Пожалуйста, выбери позицию из предложенных кнопок:",
+            reply_markup=kb_func(),
+        )
+        return
+    # ↑ конец валидации
 
     logger.info(f"Пользователь {message.from_user.id} выбрал позицию: {position}")
     await state.update_data(position=position)
 
-    await message.answer(
-        "Отправь, пожалуйста, своё имя и фамилию (как в таблице):",
-    )
+    await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
-
 
 @auth_router.message(AuthStates.entering_fio)
 async def process_fio(message: Message, state: FSMContext):

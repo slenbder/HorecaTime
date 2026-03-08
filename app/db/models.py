@@ -24,6 +24,16 @@ def init_database():
                 created_at TEXT NOT NULL
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS fsm_storage (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                bot_id  INTEGER NOT NULL,
+                state   TEXT,
+                data    TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (chat_id, user_id, bot_id)
+            )
+        ''')
         conn.commit()
     logger.info("База данных успешно инициализирована")
 

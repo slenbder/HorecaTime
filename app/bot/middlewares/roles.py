@@ -5,6 +5,8 @@ from aiogram.types import TelegramObject, Message, CallbackQuery
 
 from app.services.roles_cache import RolesCacheService
 
+from config import SUPERADMIN_IDS, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +17,6 @@ class RoleMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        from app.bot.handlers.auth import SUPERADMINS, ADMIN_HALL, ADMIN_BAR, ADMIN_KITCHEN
 
         telegram_id = None
         if isinstance(event, Message):
@@ -35,13 +36,13 @@ class RoleMiddleware(BaseMiddleware):
             user_data = cached_data
             logger.debug(f"Пользователь {telegram_id} найден в кеше: {role}")
         else:
-            if telegram_id in SUPERADMINS:
+            if telegram_id in SUPERADMIN_IDS:
                 role = "superadmin"
-            elif telegram_id in ADMIN_HALL:
+            elif telegram_id in ADMIN_HALL_IDS:
                 role = "admin_hall"
-            elif telegram_id in ADMIN_BAR:
+            elif telegram_id in ADMIN_BAR_IDS:
                 role = "admin_bar"
-            elif telegram_id in ADMIN_KITCHEN:
+            elif telegram_id in ADMIN_KITCHEN_IDS:
                 role = "admin_kitchen"
 
         data["user_role"] = role

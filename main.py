@@ -5,7 +5,7 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
+from app.db.fsm_storage import SQLiteStorage
 
 from config import BOT_TOKEN
 from app.logging_config import setup_logging
@@ -31,7 +31,7 @@ async def main():
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
-    dp = Dispatcher(storage=MemoryStorage())
+    dp = Dispatcher(storage=SQLiteStorage(db_path="db/bot.db"))
 
     # Подключаем middleware
     dp.message.middleware(RoleMiddleware())

@@ -93,7 +93,21 @@ class GoogleSheetsClient:
     # --- Техлист ---
 
     def _get_techlist_worksheet(self):
-        return self._spreadsheet.worksheet(TECHLIST_SHEET_NAME)
+        try:
+            raise Exception("Тест реконнекта")
+            return self._spreadsheet.worksheet(TECHLIST_SHEET_NAME)
+        except Exception as e:
+            logger.warning(f"Ошибка получения листа, пробуем переподключиться: {e}")
+            self._reconnect()
+            return self._spreadsheet.worksheet(TECHLIST_SHEET_NAME)
+    
+    def _reconnect(self) -> None:
+        """Пересоздаёт клиент и подключение к таблице."""
+        logger.warning("Переподключение к Google Sheets...")
+        self._client = self._create_client()
+        self._spreadsheet = self._client.open_by_key(SPREADSHEET_ID)
+        logger.info("Переподключение к Google Sheets выполнено успешно")
+
 
     def get_user_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -263,6 +277,13 @@ class GoogleSheetsClient:
             return self._spreadsheet.worksheet(sheet_name)
         except WorksheetNotFound as exc:
             raise ValueError(f"Лист текущего месяца '{sheet_name}' не найден") from exc
+        except Exception as e:
+            logger.warning(f"Ошибка получения листа месяца, пробуем переподключиться: {e}")
+            self._reconnect()
+            try:
+                return self._spreadsheet.worksheet(sheet_name)
+            except WorksheetNotFound as exc:
+                raise ValueError(f"Лист текущего месяца '{sheet_name}' не найден") from exc
 
     @staticmethod
     def _normalize_first_three_cols(rows: List[List[Any]]) -> List[List[str]]:

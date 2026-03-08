@@ -94,7 +94,6 @@ class GoogleSheetsClient:
 
     def _get_techlist_worksheet(self):
         try:
-            raise Exception("Тест реконнекта")
             return self._spreadsheet.worksheet(TECHLIST_SHEET_NAME)
         except Exception as e:
             logger.warning(f"Ошибка получения листа, пробуем переподключиться: {e}")

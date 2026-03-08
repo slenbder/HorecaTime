@@ -1,5 +1,4 @@
 import logging
-from typing import List
 
 from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
@@ -163,6 +162,15 @@ async def process_position(message: Message, state: FSMContext):
 @auth_router.message(AuthStates.entering_fio)
 async def process_fio(message: Message, state: FSMContext):
     fio = message.text.strip()
+
+    if not fio or len(fio) < 2 or len(fio) > 100:
+        logger.warning(
+            "Пользователь %s ввёл некорректное ФИО (длина %s): '%s'",
+            message.from_user.id, len(fio), fio[:50]
+        )
+        await message.answer("Пожалуйста, введи имя и фамилию корректно (от 2 до 100 символов).")
+        return
+
     data = await state.get_data()
     department = data.get("department")
     position = data.get("position")
@@ -183,12 +191,12 @@ async def process_fio(message: Message, state: FSMContext):
     try:
         logger.info(f"Запись заявки в Техлист для пользователя {tg_id}")
         row_index = sheets_client.add_or_update_pending_user(
-        telegram_id=tg_id,
-        nickname=nickname,
-        tg_name=tg_name,
-        fio_from_user=fio,
-        department=department,
-        position=position,
+            telegram_id=tg_id,
+            nickname=nickname,
+            tg_name=tg_name,
+            fio_from_user=fio,
+            department=department,
+            position=position,
         )
 
         logger.info(f"Заявка успешно записана в строку {row_index}")
@@ -215,16 +223,16 @@ async def process_fio(message: Message, state: FSMContext):
 
     # Inline-кнопки для одобрения/отклонения (передаём только ID и строку)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(
-            text="✅ Одобрить",
-            callback_data=f"approve_{tg_id}_{row_index}"
-        ),
-        InlineKeyboardButton(
-            text="❌ Отклонить",
-            callback_data=f"reject_{tg_id}_{row_index}"
-        ),
-    ]
+        [
+            InlineKeyboardButton(
+                text="✅ Одобрить",
+                callback_data=f"approve_{tg_id}_{row_index}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"reject_{tg_id}_{row_index}"
+            ),
+        ]
     ])
 
 
@@ -280,10 +288,19 @@ async def process_fio(message: Message, state: FSMContext):
 async def process_approve(callback: CallbackQuery):
     """Обработка нажатия кнопки 'Одобрить'"""
     try:
-        # Парсим callback_ approve_TELEGRAM_ID_ROW_INDEX
+        # Парсим callback_data: approve_TELEGRAM_ID_ROW_INDEX
         parts = callback.data.split("_")
-        user_tg_id = int(parts[1])
-        row_index = int(parts[2])
+        if len(parts) < 3:
+            logger.error("Некорректный формат callback_data при одобрении: %s", callback.data)
+            await callback.answer("Некорректный формат данных", show_alert=True)
+            return
+        try:
+            user_tg_id = int(parts[1])
+            row_index = int(parts[2])
+        except ValueError:
+            logger.error("Не удалось распарсить ID из callback_data: %s", callback.data)
+            await callback.answer("Некорректные данные в запросе", show_alert=True)
+            return
 
         if sheets_client is None:
             await callback.answer("Ошибка подключения к таблице", show_alert=True)
@@ -299,7 +316,7 @@ async def process_approve(callback: CallbackQuery):
         department = user_info.get("department", "")
         position = user_info.get("position", "")
 
-                # Одобряем пользователя в таблице
+        # Одобряем пользователя в таблице
         sheets_client.mark_user_approved(row_index)
         logger.info(
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
@@ -366,10 +383,18 @@ async def process_approve(callback: CallbackQuery):
 async def process_reject(callback: CallbackQuery):
     """Обработка нажатия кнопки 'Отклонить'"""
     try:
-        # Парсим callback_data
+        # Парсим callback_data: reject_TELEGRAM_ID_ROW_INDEX
         parts = callback.data.split("_")
-        user_tg_id = int(parts[1])
-        row_index = int(parts[2])
+        if len(parts) < 3:
+            logger.error("Некорректный формат callback_data при отклонении: %s", callback.data)
+            await callback.answer("Некорректный формат данных", show_alert=True)
+            return
+        try:
+            user_tg_id = int(parts[1])
+        except ValueError:
+            logger.error("Не удалось распарсить ID из callback_data: %s", callback.data)
+            await callback.answer("Некорректные данные в запросе", show_alert=True)
+            return
 
         logger.info(f"Админ {callback.from_user.id} отклонил пользователя {user_tg_id}")
 

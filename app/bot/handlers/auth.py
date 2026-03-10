@@ -20,6 +20,7 @@ from config import (
     ADMIN_HALL_IDS,
     ADMIN_BAR_IDS,
     ADMIN_KITCHEN_IDS,
+    DEVELOPER_ID,
 )
 
 auth_router = Router()
@@ -32,7 +33,7 @@ ADMIN_BAR = ADMIN_BAR_IDS
 ADMIN_KITCHEN = ADMIN_KITCHEN_IDS
 
 VALID_POSITIONS: dict[str, list[str]] = {
-    "Зал":   ["Официант", "Раннер", "Хостесс"],
+    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
     "Кухня": ["Су-шеф", "Горячий цех", "Холодный цех",
                "Кондитерский цех", "Заготовочный цех", "Коренной цех", "МОП"],

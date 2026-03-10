@@ -1,4 +1,4 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def department_keyboard() -> ReplyKeyboardMarkup:
@@ -16,6 +16,7 @@ def department_keyboard() -> ReplyKeyboardMarkup:
 def hall_positions_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="Менеджер")],
             [KeyboardButton(text="Официант")],
             [KeyboardButton(text="Раннер")],
             [KeyboardButton(text="Хостесс")],
@@ -50,3 +51,10 @@ def kitchen_positions_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         one_time_keyboard=True,
     )
+
+
+def main_menu_keyboard(role: str) -> InlineKeyboardMarkup:
+    buttons = []
+    if role != "developer":
+        buttons.append([InlineKeyboardButton(text="✉️ Написать разработчику", callback_data="contact_dev")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)

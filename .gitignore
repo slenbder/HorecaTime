@@ -9,6 +9,7 @@ venv/
 .env
 credentials.json
 *.json
+CLAUDE.md
 
 # Database
 db/

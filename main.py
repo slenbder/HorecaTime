@@ -21,7 +21,11 @@ async def main():
     os.makedirs("db", exist_ok=True)
     
     # Инициализируем базу данных ПЕРЕД импортом хендлеров
-    init_database()
+    try:
+        init_database()
+    except Exception as e:
+        logger.critical("Не удалось инициализировать базу данных: %s", e)
+        raise
 
     # Импортируем роутеры и middleware ПОСЛЕ инициализации БД
     from app.bot.handlers.auth import auth_router
@@ -40,11 +44,12 @@ async def main():
     # Регистрируем роутеры
     dp.include_router(auth_router)
 
+    logger.info("Бот HorecaTime запущен, начинаю поллинг")
     try:
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
-        logger.info("Бот остановлен")
+        logger.info("Бот HorecaTime остановлен")
 
 
 if __name__ == "__main__":

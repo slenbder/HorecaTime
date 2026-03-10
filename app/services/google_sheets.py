@@ -1,24 +1,17 @@
-from __future__ import annotations
-
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
-from gspread.exceptions import WorksheetNotFound
-
-
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+from zoneinfo import ZoneInfo
 
 import gspread
+from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
-from config import GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID
+from config import GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, TECH_SHEET_NAME
 
 logger = logging.getLogger("google_api")
-
-TECHLIST_SHEET_NAME = "Техлист"
 
 # Индексы столбцов в Техлисте (1-based)
 COL_TELEGRAM_ID = 1
@@ -83,22 +76,24 @@ class GoogleSheetsClient:
         ]
         creds_path = Path(GOOGLE_CREDENTIALS_PATH)
         if not creds_path.exists():
+            logger.error("Файл service account не найден: %s", creds_path)
             raise FileNotFoundError(f"Service account JSON not found: {creds_path}")
 
         credentials = ServiceAccountCredentials.from_json_keyfile_name(
             str(creds_path), scopes
         )
+        logger.info("Google Sheets клиент создан, credentials: %s", creds_path)
         return gspread.authorize(credentials)
 
     # --- Техлист ---
 
     def _get_techlist_worksheet(self):
         try:
-            return self._spreadsheet.worksheet(TECHLIST_SHEET_NAME)
+            return self._spreadsheet.worksheet(TECH_SHEET_NAME)
         except Exception as e:
-            logger.warning(f"Ошибка получения листа, пробуем переподключиться: {e}")
+            logger.warning("Ошибка получения листа '%s', пробуем переподключиться: %s", TECH_SHEET_NAME, e)
             self._reconnect()
-            return self._spreadsheet.worksheet(TECHLIST_SHEET_NAME)
+            return self._spreadsheet.worksheet(TECH_SHEET_NAME)
     
     def _reconnect(self) -> None:
         """Пересоздаёт клиент и подключение к таблице."""
@@ -112,6 +107,7 @@ class GoogleSheetsClient:
         """
         Поиск пользователя в Техлисте по Telegram ID.
         """
+        logger.debug("Поиск пользователя %s в Техлисте", telegram_id)
         ws = self._get_techlist_worksheet()
         all_values: List[List[Any]] = ws.get_all_values()
 
@@ -166,8 +162,8 @@ class GoogleSheetsClient:
         nickname: str,
         tg_name: str,
         fio_from_user: str,
-        department: str = "",       # Новое
-        position: str = "",         # Новое
+        department: str = "",
+        position: str = "",
     ) -> int:
         """
         Создаёт или обновляет запись пользователя в Техлисте (заявка на доступ).
@@ -183,8 +179,8 @@ class GoogleSheetsClient:
             ws.update_cell(row_idx, COL_TG_NAME, tg_name)
             ws.update_cell(row_idx, COL_FIO_FROM_USER, fio_from_user)
             ws.update_cell(row_idx, COL_LAST_SEEN_AT, str(now_unix))
-            ws.update_cell(row_idx, COL_DEPARTMENT, department)      # Новое
-            ws.update_cell(row_idx, COL_POSITION, position)          # Новое
+            ws.update_cell(row_idx, COL_DEPARTMENT, department)
+            ws.update_cell(row_idx, COL_POSITION, position)
             logger.info(
                 "Обновлена заявка пользователя %s в строке %s",
                 telegram_id,
@@ -194,18 +190,18 @@ class GoogleSheetsClient:
 
         next_row = len(ws.get_all_values()) + 1
         values = [
-            str(telegram_id),  # id пользователя
+            str(telegram_id),  # Telegram ID
             nickname,          # Ник
             tg_name,           # Имя (TG)
             "",                # Сообщение
             str(now_unix),     # Время регистрации (UNIX)
             str(now_unix),     # Время крайнего обращения
             "",                # Id сообщения
-            fio_from_user,     # Имя и Фамилия отправленное пользователем
-            "",                # Номер этапа взаимодействия
+            fio_from_user,     # ФИО пользователя
+            "",                # Этап взаимодействия
             "",                # Наличие в таблице сотрудников
-            department,        # Отдел (НОВОЕ)
-            position,          # Позиция (НОВОЕ)
+            department,        # Отдел
+            position,          # Позиция
         ]
 
         ws.update(f"A{next_row}:L{next_row}", [values])
@@ -226,7 +222,10 @@ class GoogleSheetsClient:
         return str(data.get("in_staff_table", "")).strip().upper() == "ДА"
     
     def is_user_fully_authorized(self, telegram_id: int) -> bool:
+        logger.debug("Проверка полной авторизации пользователя %s", telegram_id)
+
         if not self.is_user_approved(telegram_id):
+            logger.debug("Пользователь %s не одобрен в Техлисте", telegram_id)
             return False
 
         try:
@@ -241,6 +240,7 @@ class GoogleSheetsClient:
 
         all_rows = month_ws.get_all_values()
         if not all_rows:
+            logger.warning("Лист месяца '%s' пуст", month_ws.title)
             return False
 
         all_data = self._normalize_first_three_cols(all_rows)
@@ -248,8 +248,10 @@ class GoogleSheetsClient:
         for row in all_data[1:]:
             existing_tg_id = row[1]
             if existing_tg_id == str(telegram_id):
+                logger.debug("Пользователь %s найден в листе месяца '%s'", telegram_id, month_ws.title)
                 return True
 
+        logger.debug("Пользователь %s не найден в листе месяца '%s'", telegram_id, month_ws.title)
         return False
 
 
@@ -260,6 +262,7 @@ class GoogleSheetsClient:
         ws = self._get_techlist_worksheet()
         ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
         logger.info("Пользователь в строке %s помечен как одобренный", row_index)
+
     def get_user_from_techlist(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         """
         Alias для get_user_by_telegram_id (для читаемости кода).
@@ -348,8 +351,10 @@ class GoogleSheetsClient:
         return last_employee_row
 
     def ensure_user_in_current_month_hours(self, telegram_id: int) -> bool:
+        logger.info("Добавление пользователя %s в график текущего месяца", telegram_id)
         user_info = self.get_user_by_telegram_id(telegram_id)
         if not user_info:
+            logger.error("Пользователь %s не найден в Техлисте при добавлении в график", telegram_id)
             raise ValueError(f"Пользователь {telegram_id} не найден в Техлисте")
 
         month_ws = self._get_current_month_worksheet()
@@ -378,6 +383,14 @@ class GoogleSheetsClient:
         target_section = POSITION_TO_SECTION.get(position)
         department_header = DEPARTMENT_TO_HEADER.get(department)
 
+        if not target_section:
+            logger.warning(
+                "Позиция '%s' не найдена в POSITION_TO_SECTION для пользователя %s, "
+                "вставка по концу блока отдела",
+                position,
+                telegram_id,
+            )
+
         insert_after_row = -1
 
         if target_section:
@@ -387,6 +400,11 @@ class GoogleSheetsClient:
             insert_after_row = self._find_end_of_department_block(all_data, department_header)
 
         if insert_after_row == -1:
+            logger.warning(
+                "Не найден блок отдела '%s' для пользователя %s, вставка в конец листа",
+                department_header,
+                telegram_id,
+            )
             insert_after_row = last_row_month
 
         new_row = insert_after_row + 1

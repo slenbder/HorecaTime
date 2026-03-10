@@ -1,6 +1,9 @@
 import logging
+import sqlite3
 from typing import Optional, Dict
+
 from app.db.models import get_user, save_user
+from config import DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +40,6 @@ class RolesCacheService:
         Очищает весь кеш (удаляет всех пользователей из БД).
         Используется при смене месяца или для тестирования.
         """
-        import sqlite3
-        from config import DB_PATH
-        
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM users')

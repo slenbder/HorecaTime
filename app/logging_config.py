@@ -45,7 +45,9 @@ def setup_logging() -> None:
     root_logger.addHandler(app_handler)
     root_logger.addHandler(errors_handler)
 
-    logging.getLogger("google_api").setLevel(logging.INFO)
-    logging.getLogger("google_api").handlers.clear()
-    logging.getLogger("google_api").addHandler(google_handler)
-    logging.getLogger("google_api").addHandler(console_handler)  # И сюда
+    google_api_logger = logging.getLogger("google_api")
+    google_api_logger.setLevel(logging.INFO)
+    google_api_logger.handlers.clear()
+    google_api_logger.addHandler(google_handler)
+    google_api_logger.addHandler(console_handler)
+    google_api_logger.propagate = False  # Не дублировать в root (app.log)

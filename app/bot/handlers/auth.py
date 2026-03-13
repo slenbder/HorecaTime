@@ -11,10 +11,13 @@ from aiogram.types import (
 
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.keyboards.common import (
+    role_type_keyboard,
+    admin_dept_keyboard,
     department_keyboard,
     hall_positions_keyboard,
     bar_positions_keyboard,
     kitchen_positions_keyboard,
+    main_menu_keyboard,
 )
 
 from app.bot.commands import set_commands_for_role
@@ -79,6 +82,21 @@ async def cmd_start(message: Message, state: FSMContext):
     tg_id = message.from_user.id
     logger.info(f"Получена команда /start от пользователя {tg_id}")
 
+    # Superadmin / Developer: прямо в главное меню, без проверки таблицы
+    if tg_id == DEVELOPER_ID:
+        privileged_role = "developer"
+    elif tg_id in SUPERADMIN_IDS:
+        privileged_role = "superadmin"
+    else:
+        privileged_role = None
+
+    if privileged_role:
+        await state.clear()
+        await set_commands_for_role(message.bot, tg_id, privileged_role)
+        await message.answer("👋 Добро пожаловать!", reply_markup=main_menu_keyboard(privileged_role))
+        logger.info("cmd_start: %s вошёл как %s", tg_id, privileged_role)
+        return
+
     if sheets_client is None:
         await message.answer("Ошибка подключения к таблице. Обратись к администратору.")
         logger.error("sheets_client не инициализирован")
@@ -102,11 +120,10 @@ async def cmd_start(message: Message, state: FSMContext):
             await state.clear()
             await _clear_commands(message.bot, tg_id)
             await message.answer(
-                "Привет! Давай настроим твою авторизацию.\n"
-                "Выбери, к какому отделу ты относишься:",
-                reply_markup=department_keyboard(),
+                "Привет! Давай настроим твою авторизацию.\n\nКем ты являешься?",
+                reply_markup=role_type_keyboard(),
             )
-            await state.set_state(AuthStates.choosing_department)
+            await state.set_state(AuthStates.waiting_role_type)
             return
 
     # 1. Проверяем, есть ли пользователь и одобрен ли он
@@ -136,11 +153,51 @@ async def cmd_start(message: Message, state: FSMContext):
     logger.info(f"Запуск сценария регистрации для пользователя {tg_id}")
     await _clear_commands(message.bot, tg_id)
     await message.answer(
-        "Привет! Давай настроим твою авторизацию.\n"
-        "Выбери, к какому отделу ты относишься:",
-        reply_markup=department_keyboard(),
+        "Привет! Давай настроим твою авторизацию.\n\nКем ты являешься?",
+        reply_markup=role_type_keyboard(),
     )
+    await state.set_state(AuthStates.waiting_role_type)
+
+
+@auth_router.message(AuthStates.waiting_role_type, F.text == "👤 Сотрудник")
+async def process_role_type_user(message: Message, state: FSMContext):
+    await state.update_data(registration_type="user")
+    logger.info("Пользователь %s выбрал тип регистрации: Сотрудник", message.from_user.id)
+    await message.answer("Выбери, к какому отделу ты относишься:", reply_markup=department_keyboard())
     await state.set_state(AuthStates.choosing_department)
+
+
+@auth_router.message(AuthStates.waiting_role_type, F.text == "🔑 Администратор отдела")
+async def process_role_type_admin(message: Message, state: FSMContext):
+    await state.update_data(registration_type="admin")
+    logger.info("Пользователь %s выбрал тип регистрации: Администратор", message.from_user.id)
+    await message.answer("Выбери отдел, которым ты управляешь:", reply_markup=admin_dept_keyboard())
+    await state.set_state(AuthStates.waiting_admin_dept)
+
+
+@auth_router.message(AuthStates.waiting_role_type)
+async def process_role_type_invalid(message: Message):
+    await message.answer(
+        "Пожалуйста, выбери вариант, используя кнопки ниже.",
+        reply_markup=role_type_keyboard(),
+    )
+
+
+@auth_router.message(AuthStates.waiting_admin_dept, F.text.in_(["Зал", "Бар", "Кухня"]))
+async def process_admin_dept(message: Message, state: FSMContext):
+    dept = message.text
+    logger.info("Пользователь %s (admin) выбрал отдел: %s", message.from_user.id, dept)
+    await state.update_data(department=dept)
+    await message.answer("Введи своё Фамилию и Имя:")
+    await state.set_state(AuthStates.entering_fio)
+
+
+@auth_router.message(AuthStates.waiting_admin_dept)
+async def process_admin_dept_invalid(message: Message):
+    await message.answer(
+        "Пожалуйста, выбери отдел, используя кнопки ниже.",
+        reply_markup=admin_dept_keyboard(),
+    )
 
 
 @auth_router.message(AuthStates.choosing_department, F.text.in_(["Зал", "Бар", "Кухня"]))
@@ -219,13 +276,55 @@ async def process_fio(message: Message, state: FSMContext):
     data = await state.get_data()
     department = data.get("department")
     position = data.get("position")
+    registration_type = data.get("registration_type", "user")
 
     tg_id = message.from_user.id
     nickname = message.from_user.username or ""
     tg_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
 
-    logger.info(f"Пользователь {tg_id} ввёл ФИО: {fio}, отдел: {department}, позиция: {position}")
+    logger.info(
+        "Пользователь %s ввёл ФИО: %s, отдел: %s, тип: %s",
+        tg_id, fio, department, registration_type,
+    )
 
+    # --- Ветка: заявка администратора ---
+    if registration_type == "admin":
+        admin_request_text = (
+            f"🔑 Заявка администратора\n\n"
+            f"👤 {fio}\n"
+            f"🏢 Отдел: {department}\n\n"
+            f"ID: {tg_id}"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Одобрить",
+                    callback_data=f"approve_admin:{tg_id}:{department}",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отклонить",
+                    callback_data=f"reject_admin:{tg_id}",
+                ),
+            ]
+        ])
+
+        logger.info("Отправка заявки администратора суперадминам: %s", SUPERADMINS)
+        for sa_id in SUPERADMINS:
+            try:
+                await message.bot.send_message(chat_id=sa_id, text=admin_request_text, reply_markup=keyboard)
+                logger.info("Заявка администратора отправлена суперадмину %s", sa_id)
+            except Exception as e:
+                logger.exception("Не удалось отправить заявку администратора суперадмину %s: %s", sa_id, e)
+
+        await message.answer(
+            "Спасибо! Твоя заявка на роль администратора отправлена.\n"
+            "После одобрения ты получишь доступ к панели управления отделом."
+        )
+        logger.info("Заявка администратора от пользователя %s завершена", tg_id)
+        await state.clear()
+        return
+
+    # --- Ветка: заявка сотрудника (существующая логика) ---
     if sheets_client is None:
         await message.answer("Ошибка подключения к таблице. Обратись к администратору.")
         logger.error("sheets_client не инициализирован при записи заявки")
@@ -328,6 +427,94 @@ async def process_fio(message: Message, state: FSMContext):
 
 
 # --- Обработчики inline-кнопок ---
+
+DEPT_TO_ADMIN_ROLE = {
+    "Зал": "admin_hall",
+    "Бар": "admin_bar",
+    "Кухня": "admin_kitchen",
+}
+
+
+@auth_router.callback_query(F.data.startswith("approve_admin:"))
+async def process_approve_admin(callback: CallbackQuery):
+    """Одобрение заявки администратора суперадмином."""
+    try:
+        parts = callback.data.split(":")
+        if len(parts) < 3:
+            logger.error("Некорректный формат callback_data approve_admin: %s", callback.data)
+            await callback.answer("Некорректный формат данных", show_alert=True)
+            return
+        user_tg_id = int(parts[1])
+        dept = parts[2]
+
+        role = DEPT_TO_ADMIN_ROLE.get(dept)
+        if not role:
+            logger.error("Неизвестный отдел в approve_admin: %s", dept)
+            await callback.answer("Неизвестный отдел", show_alert=True)
+            return
+
+        # Сохраняем в SQLite
+        RolesCacheService.update_user_role(
+            telegram_id=user_tg_id,
+            full_name="",  # ФИО неизвестно на этом этапе
+            role=role,
+            department=dept,
+        )
+        logger.info(
+            "Суперадмин %s одобрил администратора %s, роль=%s, отдел=%s",
+            callback.from_user.id, user_tg_id, role, dept,
+        )
+
+        # Устанавливаем команды для новой роли
+        await set_commands_for_role(callback.bot, user_tg_id, role)
+
+        # Уведомляем пользователя
+        try:
+            await callback.bot.send_message(
+                chat_id=user_tg_id,
+                text=f"✅ Доступ предоставлен!\n\nТы добавлен как администратор отдела {dept}.",
+            )
+        except Exception as e:
+            logger.error("Не удалось уведомить администратора %s: %s", user_tg_id, e)
+
+        await callback.message.edit_text(
+            text=callback.message.text + "\n\n✅ ОДОБРЕНО",
+            reply_markup=None,
+        )
+        await callback.answer("Администратор одобрен!")
+
+    except Exception:
+        logger.exception("Ошибка при одобрении заявки администратора")
+        await callback.answer("Ошибка при обработке заявки", show_alert=True)
+
+
+@auth_router.callback_query(F.data.startswith("reject_admin:"))
+async def process_reject_admin(callback: CallbackQuery):
+    """Отклонение заявки администратора суперадмином."""
+    try:
+        parts = callback.data.split(":")
+        user_tg_id = int(parts[1])
+
+        logger.info(
+            "Суперадмин %s отклонил заявку администратора %s",
+            callback.from_user.id, user_tg_id,
+        )
+
+        try:
+            await callback.bot.send_message(chat_id=user_tg_id, text="❌ В доступе отказано.")
+        except Exception as e:
+            logger.error("Не удалось уведомить пользователя %s: %s", user_tg_id, e)
+
+        await callback.message.edit_text(
+            text=callback.message.text + "\n\n❌ ОТКЛОНЕНО",
+            reply_markup=None,
+        )
+        await callback.answer("Заявка отклонена")
+
+    except Exception:
+        logger.exception("Ошибка при отклонении заявки администратора")
+        await callback.answer("Ошибка при обработке заявки", show_alert=True)
+
 
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery):

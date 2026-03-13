@@ -100,6 +100,7 @@ async def cmd_start(message: Message, state: FSMContext):
             logger.info("User %s not found in Техлист, resetting", tg_id)
             delete_user(tg_id)
             await state.clear()
+            await _clear_commands(message.bot, tg_id)
             await message.answer(
                 "Привет! Давай настроим твою авторизацию.\n"
                 "Выбери, к какому отделу ты относишься:",

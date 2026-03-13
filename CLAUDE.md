@@ -352,7 +352,7 @@ VALID_POSITIONS = {
 - `main_menu_keyboard(role)` с inline-кнопкой «Написать разработчику» для всех ролей кроме `developer`
 
 **Этап 1 🔄 в работе:**
-- `setMyCommands` по ролям через `BotCommandScopeChat`
+- ✅ `set_commands_for_role` — `setMyCommands` по ролям через `BotCommandScopeChat` (`app/bot/commands.py`)
 - Обработчик callback `contact_dev`
 
 **Что впереди:**

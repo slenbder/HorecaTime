@@ -90,7 +90,11 @@ def parse_shift(text: str, position: str) -> dict | None:
     if not text:
         return None
 
-    parts = text.strip().split()
+    # Нормализация разделителя диапазона времени:
+    # "10:00 - 20:00", "10:00–20:00", "10:00—20:00" → "10:00-20:00"
+    text = re.sub(r'\s*[–—\-]\s*', '-', text.strip())
+
+    parts = text.split()
     if len(parts) != 2:
         logger.debug("parse_shift: ожидалось 2 токена, получено %d: %r", len(parts), text)
         return None

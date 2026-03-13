@@ -15,7 +15,7 @@ from app.bot.keyboards.common import (
 )
 
 from app.bot.commands import set_commands_for_role
-from app.db.models import get_user
+from app.db.models import get_user, delete_user
 from app.services.google_sheets import GoogleSheetsClient
 from config import (
     SUPERADMIN_IDS,
@@ -70,6 +70,30 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer("Ошибка подключения к таблице. Обратись к администратору.")
         logger.error("sheets_client не инициализирован")
         return
+
+    # 0. Resync: если пользователь есть в SQLite, но удалён из Техлиста — сбрасываем
+    cached_user = get_user(tg_id)
+    if cached_user:
+        try:
+            exists_in_techlist = sheets_client.user_exists_in_techlist(tg_id)
+        except Exception:
+            logger.exception(
+                "Ошибка при проверке наличия %s в Техлисте при /start, продолжаем без сброса",
+                tg_id,
+            )
+            exists_in_techlist = True  # fail-safe: не сбрасываем при ошибке
+
+        if not exists_in_techlist:
+            logger.info("User %s not found in Техлист, resetting", tg_id)
+            delete_user(tg_id)
+            await state.clear()
+            await message.answer(
+                "Привет! Давай настроим твою авторизацию.\n"
+                "Выбери, к какому отделу ты относишься:",
+                reply_markup=department_keyboard(),
+            )
+            await state.set_state(AuthStates.choosing_department)
+            return
 
     # 1. Проверяем, есть ли пользователь и одобрен ли он
     try:

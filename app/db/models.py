@@ -81,3 +81,18 @@ def get_user(telegram_id: int) -> Optional[Dict]:
     except sqlite3.Error as e:
         logger.error("Ошибка при получении пользователя %s из БД: %s", telegram_id, e)
     return None
+
+
+def delete_user(telegram_id: int) -> None:
+    """
+    Удаляет пользователя из таблицы users по telegram_id.
+    """
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM users WHERE telegram_id = ?', (telegram_id,))
+            conn.commit()
+        logger.info("Пользователь %s удалён из БД", telegram_id)
+    except sqlite3.Error as e:
+        logger.error("Ошибка при удалении пользователя %s из БД: %s", telegram_id, e)
+        raise

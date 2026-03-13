@@ -43,7 +43,7 @@ project/
 │   ├── services/
 │   │   ├── google_sheets.py       ✅ с _reconnect()
 │   │   ├── roles_cache.py         ✅
-│   │   ├── timeparsing.py         ❌
+│   │   ├── timeparsing.py         ✅ parse_shift, round_to_half, is_weekend
 │   │   ├── businesslogic.py       ❌
 │   │   └── pdfservice.py          ❌
 │   ├── scheduler/
@@ -355,8 +355,11 @@ VALID_POSITIONS = {
 - Вызовы `set_commands_for_role` в `auth.py`: при `/start` (авторизованный) и после approve
 - Обработчик callback `contact_dev` + FSM `waiting_dev_message` (пересылка сообщения разработчику)
 
+**Этап 2 ✅ завершён:**
+- `timeparsing.py` — парсинг всех форматов даты и времени, расчёт H, пересечение полуночи, is_weekend
+- 31 тест (pytest), все зелёные
+
 **Что впереди:**
-- Этап 2: `timeparsing.py` с тестами
 - Этап 3: FSM внесения часов (раннер как эталон)
 - Этап 4: FSM для официанта, хостес, бармена
 - Этапы 5-10: отчёты, админка, PDF, Docker, деплой

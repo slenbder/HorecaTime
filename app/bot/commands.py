@@ -26,6 +26,7 @@ _SUPERADMIN_COMMANDS = [
     BotCommand(command="set_rate_all", description="Изменить ставку"),
     BotCommand(command="message_all",  description="Сообщение сотрудникам"),
     BotCommand(command="switch_month", description="Переход на новый месяц"),
+    BotCommand(command="dismiss",      description="Уволить сотрудника"),
 ]
 
 _ROLE_COMMANDS: dict[str, list[BotCommand]] = {

@@ -88,6 +88,20 @@ class TestDateFormats:
 # parse_shift — форматы времени
 # ---------------------------------------------------------------------------
 
+class TestDashNormalization:
+    def test_spaces_around_hyphen(self):
+        # "10:00 - 20:00" — пробелы вокруг тире
+        r = parse_shift("1.03 10:00 - 20:00", "Раннер")
+        assert r is not None
+        assert r["start"] == 10.0 and r["end"] == 20.0 and r["h"] == 10.0
+
+    def test_en_dash(self):
+        # "10:00–20:00" — en dash (U+2013)
+        r = parse_shift("1.03 10:00\u201320:00", "Раннер")
+        assert r is not None
+        assert r["start"] == 10.0 and r["end"] == 20.0 and r["h"] == 10.0
+
+
 class TestTimeFormats:
     DATE = "15.03.25"
 

@@ -106,8 +106,8 @@ async def process_shift_input(message: Message, state: FSMContext):
     weekend_note = " (выходной день)" if is_weekend else ""
 
     await message.answer(
-        f"⏱ Смена {date}: H = {_fmt_h(h)} ч{weekend_note}\n\n"
-        f"Введите доп. часы (AH) или 0:"
+        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч{weekend_note}\n\n"
+        f"Введите доп. часы или 0:"
     )
     await state.set_state(ShiftStates.waiting_ah_input)
 
@@ -192,10 +192,10 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     # Ответ пользователю
     if ah > 0:
         await message.answer(
-            f"✅ Смена {date} записана\nH = {_fmt_h(h)} ч | AH = {_fmt_h(ah)} ч"
+            f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч | Доп. часы = {_fmt_h(ah)} ч"
         )
     else:
-        await message.answer(f"✅ Смена {date} записана\nH = {_fmt_h(h)} ч")
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
 
     # Уведомление admin_hall
     weekend_mark = " 🌟 (выходной)" if is_weekend else ""
@@ -206,8 +206,8 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"📋 Раннер внёс смену\n\n"
             f"👤 {full_name}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → H = {_fmt_h(h)} ч{weekend_mark}\n"
-            f"🔢 AH = {_fmt_h(ah)} ч\n"
+            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}\n"
+            f"🔢 Доп. часы = {_fmt_h(ah)} ч\n"
             f"💬 {comment}"
         )
     else:
@@ -215,12 +215,13 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"📋 Раннер внёс смену\n\n"
             f"👤 {full_name}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → H = {_fmt_h(h)} ч{weekend_mark}"
+            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}"
         )
 
     for admin_id in ADMIN_HALL_IDS:
         try:
             await message.bot.send_message(chat_id=admin_id, text=admin_text)
+            logger.info("Notified admin %s", admin_id)
         except Exception as e:
             error_logger.error("Не удалось уведомить admin_hall %s: %s", admin_id, e)
 

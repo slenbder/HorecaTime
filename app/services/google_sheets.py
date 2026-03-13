@@ -270,6 +270,21 @@ class GoogleSheetsClient:
         """
         return self.get_user_by_telegram_id(telegram_id)
 
+    def user_exists_in_techlist(self, telegram_id: int) -> bool:
+        """
+        Проверяет, есть ли пользователь в Техлисте (колонка A).
+        Возвращает True если telegram_id найден, False иначе.
+        """
+        logger.info("Проверка наличия %s в Техлисте (колонка A)", telegram_id)
+        ws = self._get_techlist_worksheet()
+        all_values = ws.get_all_values()
+        for row in all_values[1:]:
+            if row and str(row[COL_TELEGRAM_ID - 1]).strip() == str(telegram_id):
+                logger.info("Пользователь %s найден в Техлисте", telegram_id)
+                return True
+        logger.info("Пользователь %s НЕ найден в Техлисте", telegram_id)
+        return False
+
     def _get_month_sheet_name(self) -> str:
         now = datetime.now(ZoneInfo("Europe/Moscow"))
         return f"{MONTH_NAMES_RU[now.month]} {now.year}"

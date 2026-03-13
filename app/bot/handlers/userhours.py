@@ -9,7 +9,7 @@ from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift
-from config import ADMIN_HALL_IDS, SUPERADMIN_IDS
+from config import ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
 
 userhours_router = Router()
 logger = logging.getLogger("app")
@@ -44,6 +44,20 @@ def _date_str(day: int, month: int, year: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Константы позиций
+# ---------------------------------------------------------------------------
+
+KITCHEN_POSITIONS = {
+    "Су-шеф", "Горячий цех", "Холодный цех",
+    "Кондитерский цех", "Заготовочный цех", "Коренной цех", "МОП",
+}
+HALL_SIMPLE_POSITIONS = {"Хостесс", "Менеджер"}
+
+# Позиции с механикой «только H, одна ставка, несколько смен одним сообщением»
+SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS
+
+
+# ---------------------------------------------------------------------------
 # Шаг 1 — /shift
 # ---------------------------------------------------------------------------
 
@@ -68,16 +82,23 @@ async def cmd_shift(message: Message, state: FSMContext):
 
     position = user_info.get("position", "") if user_info else ""
 
-    if position != "Раннер":
-        await message.answer("❌ Команда /shift пока доступна только для раннеров.")
-        return
-
     await state.update_data(position=position)
-    await message.answer(
-        "Введите смену в формате:\n\n"
-        "<code>13.03 10:00-20:00</code>"
-    )
-    await state.set_state(ShiftStates.waiting_shift_input)
+
+    if position == "Раннер":
+        await message.answer(
+            "Введите смену в формате:\n\n"
+            "<code>13.03 10:00-20:00</code>"
+        )
+        await state.set_state(ShiftStates.waiting_shift_input)
+    elif position in SIMPLE_H_POSITIONS:
+        await message.answer(
+            "Введите смену или несколько смен:\n\n"
+            "<code>13.03 10:00-20:00\n14.03 09:00-18:00</code>"
+        )
+        await state.set_state(ShiftStates.waiting_shift_input)
+    else:
+        await message.answer("❌ Команда /shift пока недоступна для вашей позиции.")
+        await state.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +110,11 @@ async def process_shift_input(message: Message, state: FSMContext):
     data = await state.get_data()
     position = data.get("position", "Раннер")
 
+    if position in SIMPLE_H_POSITIONS:
+        await _process_simple_h_shifts(message, state, position)
+        return
+
+    # --- Раннер: одна смена, затем AH ---
     result = parse_shift(message.text or "", position)
 
     if result is None:
@@ -149,7 +175,92 @@ async def process_ah_comment(message: Message, state: FSMContext):
 
 
 # ---------------------------------------------------------------------------
-# Запись в таблицу + уведомления
+# Запись смен для позиций с механикой «только H»
+# ---------------------------------------------------------------------------
+
+async def _process_simple_h_shifts(message: Message, state: FSMContext, position: str) -> None:
+    tg_id = message.from_user.id
+    lines = [l.strip() for l in (message.text or "").splitlines() if l.strip()]
+
+    if not lines:
+        await message.answer("❌ Сообщение пустое. Введите смену(ы).")
+        return
+
+    # Парсим все строки заранее — при ошибке не пишем ничего
+    parsed: list[tuple[str, dict]] = []
+    for line in lines:
+        result = parse_shift(line, position)
+        if result is None:
+            await message.answer(
+                f"❌ Не удалось распознать строку: '{line}'\n\n"
+                f"Проверьте формат:\n<code>13.03 10:00-20:00</code>"
+            )
+            return
+        parsed.append((line, result))
+
+    if sheets_client is None:
+        await message.answer("❌ Ошибка подключения к таблице. Попробуйте позже.")
+        await state.clear()
+        return
+
+    user_data = get_user(tg_id)
+    full_name = user_data["full_name"] if user_data else str(tg_id)
+
+    if position in KITCHEN_POSITIONS:
+        recipients = list(set(ADMIN_KITCHEN_IDS + SUPERADMIN_IDS))
+    else:
+        recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+
+    written: list[tuple[str, float]] = []
+
+    for _line, result in parsed:
+        day, month, year = result["day"], result["month"], result["year"]
+        h = result["h"]
+        start, end = result["start"], result["end"]
+        date = _date_str(day, month, year)
+
+        try:
+            sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
+        except Exception:
+            error_logger.exception(
+                "_process_simple_h_shifts: ошибка записи %s для %s", date, tg_id
+            )
+            await message.answer(f"❌ Ошибка записи {date}. Попробуйте позже.")
+            await state.clear()
+            return
+
+        logger.info(
+            "Смена записана: user=%s (%s), date=%s, H=%s, position=%s",
+            tg_id, full_name, date, _fmt_h(h), position,
+        )
+        written.append((date, h))
+
+        time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+        admin_text = (
+            f"📋 {position} внёс смену\n\n"
+            f"👤 {full_name}\n"
+            f"📅 {date}\n"
+            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
+        )
+        for admin_id in recipients:
+            try:
+                await message.bot.send_message(chat_id=admin_id, text=admin_text)
+                logger.info("Notified admin %s", admin_id)
+            except Exception as e:
+                error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
+
+    if len(written) == 1:
+        date, h = written[0]
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
+    else:
+        lines_out = "\n".join(f"{d}: {_fmt_h(h)} ч" for d, h in written)
+        await message.answer(f"✅ Записано смен: {len(written)}\n{lines_out}")
+
+    await state.clear()
+
+
+# ---------------------------------------------------------------------------
+# Запись в таблицу + уведомления (Раннер)
 # ---------------------------------------------------------------------------
 
 async def _write_and_finish(message: Message, state: FSMContext) -> None:

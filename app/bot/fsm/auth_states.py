@@ -8,3 +8,6 @@ class AuthStates(StatesGroup):
     entering_fio = State()         # ввод ФИО текстом
     waiting_admin_dept = State()   # выбор отдела для администратора
     waiting_dev_message = State()  # ввод сообщения для разработчика
+    waiting_dismiss_dept_type = State()  # выбор: Сотрудник или Администратор
+    waiting_dismiss_dept = State()       # выбор подразделения
+    waiting_dismiss_confirm = State()    # подтверждение увольнения

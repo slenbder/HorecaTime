@@ -517,3 +517,97 @@ class GoogleSheetsClient:
             "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
             cell_value, user_row, day_col, sheet_name,
         )
+
+    # --- Увольнение ---
+
+    def get_employees_by_dept(self, dept: str) -> List[Dict[str, Any]]:
+        """
+        Возвращает список одобренных сотрудников по отделу (фильтр по колонке K Техлиста).
+        Каждый элемент: {"telegram_id": int, "full_name": str, "position": str}
+        """
+        logger.info("get_employees_by_dept: dept=%s", dept)
+        ws = self._get_techlist_worksheet()
+        all_values = ws.get_all_values()
+        result = []
+        for row in all_values[1:]:
+            if len(row) < COL_DEPARTMENT:
+                continue
+            row_dept = str(row[COL_DEPARTMENT - 1]).strip()
+            if row_dept != dept:
+                continue
+            tg_id_raw = str(row[COL_TELEGRAM_ID - 1]).strip()
+            if not tg_id_raw.lstrip("-").isdigit():
+                continue
+            full_name = row[COL_FIO_FROM_USER - 1].strip() if len(row) >= COL_FIO_FROM_USER else ""
+            position = row[COL_POSITION - 1].strip() if len(row) >= COL_POSITION else ""
+            result.append({
+                "telegram_id": int(tg_id_raw),
+                "full_name": full_name,
+                "position": position,
+            })
+        logger.info("get_employees_by_dept: найдено %d сотрудников в отделе '%s'", len(result), dept)
+        return result
+
+    def dismiss_employee(self, telegram_id: int) -> None:
+        """
+        Увольняет сотрудника:
+        1. Красит ячейку A в текущем месячном листе (#FFCCCC) по telegram_id в колонке B.
+        2. Удаляет строку из Техлиста.
+        """
+        logger.info("dismiss_employee: начало увольнения telegram_id=%s", telegram_id)
+
+        # Покрасить ячейку A в месячном листе
+        try:
+            month_ws = self._get_current_month_worksheet()
+            all_values = month_ws.get_all_values()
+            month_row = None
+            for i, row in enumerate(all_values, start=1):
+                if len(row) > 1 and str(row[1]).strip() == str(telegram_id):
+                    month_row = i
+                    break
+            if month_row is not None:
+                month_ws.format(
+                    f"A{month_row}",
+                    {"backgroundColor": {"red": 1.0, "green": 0.8, "blue": 0.8}},
+                )
+                logger.info(
+                    "dismiss_employee: ячейка A%d в листе '%s' покрашена #FFCCCC (telegram_id=%s)",
+                    month_row, month_ws.title, telegram_id,
+                )
+            else:
+                logger.warning(
+                    "dismiss_employee: пользователь %s не найден в месячном листе '%s', "
+                    "окраска пропущена",
+                    telegram_id, month_ws.title,
+                )
+        except Exception as e:
+            logger.error(
+                "dismiss_employee: ошибка при окраске ячейки в месячном листе для %s: %s",
+                telegram_id, e,
+            )
+
+        # Удалить строку из Техлиста
+        try:
+            ws = self._get_techlist_worksheet()
+            all_values = ws.get_all_values()
+            tech_row = None
+            for i, row in enumerate(all_values, start=1):
+                if row and str(row[COL_TELEGRAM_ID - 1]).strip() == str(telegram_id):
+                    tech_row = i
+                    break
+            if tech_row is not None:
+                ws.delete_rows(tech_row)
+                logger.info(
+                    "dismiss_employee: строка %d удалена из Техлиста (telegram_id=%s)",
+                    tech_row, telegram_id,
+                )
+            else:
+                logger.warning(
+                    "dismiss_employee: пользователь %s не найден в Техлисте, удаление пропущено",
+                    telegram_id,
+                )
+        except Exception as e:
+            logger.error(
+                "dismiss_employee: ошибка при удалении из Техлиста для %s: %s",
+                telegram_id, e,
+            )

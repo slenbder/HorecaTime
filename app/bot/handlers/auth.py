@@ -2,7 +2,9 @@ import logging
 
 from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+import aiosqlite
+
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
@@ -29,6 +31,7 @@ from config import (
     ADMIN_BAR_IDS,
     ADMIN_KITCHEN_IDS,
     DEVELOPER_ID,
+    DB_PATH,
 )
 
 auth_router = Router()
@@ -689,3 +692,207 @@ async def contact_dev_send(message: Message, state: FSMContext):
         await message.answer("❌ Не удалось отправить сообщение, попробуйте позже")
 
     await state.clear()
+
+
+# --- Увольнение сотрудника (/dismiss) ---
+
+def _dismiss_type_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Сотрудник", callback_data="dismiss_type:user")],
+        [InlineKeyboardButton(text="🔑 Администратор отдела", callback_data="dismiss_type:admin")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
+    ])
+
+
+def _dismiss_dept_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Зал", callback_data="dismiss_dept:Зал")],
+        [InlineKeyboardButton(text="Бар", callback_data="dismiss_dept:Бар")],
+        [InlineKeyboardButton(text="Кухня", callback_data="dismiss_dept:Кухня")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
+    ])
+
+
+@auth_router.message(Command("dismiss"))
+async def cmd_dismiss(message: Message, state: FSMContext):
+    tg_id = message.from_user.id
+    if tg_id != DEVELOPER_ID and tg_id not in SUPERADMIN_IDS:
+        await message.answer("Команда недоступна.")
+        return
+    await state.set_state(AuthStates.waiting_dismiss_dept_type)
+    await message.answer(
+        "Выберите, кого нужно уволить:",
+        reply_markup=_dismiss_type_keyboard(),
+    )
+    logger.info("cmd_dismiss: суперадмин %s открыл меню увольнения", tg_id)
+
+
+@auth_router.callback_query(AuthStates.waiting_dismiss_dept_type, F.data.startswith("dismiss_type:"))
+async def dismiss_type_selected(callback: CallbackQuery, state: FSMContext):
+    dismiss_type = callback.data.split(":")[1]  # "user" or "admin"
+    await state.update_data(dismiss_type=dismiss_type)
+    await state.set_state(AuthStates.waiting_dismiss_dept)
+    type_label = "Сотрудник" if dismiss_type == "user" else "Администратор"
+    await callback.message.edit_text(
+        f"Тип: {type_label}\nВыберите подразделение:",
+        reply_markup=_dismiss_dept_keyboard(),
+    )
+    await callback.answer()
+
+
+@auth_router.callback_query(AuthStates.waiting_dismiss_dept, F.data.startswith("dismiss_dept:"))
+async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
+    dept = callback.data.split(":")[1]
+    data = await state.get_data()
+    dismiss_type = data.get("dismiss_type", "user")
+
+    if sheets_client is None:
+        await callback.answer("Ошибка подключения к таблице", show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        employees = sheets_client.get_employees_by_dept(dept)
+    except Exception:
+        logger.exception("dismiss_dept_selected: ошибка при получении сотрудников отдела %s", dept)
+        await callback.answer("Ошибка при получении списка сотрудников", show_alert=True)
+        await state.clear()
+        return
+
+    # Фильтрация по роли в SQLite
+    admin_roles = {"admin_hall", "admin_bar", "admin_kitchen"}
+    filtered = []
+    for emp in employees:
+        user_data = get_user(emp["telegram_id"])
+        if user_data is None:
+            continue
+        role = user_data.get("role", "")
+        if dismiss_type == "user" and role == "user":
+            filtered.append(emp)
+        elif dismiss_type == "admin" and role in admin_roles:
+            filtered.append(emp)
+
+    if not filtered:
+        type_label = "сотрудников" if dismiss_type == "user" else "администраторов"
+        await callback.message.edit_text(
+            f"В отделе «{dept}» нет {type_label}.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")]
+            ]),
+        )
+        await callback.answer()
+        return
+
+    buttons = [
+        [InlineKeyboardButton(
+            text=emp["full_name"] or str(emp["telegram_id"]),
+            callback_data=f"dismiss_select:{emp['telegram_id']}",
+        )]
+        for emp in filtered
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")])
+
+    await state.update_data(dismiss_dept=dept)
+    await state.set_state(AuthStates.waiting_dismiss_confirm)
+    await callback.message.edit_text(
+        f"Выберите сотрудника для увольнения ({dept}):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@auth_router.callback_query(AuthStates.waiting_dismiss_confirm, F.data.startswith("dismiss_select:"))
+async def dismiss_select(callback: CallbackQuery, state: FSMContext):
+    target_id = int(callback.data.split(":")[1])
+
+    user_data = get_user(target_id)
+    full_name = user_data["full_name"] if user_data else str(target_id)
+
+    if sheets_client is not None:
+        tech_info = sheets_client.get_user_from_techlist(target_id)
+    else:
+        tech_info = None
+    position = tech_info["position"] if tech_info else "—"
+    dept = tech_info["department"] if tech_info else "—"
+
+    await state.update_data(
+        dismiss_target_id=target_id,
+        dismiss_target_name=full_name,
+        dismiss_target_position=position,
+        dismiss_target_dept=dept,
+    )
+
+    await callback.message.edit_text(
+        f"⚠️ Уволить {full_name} ({position}, {dept})?\n\nЭто действие нельзя отменить.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, уволить", callback_data=f"dismiss_confirm:{target_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
+        ]),
+    )
+    await callback.answer()
+
+
+@auth_router.callback_query(F.data.startswith("dismiss_confirm:"))
+async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
+    admin_id = callback.from_user.id
+    target_id = int(callback.data.split(":")[1])
+
+    fsm_data = await state.get_data()
+    full_name = fsm_data.get("dismiss_target_name", str(target_id))
+
+    error_logger = logging.getLogger("errors")
+
+    # a) Уведомить сотрудника
+    try:
+        await callback.bot.send_message(
+            chat_id=target_id,
+            text="❌ Ваш доступ к боту был отозван.\nПо всем вопросам обращайтесь к администратору.",
+        )
+    except Exception:
+        error_logger.exception("dismiss: не удалось уведомить сотрудника %s", target_id)
+
+    # b) Сбросить команды Telegram
+    try:
+        await callback.bot.set_my_commands(commands=[], scope=BotCommandScopeChat(chat_id=target_id))
+    except Exception:
+        error_logger.exception("dismiss: не удалось сбросить команды для %s", target_id)
+
+    # c) Сбросить FSM сотрудника
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("DELETE FROM fsm_storage WHERE user_id = ?", (target_id,))
+            await db.commit()
+    except Exception:
+        error_logger.exception("dismiss: не удалось очистить FSM для %s", target_id)
+
+    # d+e) Удалить из SQLite (users = roles cache)
+    try:
+        delete_user(target_id)
+    except Exception:
+        error_logger.exception("dismiss: не удалось удалить пользователя %s из SQLite", target_id)
+
+    # f+g) Покрасить ячейку в месячном листе и удалить из Техлиста
+    if sheets_client is not None:
+        try:
+            sheets_client.dismiss_employee(target_id)
+        except Exception:
+            error_logger.exception("dismiss: ошибка при вызове dismiss_employee для %s", target_id)
+    else:
+        error_logger.error(
+            "dismiss: sheets_client не инициализирован, шаги f/g пропущены для %s", target_id
+        )
+
+    # h) Ответить суперадмину
+    await state.clear()
+    await callback.message.edit_text(f"✅ {full_name} уволен. Доступ отозван.", reply_markup=None)
+    await callback.answer()
+
+    # i) Логировать
+    logger.info("Сотрудник %s (%s) уволен суперадмином %s", target_id, full_name, admin_id)
+
+
+@auth_router.callback_query(F.data == "dismiss_cancel")
+async def dismiss_cancel_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Отменено.", reply_markup=None)
+    await callback.answer()

@@ -425,3 +425,80 @@ class GoogleSheetsClient:
             position,
         )
         return True
+
+    # --- Запись смены ---
+
+    def write_shift(
+        self,
+        telegram_id: int,
+        day: int,
+        month: int,
+        year: int,
+        h: float,
+        ah: float,
+    ) -> None:
+        """
+        Записывает смену в месячный лист.
+        Ищет строку пользователя по telegram_id (колонка B),
+        находит столбец дня в строке 3, пишет значение ячейки.
+        Формат: "{h}/{ah}" если ah > 0, иначе str(h).
+        """
+        sheet_name = f"{MONTH_NAMES_RU[month]} {year}"
+        logger.info(
+            "write_shift: telegram_id=%s, %02d.%02d.%d, h=%s, ah=%s, лист='%s'",
+            telegram_id, day, month, year, h, ah, sheet_name,
+        )
+
+        try:
+            ws = self._spreadsheet.worksheet(sheet_name)
+        except WorksheetNotFound:
+            raise ValueError(f"Лист '{sheet_name}' не найден")
+        except Exception as e:
+            logger.warning("write_shift: ошибка доступа к листу, реконнект: %s", e)
+            self._reconnect()
+            try:
+                ws = self._spreadsheet.worksheet(sheet_name)
+            except WorksheetNotFound:
+                raise ValueError(f"Лист '{sheet_name}' не найден")
+
+        all_values = ws.get_all_values()
+
+        # Найти строку пользователя по telegram_id в колонке B (индекс 1)
+        user_row = None
+        for i, row in enumerate(all_values, start=1):
+            if len(row) > 1 and str(row[1]).strip() == str(telegram_id):
+                user_row = i
+                break
+
+        if user_row is None:
+            raise ValueError(
+                f"Пользователь {telegram_id} не найден в листе '{sheet_name}'"
+            )
+
+        # Найти столбец дня в строке 3 (индекс 2)
+        date_row = all_values[2] if len(all_values) > 2 else []
+        day_col = None
+        for j, cell in enumerate(date_row, start=1):
+            try:
+                if int(str(cell).strip()) == day:
+                    day_col = j
+                    break
+            except (ValueError, TypeError):
+                continue
+
+        if day_col is None:
+            raise ValueError(
+                f"День {day} не найден в строке дат листа '{sheet_name}'"
+            )
+
+        # Форматируем значение
+        def _fmt(v: float) -> str:
+            return str(int(v)) if v == int(v) else str(v)
+
+        cell_value = f"{_fmt(h)}/{_fmt(ah)}" if ah > 0 else _fmt(h)
+
+        ws.update_cell(user_row, day_col, cell_value)
+        logger.info(
+            "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
+            cell_value, user_row, day_col, sheet_name,
+        )

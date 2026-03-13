@@ -14,6 +14,7 @@ from app.bot.keyboards.common import (
     kitchen_positions_keyboard,
 )
 
+from app.bot.commands import set_commands_for_role
 from app.services.google_sheets import GoogleSheetsClient
 from config import (
     SUPERADMIN_IDS,
@@ -80,6 +81,9 @@ async def cmd_start(message: Message, state: FSMContext):
                 "Ты уже авторизован в системе ✅\n"
                 "Скоро здесь появится главное меню (внесение часов, отчёты и т.д.)."
             )
+            cached = RolesCacheService.get_user_role(tg_id)
+            if cached and cached.get("role") and cached["role"] != "guest":
+                await set_commands_for_role(message.bot, tg_id, cached["role"])
             await state.clear()
             return
     except Exception as e:
@@ -365,6 +369,10 @@ async def process_approve(callback: CallbackQuery):
             )
         except Exception as e:
             logger.error(f"Не удалось уведомить пользователя {user_tg_id}: {e}")
+
+        cached = RolesCacheService.get_user_role(user_tg_id)
+        if cached and cached.get("role") and cached["role"] != "guest":
+            await set_commands_for_role(callback.bot, user_tg_id, cached["role"])
 
         # Обновляем сообщение админа
         await callback.message.edit_text(

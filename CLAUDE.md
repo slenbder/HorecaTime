@@ -351,12 +351,13 @@ VALID_POSITIONS = {
 - Роль `developer` (DEVELOPER_ID из env, проверяется в middleware перед superadmin)
 - `main_menu_keyboard(role)` с inline-кнопкой «Написать разработчику» для всех ролей кроме `developer`
 
-**Этап 1 🔄 в работе:**
-- ✅ `set_commands_for_role` — `setMyCommands` по ролям через `BotCommandScopeChat` (`app/bot/commands.py`)
-- Обработчик callback `contact_dev`
+**Этап 1 ✅ завершён:**
+- `set_commands_for_role` — `setMyCommands` по ролям через `BotCommandScopeChat` (`app/bot/commands.py`)
+- Вызовы `set_commands_for_role` в `auth.py`: при `/start` (авторизованный) и после approve
+- Обработчик callback `contact_dev` + FSM `waiting_dev_message` (пересылка сообщения разработчику)
 
 **Что впереди:**
-- Этап 2: timeparsing.py с тестами
+- Этап 2: `timeparsing.py` с тестами
 - Этап 3: FSM внесения часов (раннер как эталон)
 - Этап 4: FSM для официанта, хостес, бармена
 - Этапы 5-10: отчёты, админка, PDF, Docker, деплой

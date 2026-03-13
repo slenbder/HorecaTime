@@ -26,13 +26,13 @@ project/
 │   ├── logging_config.py          ✅
 │   ├── bot/
 │   │   ├── handlers/
-│   │   │   ├── auth.py            ✅ полный approve-flow
-│   │   │   ├── userhours.py       ✅ FSM внесения смены (Раннер)
+│   │   │   ├── auth.py            ✅ approve-flow, admin registration, /dismiss (superadmin)
+│   │   │   ├── userhours.py       ✅ FSM внесения смены (Раннер, Кухня, Хостесс, Менеджер)
 │   │   │   ├── userreports.py     ❌
 │   │   │   ├── admin.py           ❌
 │   │   │   └── superadmin.py      ❌
 │   │   ├── fsm/
-│   │   │   ├── auth_states.py     ✅
+│   │   │   ├── auth_states.py     ✅ AuthStates + waiting_role_type, waiting_admin_dept, waiting_dismiss_*
 │   │   │   ├── shift_states.py    ✅ ShiftStates (waiting_shift_input, waiting_ah_input, waiting_ah_comment)
 │   │   │   └── ...остальные       ❌
 │   │   ├── keyboards/
@@ -42,7 +42,7 @@ project/
 │   │   └── middlewares/
 │   │       └── roles.py           ✅ импорт ID из config (не из auth.py!), роль developer
 │   ├── services/
-│   │   ├── google_sheets.py       ✅ с _reconnect(), write_shift(), user_exists_in_techlist()
+│   │   ├── google_sheets.py       ✅ _reconnect(), write_shift(), user_exists_in_techlist(), dismiss_employee(), get_employees_by_dept()
 │   │   ├── roles_cache.py         ✅
 │   │   ├── timeparsing.py         ✅ parse_shift, round_to_half, is_weekend
 │   │   ├── businesslogic.py       ❌
@@ -308,7 +308,7 @@ VALID_POSITIONS = {
 
 **developer:** всё как superadmin + алерты об ошибках
 
-**Найм/увольнение:** обсуждается после реализации всего остального функционала
+**superadmin и developer** также имеют команду /dismiss — увольнение сотрудника (inline-флоу с подтверждением)
 
 ---
 
@@ -367,9 +367,21 @@ VALID_POSITIONS = {
 - `main.py` — подключён userhours_router
 - Фиксы auth.py: resync SQLite с Техлистом при /start, сброс команд при регистрации и resync, `delete_user()` в models.py, `user_exists_in_techlist()` в google_sheets.py
 
+**Этап 4A ✅ завершён:**
+- FSM внесения смены для Кухни, Хостесс, Менеджера (только H, мультистрочный ввод)
+- Константы KITCHEN_POSITIONS, HALL_SIMPLE_POSITIONS, SIMPLE_H_POSITIONS в userhours.py
+- Уведомления: Кухня → ADMIN_KITCHEN_IDS + SUPERADMIN_IDS, Зал → ADMIN_HALL_IDS + SUPERADMIN_IDS
+
+**Вне этапов ✅ завершено:**
+- Регистрация администраторов через бота (выбор "Сотрудник / Администратор" на первом шаге)
+- Заявка администратора летит только SUPERADMIN_IDS, апрув суперадмином
+- Суперадмины и developer пропускают регистрацию — сразу главное меню
+- Функция увольнения /dismiss (superadmin + developer): inline-флоу, подтверждение, красит ячейку A в #FFCCCC, удаляет из Техлиста и SQLite, сбрасывает FSM/кеш/команды, уведомляет сотрудника
+
 **Что впереди:**
-- Этап 4: FSM для официанта, хостес, бармена
-- Этапы 5-10: отчёты, админка, PDF, Docker, деплой
+- Этап 4B: FSM для Бармена/Барбэка (H + AH тусовочные, проверка нахлёста)
+- Этап 4C: FSM для Официанта (H + фото + медиагруппа + inline апрув admin_hall)
+- Этапы 5-10: отчёты, ставки, рассылки, PDF, переключение месяца, Docker, деплой
 
 ---
 

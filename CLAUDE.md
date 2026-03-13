@@ -27,12 +27,13 @@ project/
 │   ├── bot/
 │   │   ├── handlers/
 │   │   │   ├── auth.py            ✅ полный approve-flow
-│   │   │   ├── userhours.py       🔄 в разработке
+│   │   │   ├── userhours.py       ✅ FSM внесения смены (Раннер)
 │   │   │   ├── userreports.py     ❌
 │   │   │   ├── admin.py           ❌
 │   │   │   └── superadmin.py      ❌
 │   │   ├── fsm/
 │   │   │   ├── auth_states.py     ✅
+│   │   │   ├── shift_states.py    ✅ ShiftStates (waiting_shift_input, waiting_ah_input, waiting_ah_comment)
 │   │   │   └── ...остальные       ❌
 │   │   ├── keyboards/
 │   │   │   ├── common.py          ✅ отдел + позиции + main_menu_keyboard()
@@ -41,7 +42,7 @@ project/
 │   │   └── middlewares/
 │   │       └── roles.py           ✅ импорт ID из config (не из auth.py!), роль developer
 │   ├── services/
-│   │   ├── google_sheets.py       ✅ с _reconnect()
+│   │   ├── google_sheets.py       ✅ с _reconnect(), write_shift(), user_exists_in_techlist()
 │   │   ├── roles_cache.py         ✅
 │   │   ├── timeparsing.py         ✅ parse_shift, round_to_half, is_weekend
 │   │   ├── businesslogic.py       ❌
@@ -49,7 +50,7 @@ project/
 │   ├── scheduler/
 │   │   └── monthly_switch.py      ❌
 │   └── db/
-│       ├── models.py              ✅ таблицы users + fsm_storage
+│       ├── models.py              ✅ таблицы users + fsm_storage, delete_user()
 │       └── fsm_storage.py         ✅ SQLiteStorage для aiogram FSM
 ├── docker/
 │   ├── Dockerfile                 ❌
@@ -359,8 +360,14 @@ VALID_POSITIONS = {
 - `timeparsing.py` — парсинг всех форматов даты и времени, расчёт H, пересечение полуночи, is_weekend
 - 31 тест (pytest), все зелёные
 
+**Этап 3 ✅ завершён:**
+- `shift_states.py` — ShiftStates: waiting_shift_input / waiting_ah_input / waiting_ah_comment
+- `userhours.py` — полный 4-шаговый FSM для Раннера: /shift → дата+время → AH → комментарий → запись
+- `google_sheets.write_shift()` — запись смены в месячный лист (ячейка H/AH)
+- `main.py` — подключён userhours_router
+- Фиксы auth.py: resync SQLite с Техлистом при /start, сброс команд при регистрации и resync, `delete_user()` в models.py, `user_exists_in_techlist()` в google_sheets.py
+
 **Что впереди:**
-- Этап 3: FSM внесения часов (раннер как эталон)
 - Этап 4: FSM для официанта, хостес, бармена
 - Этапы 5-10: отчёты, админка, PDF, Docker, деплой
 

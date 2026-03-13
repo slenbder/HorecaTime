@@ -9,7 +9,7 @@ from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift
-from config import ADMIN_HALL_IDS
+from config import ADMIN_HALL_IDS, SUPERADMIN_IDS
 
 userhours_router = Router()
 logger = logging.getLogger("app")
@@ -218,11 +218,12 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}"
         )
 
-    for admin_id in ADMIN_HALL_IDS:
+    recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+    for admin_id in recipients:
         try:
             await message.bot.send_message(chat_id=admin_id, text=admin_text)
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
-            error_logger.error("Не удалось уведомить admin_hall %s: %s", admin_id, e)
+            error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
     await state.clear()

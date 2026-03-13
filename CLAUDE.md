@@ -381,3 +381,5 @@ VALID_POSITIONS = {
 - **Apps Script файлы** в ассетах проекта — референс логики, не трогать
 - **Git workflow**: ветки от `main`, PR без автомерджа, коммит после каждой задачи
 - Название месячных листов: `{MONTH_NAMES_RU[month]} {year}` (например «Март 2025»)
+- **Уведомления о сменах** всегда отправляются: admin своего отдела + все superadmin
+  (Зал: `ADMIN_HALL_IDS + SUPERADMIN_IDS`, Бар: `ADMIN_BAR_IDS + SUPERADMIN_IDS`, Кухня: `ADMIN_KITCHEN_IDS + SUPERADMIN_IDS`; дубли исключать через `set`)

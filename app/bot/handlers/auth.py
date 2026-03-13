@@ -4,7 +4,10 @@ from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    BotCommandScopeChat,
+)
 
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.keyboards.common import (
@@ -61,6 +64,16 @@ except Exception as e:
     sheets_client = None
 
 
+async def _clear_commands(bot, tg_id: int) -> None:
+    """Сбрасывает список команд для пользователя (пустой список)."""
+    try:
+        await bot.set_my_commands(commands=[], scope=BotCommandScopeChat(chat_id=tg_id))
+    except Exception:
+        logging.getLogger("errors").exception(
+            "Не удалось сбросить команды для пользователя %s", tg_id
+        )
+
+
 @auth_router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     tg_id = message.from_user.id
@@ -87,6 +100,7 @@ async def cmd_start(message: Message, state: FSMContext):
             logger.info("User %s not found in Техлист, resetting", tg_id)
             delete_user(tg_id)
             await state.clear()
+            await _clear_commands(message.bot, tg_id)
             await message.answer(
                 "Привет! Давай настроим твою авторизацию.\n"
                 "Выбери, к какому отделу ты относишься:",
@@ -120,6 +134,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
     # 2. Если не одобрен — запускаем сценарий регистрации
     logger.info(f"Запуск сценария регистрации для пользователя {tg_id}")
+    await _clear_commands(message.bot, tg_id)
     await message.answer(
         "Привет! Давай настроим твою авторизацию.\n"
         "Выбери, к какому отделу ты относишься:",

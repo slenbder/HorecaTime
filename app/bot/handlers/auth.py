@@ -15,6 +15,7 @@ from app.bot.keyboards.common import (
 )
 
 from app.bot.commands import set_commands_for_role
+from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from config import (
     SUPERADMIN_IDS,
@@ -426,3 +427,39 @@ async def process_reject(callback: CallbackQuery):
     except Exception as e:
         logger.exception(f"Ошибка при отклонении заявки: {e}")
         await callback.answer("Ошибка при обработке заявки", show_alert=True)
+
+
+# --- Обработчик кнопки "Написать разработчику" ---
+
+@auth_router.callback_query(F.data == "contact_dev")
+async def contact_dev_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer("✉️ Напишите ваше сообщение разработчику:")
+    await state.set_state(AuthStates.waiting_dev_message)
+
+
+@auth_router.message(AuthStates.waiting_dev_message)
+async def contact_dev_send(message: Message, state: FSMContext):
+    tg_id = message.from_user.id
+    text = message.text or ""
+
+    user_data = get_user(tg_id)
+    full_name = user_data["full_name"] if user_data else str(tg_id)
+
+    logger.info("Пользователь %s (%s) отправляет сообщение разработчику", tg_id, full_name)
+
+    dev_text = (
+        f"📨 Сообщение от пользователя\n\n"
+        f"👤 {full_name} (ID: {tg_id})\n\n"
+        f"{text}"
+    )
+
+    try:
+        await message.bot.send_message(chat_id=DEVELOPER_ID, text=dev_text)
+        await message.answer("✅ Сообщение отправлено разработчику")
+    except Exception:
+        error_logger = logging.getLogger("errors")
+        error_logger.exception("Не удалось переслать сообщение разработчику от %s", tg_id)
+        await message.answer("❌ Не удалось отправить сообщение, попробуйте позже")
+
+    await state.clear()

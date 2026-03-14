@@ -84,6 +84,27 @@ def get_user(telegram_id: int) -> Optional[Dict]:
     return None
 
 
+def get_users_by_role(db_path: str, role: str) -> list[dict]:
+    """
+    Возвращает список пользователей с указанной ролью.
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT telegram_id, full_name, department FROM users WHERE role = ?',
+                (role,)
+            )
+            rows = cursor.fetchall()
+            return [
+                {"telegram_id": row[0], "full_name": row[1], "department": row[2]}
+                for row in rows
+            ]
+    except sqlite3.Error as e:
+        logger.error("Ошибка при получении пользователей с ролью %s: %s", role, e)
+    return []
+
+
 def delete_user(telegram_id: int) -> None:
     """
     Удаляет пользователя из таблицы users по telegram_id.

@@ -124,9 +124,9 @@ async def cmd_shift(message: Message, state: FSMContext):
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position == "Официант":
         await message.answer(
-            "Введите смену и прикрепите фото чеков/карт одним сообщением:\n\n"
-            "<code>13.03 10:00-20:00</code>\n"
-            "📎 (прикрепите фото)"
+            "Введите смену:\n\n"
+            "<code>13.03 10:00-20:00</code>\n\n"
+            "📎 Прикрепите фото чеков/карт (если есть)"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     else:
@@ -231,7 +231,16 @@ async def _process_waiter_shift_input(message: Message, state: FSMContext) -> No
     tg_id = message.from_user.id
 
     if not message.photo:
-        await message.answer("❌ Прикрепите фото чеков/карт к сообщению со сменой.")
+        # Без фото — парсим текст и записываем сразу
+        text = (message.text or "").strip()
+        result = parse_shift(text, "Официант")
+        if result is None:
+            await message.answer(
+                "❌ Не удалось распознать формат смены. Попробуйте ещё раз:\n\n"
+                "<code>13.03 10:00-20:00</code>"
+            )
+            return
+        await _write_waiter_no_photo(message, state, tg_id, result)
         return
 
     photo_file_id = message.photo[-1].file_id
@@ -262,6 +271,65 @@ async def _process_waiter_shift_input(message: Message, state: FSMContext) -> No
             await message.answer("❌ Не удалось распознать формат смены.")
             return
         await _send_waiter_report(message, state, tg_id, result, [photo_file_id])
+
+
+async def _write_waiter_no_photo(
+    message: Message,
+    state: FSMContext,
+    tg_id: int,
+    result: dict,
+) -> None:
+    """Смена без фото — записываем сразу с AH=0, уведомляем без кнопок."""
+    day   = result["day"]
+    month = result["month"]
+    year  = result["year"]
+    h     = result["h"]
+    start = result["start"]
+    end   = result["end"]
+    date  = _date_str(day, month, year)
+
+    user_data = get_user(tg_id)
+    full_name = user_data["full_name"] if user_data else str(tg_id)
+
+    if sheets_client is None:
+        await message.answer("❌ Ошибка записи. Попробуйте позже.")
+        await state.clear()
+        return
+
+    try:
+        sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
+    except Exception:
+        error_logger.exception("_write_waiter_no_photo: ошибка записи для %s", tg_id)
+        await message.answer("❌ Ошибка записи. Попробуйте позже.")
+        await state.clear()
+        return
+
+    logger.info(
+        "Смена записана: user=%s (%s), date=%s, H=%s, position=Официант (без фото)",
+        tg_id, full_name, date, _fmt_h(h),
+    )
+
+    await state.clear()
+    await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
+
+    recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+    if not recipients:
+        logger.warning("_write_waiter_no_photo: получатели пустые, уведомление не отправлено")
+        return
+
+    time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+    admin_text = (
+        f"📋 Официант внёс смену\n\n"
+        f"👤 {full_name}\n"
+        f"📅 {date}\n"
+        f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
+    )
+    for admin_id in recipients:
+        try:
+            await message.bot.send_message(chat_id=admin_id, text=admin_text)
+            logger.info("_write_waiter_no_photo: уведомлен %s", admin_id)
+        except Exception as e:
+            error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
 
 
 async def _delayed_process_waiter(mgid: str) -> None:
@@ -298,9 +366,10 @@ async def _send_waiter_report(
     await state.clear()
     await message.answer("✅ Смена принята, ожидайте подтверждения администратора.")
 
-    if not ADMIN_HALL_IDS:
+    recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+    if not recipients:
         logger.warning(
-            "_send_waiter_report: ADMIN_HALL_IDS пустой, отчёт официанта %s не отправлен",
+            "_send_waiter_report: получатели пустые, отчёт официанта %s не отправлен",
             tg_id,
         )
         return
@@ -324,17 +393,17 @@ async def _send_waiter_report(
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
 
-    for admin_id in ADMIN_HALL_IDS:
+    for admin_id in recipients:
         try:
             media = [InputMediaPhoto(media=fid) for fid in photo_ids]
             await message.bot.send_media_group(chat_id=admin_id, media=media)
             await message.bot.send_message(
                 chat_id=admin_id, text=approval_text, reply_markup=keyboard
             )
-            logger.info("_send_waiter_report: уведомлен admin_hall %s", admin_id)
+            logger.info("_send_waiter_report: уведомлен %s", admin_id)
         except Exception as e:
             error_logger.error(
-                "_send_waiter_report: не удалось уведомить admin_hall %s: %s", admin_id, e
+                "_send_waiter_report: не удалось уведомить %s: %s", admin_id, e
             )
 
 

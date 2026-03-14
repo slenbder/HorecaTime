@@ -134,8 +134,8 @@ async def cmd_start(message: Message, state: FSMContext):
             role = cached["role"] if cached and cached.get("role") and cached["role"] != "guest" else "user"
             await set_commands_for_role(message.bot, tg_id, role)
             await message.answer(
-                "👋 Добро пожаловать!",
-                reply_markup=main_menu_keyboard(role),
+                "Ты уже авторизован в системе ✅\n"
+                "Используй меню команд для внесения смен и просмотра отчётов."
             )
             await state.clear()
             return
@@ -761,7 +761,13 @@ async def process_reject(callback: CallbackQuery):
         await callback.answer("Ошибка при обработке заявки", show_alert=True)
 
 
-# --- Обработчик кнопки "Написать разработчику" ---
+# --- Обработчики "Написать разработчику" (команда + callback) ---
+
+@auth_router.message(Command("contact_dev"))
+async def cmd_contact_dev(message: Message, state: FSMContext):
+    await message.answer("✉️ Напишите ваше сообщение разработчику:")
+    await state.set_state(AuthStates.waiting_dev_message)
+
 
 @auth_router.callback_query(F.data == "contact_dev")
 async def contact_dev_start(callback: CallbackQuery, state: FSMContext):

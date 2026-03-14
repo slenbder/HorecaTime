@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -65,6 +67,27 @@ SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS
 
 BAR_POSITIONS = {"Бармен", "Барбэк"}
 
+
+def _shift_example() -> str:
+    """Возвращает актуальный пример смены на основе текущего времени МСК."""
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    date_str = now.strftime("%d.%m")
+
+    total_half_hours = (now.hour * 60 + now.minute) // 30
+    end_hour = total_half_hours // 2
+    end_min = 30 if total_half_hours % 2 else 0
+    end_str = f"{end_hour:02d}:{end_min:02d}"
+
+    start_total = total_half_hours - 20  # 20 получасов = 10 часов
+    if start_total < 0:
+        start_total += 48
+    start_hour = (start_total // 2) % 24
+    start_min = 30 if start_total % 2 else 0
+    start_str = f"{start_hour:02d}:{start_min:02d}"
+
+    return f"{date_str} {start_str}-{end_str}"
+
+
 # ---------------------------------------------------------------------------
 # Буферы для накопления медиагрупп (Официант)
 # ---------------------------------------------------------------------------
@@ -105,28 +128,30 @@ async def cmd_shift(message: Message, state: FSMContext):
 
     await state.update_data(position=position)
 
+    example = _shift_example()
+
     if position == "Раннер":
         await message.answer(
             "Введите смену в формате:\n\n"
-            "<code>13.03 10:00-20:00</code>"
+            f"<code>{example}</code>"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position in SIMPLE_H_POSITIONS:
         await message.answer(
             "Введите смену или несколько смен:\n\n"
-            "<code>13.03 10:00-20:00\n14.03 09:00-18:00</code>"
+            f"<code>{example}</code>"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position in BAR_POSITIONS:
         await message.answer(
             "Введите смену:\n\n"
-            "<code>13.03 10:00-20:00</code>"
+            f"<code>{example}</code>"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position == "Официант":
         await message.answer(
             "Введите смену:\n\n"
-            "<code>13.03 10:00-20:00</code>\n\n"
+            f"<code>{example}</code>\n\n"
             "📎 Прикрепите фото чеков/карт (если есть)"
         )
         await state.set_state(ShiftStates.waiting_shift_input)

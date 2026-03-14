@@ -23,7 +23,7 @@ from app.bot.keyboards.common import (
 )
 
 from app.bot.commands import set_commands_for_role
-from app.db.models import get_user, delete_user
+from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
 from config import (
     SUPERADMIN_IDS,
@@ -855,31 +855,28 @@ async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     dismiss_type = data.get("dismiss_type", "user")
 
-    if sheets_client is None:
-        await callback.answer("Ошибка подключения к таблице", show_alert=True)
-        await state.clear()
-        return
-
-    try:
-        employees = sheets_client.get_employees_by_dept(dept)
-    except Exception:
-        logger.exception("dismiss_dept_selected: ошибка при получении сотрудников отдела %s", dept)
-        await callback.answer("Ошибка при получении списка сотрудников", show_alert=True)
-        await state.clear()
-        return
-
-    # Фильтрация по роли в SQLite
-    admin_roles = {"admin_hall", "admin_bar", "admin_kitchen"}
-    filtered = []
-    for emp in employees:
-        user_data = get_user(emp["telegram_id"])
-        if user_data is None:
-            continue
-        role = user_data.get("role", "")
-        if dismiss_type == "user" and role == "user":
-            filtered.append(emp)
-        elif dismiss_type == "admin" and role in admin_roles:
-            filtered.append(emp)
+    if dismiss_type == "admin":
+        dept_to_role = {"Зал": "admin_hall", "Бар": "admin_bar", "Кухня": "admin_kitchen"}
+        admin_role = dept_to_role.get(dept, "")
+        filtered = get_users_by_role(DB_PATH, admin_role) if admin_role else []
+        logger.info("dismiss_dept_selected: получено %d администраторов из SQLite для отдела %s", len(filtered), dept)
+    else:
+        if sheets_client is None:
+            await callback.answer("Ошибка подключения к таблице", show_alert=True)
+            await state.clear()
+            return
+        try:
+            employees = sheets_client.get_employees_by_dept(dept)
+        except Exception:
+            logger.exception("dismiss_dept_selected: ошибка при получении сотрудников отдела %s", dept)
+            await callback.answer("Ошибка при получении списка сотрудников", show_alert=True)
+            await state.clear()
+            return
+        filtered = []
+        for emp in employees:
+            user_data = get_user(emp["telegram_id"])
+            if user_data and user_data.get("role") == "user":
+                filtered.append(emp)
 
     if not filtered:
         type_label = "сотрудников" if dismiss_type == "user" else "администраторов"

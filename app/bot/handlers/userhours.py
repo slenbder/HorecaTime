@@ -387,7 +387,7 @@ async def _send_waiter_report(
     buttons = [
         InlineKeyboardButton(
             text=str(i),
-            callback_data=f"approve_ah:{tg_id}:{date}:{h_str}:{N}:{i}",
+            callback_data=f"approve_ah:{tg_id}:{date}:{h:.1f}:{N}:{i}",
         )
         for i in range(N + 1)
     ]
@@ -419,11 +419,12 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         await callback.answer("❌ Некорректные данные.")
         return
 
-    _, tg_id_str, date_str, h_str, n_str, value_str = parts
-    telegram_id = int(tg_id_str)
-    h = float(h_str)
-    N = int(n_str)
-    value = int(value_str)
+    telegram_id = int(parts[1])
+    date_str = parts[2]
+    h = float(parts[3])
+    N = int(parts[4])
+    value = int(parts[5])
+    h_str = f"{h:.1f}"
     ah = value * 0.5
 
     # Парсим дату из "DD.MM.YY"

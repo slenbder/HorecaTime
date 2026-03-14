@@ -416,6 +416,10 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
     # approve_ah:{telegram_id}:{date_str}:{h}:{N}:{value}
     parts = (callback.data or "").split(":")
     if len(parts) != 6:
+        logger.error(
+            "approve_ah_callback: неверное число частей (%d) в callback_data: %s",
+            len(parts), callback.data,
+        )
         await callback.answer("❌ Некорректные данные.")
         return
 

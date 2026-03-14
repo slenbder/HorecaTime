@@ -519,6 +519,101 @@ async def process_reject_admin(callback: CallbackQuery):
         await callback.answer("Ошибка при обработке заявки", show_alert=True)
 
 
+@auth_router.callback_query(F.data.startswith("approve_ah:"))
+async def approve_ah_callback(callback: CallbackQuery) -> None:
+    """Одобрение доп. часов официанта (AH) администратором зала.
+
+    Формат callback_data: approve_ah:{telegram_id}:{date_str}:{h}:{N}:{value}
+    Пример:               approve_ah:6073294261:03.03.26:10.0:3:2
+    """
+    parts = (callback.data or "").split(":")
+    if len(parts) != 6:
+        logger.error(
+            "approve_ah_callback: неверное число частей (%d) в callback_data: %s",
+            len(parts), callback.data,
+        )
+        await callback.answer("❌ Некорректные данные.", show_alert=True)
+        return
+
+    try:
+        telegram_id = int(parts[1])
+        date_str = parts[2]       # DD.MM.YY
+        h = float(parts[3])
+        N = int(parts[4])         # всего фото
+        value = int(parts[5])     # одобрено фото
+    except (ValueError, IndexError):
+        logger.error(
+            "approve_ah_callback: не удалось распарсить части callback_data: %s", callback.data,
+        )
+        await callback.answer("❌ Некорректные данные.", show_alert=True)
+        return
+
+    ah = value * 0.5
+
+    # Парсим дату из "DD.MM.YY"
+    try:
+        day_s, month_s, year_s = date_str.split(".")
+        day, month, year = int(day_s), int(month_s), 2000 + int(year_s)
+    except (ValueError, AttributeError):
+        logger.error(
+            "approve_ah_callback: не удалось распарсить дату '%s' из callback_data: %s",
+            date_str, callback.data,
+        )
+        await callback.answer("❌ Некорректный формат даты.", show_alert=True)
+        return
+
+    if sheets_client is None:
+        await callback.answer("❌ Ошибка подключения к таблице.", show_alert=True)
+        return
+
+    try:
+        sheets_client.write_shift(telegram_id, day, month, year, h, ah)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "approve_ah_callback: ошибка записи для user=%s date=%s", telegram_id, date_str,
+        )
+        await callback.answer("❌ Ошибка записи.", show_alert=True)
+        return
+
+    logger.info(
+        "approve_ah_callback: user=%s date=%s H=%.1f AH=%.1f (%d фото из %d), admin=%s",
+        telegram_id, date_str, h, ah, value, N, callback.from_user.id,
+    )
+
+    def _fmt(val: float) -> str:
+        return str(int(val)) if val == int(val) else f"{val:.1f}"
+
+    ah_str = _fmt(ah)
+    h_str = _fmt(h)
+    original_text = callback.message.text or ""
+    new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
+    try:
+        await callback.message.edit_text(new_text, reply_markup=None)
+    except Exception as e:
+        logging.getLogger("errors").error(
+            "approve_ah_callback: не удалось отредактировать сообщение: %s", e,
+        )
+
+    await callback.answer()
+
+    if value == 0:
+        waiter_text = (
+            f"📋 Смена {date_str} обработана\n"
+            f"Часы смены = {h_str} ч | Доп. часов не засчитано"
+        )
+    else:
+        waiter_text = (
+            f"📋 Смена {date_str} обработана\n"
+            f"Часы смены = {h_str} ч | Доп. часы = {ah_str} ч ({value} фото из {N})"
+        )
+    try:
+        await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
+    except Exception as e:
+        logging.getLogger("errors").error(
+            "approve_ah_callback: не удалось уведомить официанта %s: %s", telegram_id, e,
+        )
+
+
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery):
     """Обработка нажатия кнопки 'Одобрить'"""

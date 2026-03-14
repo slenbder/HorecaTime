@@ -421,6 +421,41 @@ class GoogleSheetsClient:
             department,
             position,
         )
+
+        # Вставить итоговые формулы H/AH в S, AJ, AK новой строки
+        try:
+            r = new_row
+            formula_s = (
+                f'=SUMPRODUCT(IF(D{r}:R{r}="",0,IF(ISNUMBER(FIND("/",D{r}:R{r})),'
+                f'IFERROR(VALUE(LEFT(D{r}:R{r},FIND("/",D{r}:R{r})-1)),0),'
+                f'IFERROR(VALUE(D{r}:R{r}),0))))&"/"&'
+                f'SUMPRODUCT(IF(ISNUMBER(FIND("/",D{r}:R{r})),'
+                f'IFERROR(VALUE(MID(D{r}:R{r},FIND("/",D{r}:R{r})+1,100)),0),0))'
+            )
+            formula_aj = (
+                f'=SUMPRODUCT(IF(T{r}:AI{r}="",0,IF(ISNUMBER(FIND("/",T{r}:AI{r})),'
+                f'IFERROR(VALUE(LEFT(T{r}:AI{r},FIND("/",T{r}:AI{r})-1)),0),'
+                f'IFERROR(VALUE(T{r}:AI{r}),0))))&"/"&'
+                f'SUMPRODUCT(IF(ISNUMBER(FIND("/",T{r}:AI{r})),'
+                f'IFERROR(VALUE(MID(T{r}:AI{r},FIND("/",T{r}:AI{r})+1,100)),0),0))'
+            )
+            formula_ak = (
+                f'=(VALUE(LEFT(S{r},FIND("/",S{r})-1))+VALUE(LEFT(AJ{r},FIND("/",AJ{r})-1)))'
+                f'&"/"&'
+                f'(VALUE(MID(S{r},FIND("/",S{r})+1,100))+VALUE(MID(AJ{r},FIND("/",AJ{r})+1,100)))'
+            )
+            month_ws.batch_update([
+                {"range": f"S{r}", "values": [[formula_s]]},
+                {"range": f"AJ{r}", "values": [[formula_aj]]},
+                {"range": f"AK{r}", "values": [[formula_ak]]},
+            ], value_input_option="USER_ENTERED")
+            logger.info("Формулы S/AJ/AK вставлены в строку %s листа '%s'", r, month_ws.title)
+        except Exception as e:
+            logger.warning(
+                "Не удалось вставить формулы в строку %s листа '%s': %s",
+                new_row, month_ws.title, e,
+            )
+
         self._auto_resize_columns(month_ws)
         return True
 
@@ -504,6 +539,75 @@ class GoogleSheetsClient:
             "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
             cell_value, user_row, day_col, sheet_name,
         )
+
+    # --- Отчёты ---
+
+    def get_summary_hours(self, telegram_id: int, sheet_name: str) -> Optional[Dict[str, float]]:
+        """
+        Читает итоговые ячейки S, AJ, AK для пользователя из указанного листа.
+        Возвращает словарь h_first/ah_first/h_second/ah_second/h_total/ah_total
+        или None если пользователь не найден.
+        """
+        logger.info("get_summary_hours: telegram_id=%s, sheet='%s'", telegram_id, sheet_name)
+        try:
+            ws = self._spreadsheet.worksheet(sheet_name)
+        except WorksheetNotFound:
+            logger.info("get_summary_hours: лист '%s' не найден", sheet_name)
+            return None
+        except Exception as e:
+            logger.warning("get_summary_hours: ошибка доступа к листу '%s': %s", sheet_name, e)
+            return None
+
+        all_values = ws.get_all_values()
+
+        user_row_idx = None
+        for i, row in enumerate(all_values, start=1):
+            if len(row) > 1 and str(row[1]).strip() == str(telegram_id):
+                user_row_idx = i
+                break
+
+        if user_row_idx is None:
+            logger.info("get_summary_hours: пользователь %s не найден в листе '%s'", telegram_id, sheet_name)
+            return None
+
+        row = all_values[user_row_idx - 1]
+
+        def _parse_cell(col_idx: int):
+            val = row[col_idx - 1].strip() if len(row) >= col_idx else ""
+            if not val:
+                return 0.0, 0.0
+            if "/" in val:
+                parts = val.split("/", 1)
+                try:
+                    h = float(parts[0])
+                except ValueError:
+                    h = 0.0
+                try:
+                    ah = float(parts[1])
+                except ValueError:
+                    ah = 0.0
+                return h, ah
+            try:
+                return float(val), 0.0
+            except ValueError:
+                return 0.0, 0.0
+
+        h_first, ah_first = _parse_cell(19)   # S
+        h_second, ah_second = _parse_cell(36)  # AJ
+        h_total, ah_total = _parse_cell(37)    # AK
+
+        logger.info(
+            "get_summary_hours: %s → h_first=%s ah_first=%s h_second=%s ah_second=%s h_total=%s ah_total=%s",
+            telegram_id, h_first, ah_first, h_second, ah_second, h_total, ah_total,
+        )
+        return {
+            "h_first": h_first,
+            "ah_first": ah_first,
+            "h_second": h_second,
+            "ah_second": ah_second,
+            "h_total": h_total,
+            "ah_total": ah_total,
+        }
 
     # --- Увольнение ---
 

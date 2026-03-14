@@ -30,6 +30,7 @@ async def main():
     # Импортируем роутеры и middleware ПОСЛЕ инициализации БД
     from app.bot.handlers.auth import auth_router
     from app.bot.handlers.userhours import userhours_router
+    from app.bot.handlers.userreports import reports_router
     from app.bot.middlewares.roles import RoleMiddleware
 
     bot = Bot(
@@ -45,6 +46,7 @@ async def main():
     # Регистрируем роутеры
     dp.include_router(auth_router)
     dp.include_router(userhours_router)
+    dp.include_router(reports_router)
 
     logger.info("Бот HorecaTime запущен, начинаю поллинг")
     try:

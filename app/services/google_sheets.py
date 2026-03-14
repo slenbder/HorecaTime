@@ -1,5 +1,4 @@
 import logging
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -14,18 +13,13 @@ from config import GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, TECH_SHEET_NAME
 logger = logging.getLogger("google_api")
 
 # Индексы столбцов в Техлисте (1-based)
-COL_TELEGRAM_ID = 1
-COL_NICKNAME = 2
-COL_TG_NAME = 3
-COL_MESSAGE = 4
-COL_REGISTERED_AT = 5
-COL_LAST_SEEN_AT = 6
-COL_MESSAGE_ID = 7
-COL_FIO_FROM_USER = 8
-COL_STAGE = 9
-COL_IN_STAFF_TABLE = 10  # "ДА", если одобрен и есть в таблице сотрудников
-COL_DEPARTMENT = 11      # Отдел (Зал/Бар/Кухня)
-COL_POSITION = 12        # Позиция (Runner/Официант/и т.д.)
+COL_TELEGRAM_ID    = 1  # A
+COL_NICKNAME       = 2  # B
+COL_FIO_FROM_USER  = 3  # C
+COL_DEPARTMENT     = 4  # D
+COL_POSITION       = 5  # E
+COL_REGISTERED_AT  = 6  # F
+COL_IN_STAFF_TABLE = 7  # G — «ДА» если утверждён в графике
 
 MONTH_NAMES_RU = {
     1: "Январь",
@@ -120,39 +114,12 @@ class GoogleSheetsClient:
                 return {
                     "row_index": row_idx,
                     "telegram_id": row[COL_TELEGRAM_ID - 1],
-                    "nickname": row[COL_NICKNAME - 1]
-                    if len(row) >= COL_NICKNAME
-                    else "",
-                    "tg_name": row[COL_TG_NAME - 1]
-                    if len(row) >= COL_TG_NAME
-                    else "",
-                    "message": row[COL_MESSAGE - 1]
-                    if len(row) >= COL_MESSAGE
-                    else "",
-                    "registered_at": row[COL_REGISTERED_AT - 1]
-                    if len(row) >= COL_REGISTERED_AT
-                    else "",
-                    "last_seen_at": row[COL_LAST_SEEN_AT - 1]
-                    if len(row) >= COL_LAST_SEEN_AT
-                    else "",
-                    "message_id": row[COL_MESSAGE_ID - 1]
-                    if len(row) >= COL_MESSAGE_ID
-                    else "",
-                    "fio_from_user": row[COL_FIO_FROM_USER - 1]
-                    if len(row) >= COL_FIO_FROM_USER
-                    else "",
-                    "stage": row[COL_STAGE - 1]
-                    if len(row) >= COL_STAGE
-                    else "",
-                    "in_staff_table": row[COL_IN_STAFF_TABLE - 1]
-                    if len(row) >= COL_IN_STAFF_TABLE
-                    else "",
-                    "department": row[COL_DEPARTMENT - 1] 
-                    if len(row) >= COL_DEPARTMENT 
-                    else "",    # НОВОЕ
-                    "position": row[COL_POSITION - 1] 
-                    if len(row) >= COL_POSITION 
-                    else "",          # НОВОЕ
+                    "nickname": row[COL_NICKNAME - 1] if len(row) >= COL_NICKNAME else "",
+                    "fio_from_user": row[COL_FIO_FROM_USER - 1] if len(row) >= COL_FIO_FROM_USER else "",
+                    "department": row[COL_DEPARTMENT - 1] if len(row) >= COL_DEPARTMENT else "",
+                    "position": row[COL_POSITION - 1] if len(row) >= COL_POSITION else "",
+                    "registered_at": row[COL_REGISTERED_AT - 1] if len(row) >= COL_REGISTERED_AT else "",
+                    "in_staff_table": row[COL_IN_STAFF_TABLE - 1] if len(row) >= COL_IN_STAFF_TABLE else "",
                 }
 
         return None
@@ -161,7 +128,6 @@ class GoogleSheetsClient:
         self,
         telegram_id: int,
         nickname: str,
-        tg_name: str,
         fio_from_user: str,
         department: str = "",
         position: str = "",
@@ -172,17 +138,17 @@ class GoogleSheetsClient:
         """
         ws = self._get_techlist_worksheet()
         existing = self.get_user_by_telegram_id(telegram_id)
-        now_unix = int(time.time())
+        nick = nickname if nickname.startswith("@") else f"@{nickname}"
+        now_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%y %H:%M")
 
         if existing:
             row_idx = existing["row_index"]
             ws.batch_update([
-                {"range": f"B{row_idx}", "values": [[nickname]]},
-                {"range": f"C{row_idx}", "values": [[tg_name]]},
-                {"range": f"F{row_idx}", "values": [[str(now_unix)]]},
-                {"range": f"H{row_idx}", "values": [[fio_from_user]]},
-                {"range": f"K{row_idx}", "values": [[department]]},
-                {"range": f"L{row_idx}", "values": [[position]]},
+                {"range": f"B{row_idx}", "values": [[nick]]},
+                {"range": f"C{row_idx}", "values": [[fio_from_user]]},
+                {"range": f"D{row_idx}", "values": [[department]]},
+                {"range": f"E{row_idx}", "values": [[position]]},
+                {"range": f"F{row_idx}", "values": [[now_str]]},
             ])
             logger.info(
                 "Обновлена заявка пользователя %s в строке %s",
@@ -193,21 +159,15 @@ class GoogleSheetsClient:
 
         next_row = len(ws.get_all_values()) + 1
         values = [
-            str(telegram_id),  # Telegram ID
-            nickname,          # Ник
-            tg_name,           # Имя (TG)
-            "",                # Сообщение
-            str(now_unix),     # Время регистрации (UNIX)
-            str(now_unix),     # Время крайнего обращения
-            "",                # Id сообщения
-            fio_from_user,     # ФИО пользователя
-            "",                # Этап взаимодействия
-            "",                # Наличие в таблице сотрудников
-            department,        # Отдел
-            position,          # Позиция
+            str(telegram_id),  # A: Telegram ID
+            nick,              # B: @Ник
+            fio_from_user,     # C: ФИО от пользователя
+            department,        # D: Отдел
+            position,          # E: Позиция
+            now_str,           # F: Дата регистрации
         ]
 
-        ws.update(f"A{next_row}:L{next_row}", [values])
+        ws.update(f"A{next_row}:F{next_row}", [values])
         logger.info(
             "Создана новая заявка пользователя %s в строке %s",
             telegram_id,
@@ -528,7 +488,7 @@ class GoogleSheetsClient:
 
     def get_employees_by_dept(self, dept: str) -> List[Dict[str, Any]]:
         """
-        Возвращает список одобренных сотрудников по отделу (фильтр по колонке K Техлиста).
+        Возвращает список одобренных сотрудников по отделу (фильтр по колонке D Техлиста).
         Каждый элемент: {"telegram_id": int, "full_name": str, "position": str}
         """
         logger.info("get_employees_by_dept: dept=%s", dept)

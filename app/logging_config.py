@@ -19,21 +19,21 @@ def setup_logging() -> None:
 
     # Общий лог
     app_handler = logging.handlers.RotatingFileHandler(
-        LOGS_DIR / "app.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8"
+        LOGS_DIR / "app.log", maxBytes=5_000_000, backupCount=7, encoding="utf-8"
     )
     app_handler.setLevel(logging.INFO)
     app_handler.setFormatter(formatter)
 
     # Лог ошибок
     errors_handler = logging.handlers.RotatingFileHandler(
-        LOGS_DIR / "errors.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8"
+        LOGS_DIR / "errors.log", maxBytes=5_000_000, backupCount=7, encoding="utf-8"
     )
     errors_handler.setLevel(logging.ERROR)
     errors_handler.setFormatter(formatter)
 
     # Лог Google API
     google_handler = logging.handlers.RotatingFileHandler(
-        LOGS_DIR / "google_api.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8"
+        LOGS_DIR / "google_api.log", maxBytes=5_000_000, backupCount=7, encoding="utf-8"
     )
     google_handler.setLevel(logging.INFO)
     google_handler.setFormatter(formatter)

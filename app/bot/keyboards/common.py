@@ -77,7 +77,4 @@ def kitchen_positions_keyboard() -> ReplyKeyboardMarkup:
 
 
 def main_menu_keyboard(role: str) -> InlineKeyboardMarkup:
-    buttons = []
-    if role != "developer":
-        buttons.append([InlineKeyboardButton(text="✉️ Написать разработчику", callback_data="contact_dev")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return InlineKeyboardMarkup(inline_keyboard=[])

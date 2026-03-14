@@ -422,34 +422,46 @@ class GoogleSheetsClient:
             position,
         )
 
-        # Вставить итоговые формулы H/AH в S, AJ, AK новой строки
+        # Вставить итоговые формулы в S, AJ, AK новой строки
+        _SIMPLE_H_POSITIONS = {
+            "Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
+            "Заготовочный цех", "Коренной цех", "МОП", "Хостесс", "Менеджер",
+        }
         try:
             r = new_row
-            formula_s = (
-                f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-                f'IFERROR(VALUE(LEFT(D{r}:R{r};FIND("/";D{r}:R{r})-1));0);'
-                f'IFERROR(VALUE(D{r}:R{r});0))))&"/"&'
-                f'SUMPRODUCT(IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-                f'IFERROR(VALUE(MID(D{r}:R{r};FIND("/";D{r}:R{r})+1;100));0);0))'
-            )
-            formula_aj = (
-                f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-                f'IFERROR(VALUE(LEFT(T{r}:AI{r};FIND("/";T{r}:AI{r})-1));0);'
-                f'IFERROR(VALUE(T{r}:AI{r});0))))&"/"&'
-                f'SUMPRODUCT(IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-                f'IFERROR(VALUE(MID(T{r}:AI{r};FIND("/";T{r}:AI{r})+1;100));0);0))'
-            )
-            formula_ak = (
-                f'=(VALUE(LEFT(S{r};FIND("/";S{r})-1))+VALUE(LEFT(AJ{r};FIND("/";AJ{r})-1)))'
-                f'&"/"&'
-                f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
-            )
+            if position in _SIMPLE_H_POSITIONS:
+                formula_s = f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IFERROR(VALUE(D{r}:R{r});0)))'
+                formula_aj = f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IFERROR(VALUE(T{r}:AI{r});0)))'
+                formula_ak = f'=S{r}+AJ{r}'
+            else:
+                formula_s = (
+                    f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IF(ISNUMBER(FIND("/";D{r}:R{r}));'
+                    f'IFERROR(VALUE(LEFT(D{r}:R{r};FIND("/";D{r}:R{r})-1));0);'
+                    f'IFERROR(VALUE(D{r}:R{r});0))))&"/"&'
+                    f'SUMPRODUCT(IF(ISNUMBER(FIND("/";D{r}:R{r}));'
+                    f'IFERROR(VALUE(MID(D{r}:R{r};FIND("/";D{r}:R{r})+1;100));0);0))'
+                )
+                formula_aj = (
+                    f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
+                    f'IFERROR(VALUE(LEFT(T{r}:AI{r};FIND("/";T{r}:AI{r})-1));0);'
+                    f'IFERROR(VALUE(T{r}:AI{r});0))))&"/"&'
+                    f'SUMPRODUCT(IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
+                    f'IFERROR(VALUE(MID(T{r}:AI{r};FIND("/";T{r}:AI{r})+1;100));0);0))'
+                )
+                formula_ak = (
+                    f'=(VALUE(LEFT(S{r};FIND("/";S{r})-1))+VALUE(LEFT(AJ{r};FIND("/";AJ{r})-1)))'
+                    f'&"/"&'
+                    f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
+                )
             month_ws.batch_update([
                 {"range": f"S{r}", "values": [[formula_s]]},
                 {"range": f"AJ{r}", "values": [[formula_aj]]},
                 {"range": f"AK{r}", "values": [[formula_ak]]},
             ], value_input_option="USER_ENTERED")
-            logger.info("Формулы S/AJ/AK вставлены в строку %s листа '%s'", r, month_ws.title)
+            logger.info(
+                "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s)",
+                r, month_ws.title, position in _SIMPLE_H_POSITIONS,
+            )
         except Exception as e:
             logger.warning(
                 "Не удалось вставить формулы в строку %s листа '%s': %s",

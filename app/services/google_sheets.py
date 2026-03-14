@@ -426,23 +426,23 @@ class GoogleSheetsClient:
         try:
             r = new_row
             formula_s = (
-                f'=SUMPRODUCT(IF(D{r}:R{r}="",0,IF(ISNUMBER(FIND("/",D{r}:R{r})),'
-                f'IFERROR(VALUE(LEFT(D{r}:R{r},FIND("/",D{r}:R{r})-1)),0),'
-                f'IFERROR(VALUE(D{r}:R{r}),0))))&"/"&'
-                f'SUMPRODUCT(IF(ISNUMBER(FIND("/",D{r}:R{r})),'
-                f'IFERROR(VALUE(MID(D{r}:R{r},FIND("/",D{r}:R{r})+1,100)),0),0))'
+                f'=SUMPRODUCT(IF(D{r}:R{r}="";;0;;IF(ISNUMBER(FIND("/";D{r}:R{r}));'
+                f'IFERROR(VALUE(LEFT(D{r}:R{r};FIND("/";D{r}:R{r})-1));0);'
+                f'IFERROR(VALUE(D{r}:R{r});0))))&"/"&'
+                f'SUMPRODUCT(IF(ISNUMBER(FIND("/";D{r}:R{r}));'
+                f'IFERROR(VALUE(MID(D{r}:R{r};FIND("/";D{r}:R{r})+1;100));0);0))'
             )
             formula_aj = (
-                f'=SUMPRODUCT(IF(T{r}:AI{r}="",0,IF(ISNUMBER(FIND("/",T{r}:AI{r})),'
-                f'IFERROR(VALUE(LEFT(T{r}:AI{r},FIND("/",T{r}:AI{r})-1)),0),'
-                f'IFERROR(VALUE(T{r}:AI{r}),0))))&"/"&'
-                f'SUMPRODUCT(IF(ISNUMBER(FIND("/",T{r}:AI{r})),'
-                f'IFERROR(VALUE(MID(T{r}:AI{r},FIND("/",T{r}:AI{r})+1,100)),0),0))'
+                f'=SUMPRODUCT(IF(T{r}:AI{r}="";;0;;IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
+                f'IFERROR(VALUE(LEFT(T{r}:AI{r};FIND("/";T{r}:AI{r})-1));0);'
+                f'IFERROR(VALUE(T{r}:AI{r});0))))&"/"&'
+                f'SUMPRODUCT(IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
+                f'IFERROR(VALUE(MID(T{r}:AI{r};FIND("/";T{r}:AI{r})+1;100));0);0))'
             )
             formula_ak = (
-                f'=(VALUE(LEFT(S{r},FIND("/",S{r})-1))+VALUE(LEFT(AJ{r},FIND("/",AJ{r})-1)))'
+                f'=(VALUE(LEFT(S{r};FIND("/";S{r})-1))+VALUE(LEFT(AJ{r};FIND("/";AJ{r})-1)))'
                 f'&"/"&'
-                f'(VALUE(MID(S{r},FIND("/",S{r})+1,100))+VALUE(MID(AJ{r},FIND("/",AJ{r})+1,100)))'
+                f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
             )
             month_ws.batch_update([
                 {"range": f"S{r}", "values": [[formula_s]]},

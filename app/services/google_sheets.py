@@ -422,6 +422,23 @@ class GoogleSheetsClient:
             position,
         )
 
+        # Задать текстовый формат для строки данных, чтобы Google Sheets
+        # не интерпретировал "1.5" или "10/1.5" как даты
+        try:
+            month_ws.format(
+                f"D{new_row}:AN{new_row}",
+                {"numberFormat": {"type": "TEXT"}},
+            )
+            logger.info(
+                "ensure_user: TEXT-формат задан для D%s:AN%s листа '%s'",
+                new_row, new_row, month_ws.title,
+            )
+        except Exception as e:
+            logger.warning(
+                "ensure_user: не удалось задать TEXT-формат для строки %s: %s",
+                new_row, e,
+            )
+
         # Вставить итоговые формулы в S, AJ, AK новой строки
         _SIMPLE_H_POSITIONS = {
             "Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",

@@ -15,11 +15,11 @@ from aiogram.types import (
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
-from app.services.timeparsing import parse_shift, check_overlap
+from app.services.timeparsing import parse_shift, check_overlap, _parse_time, round_to_half
 from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
 
 userhours_router = Router()
-logger = logging.getLogger("app")
+logger = logging.getLogger(__name__)
 error_logger = logging.getLogger("errors")
 
 try:
@@ -87,6 +87,7 @@ async def cmd_shift(message: Message, state: FSMContext):
 
     user_data = get_user(tg_id)
     if not user_data or user_data.get("role") != "user":
+        await message.answer("❌ Внесение смен недоступно для вашей роли.")
         return
 
     if sheets_client is None:
@@ -254,9 +255,14 @@ async def _process_waiter_shift_input(message: Message, state: FSMContext) -> No
             result = parse_shift(text, "Официант")
             if result is None:
                 await message.answer("❌ Не удалось распознать формат смены.")
+                _mg_photos[mgid] = None  # sentinel: группа помечена как ошибочная
                 return
             _mg_photos[mgid] = []
             _mg_context[mgid] = (message, state, result)
+
+        if _mg_photos[mgid] is None:
+            # Группа уже помечена как ошибочная — игнорируем последующие фото
+            return
 
         _mg_photos[mgid].append(photo_file_id)
 
@@ -408,78 +414,6 @@ async def _send_waiter_report(
 
 
 # ---------------------------------------------------------------------------
-# Официант — callback апрува фото
-# ---------------------------------------------------------------------------
-
-@userhours_router.callback_query(lambda c: c.data and c.data.startswith("approve_ah:"))
-async def approve_ah_callback(callback: CallbackQuery) -> None:
-    # approve_ah:{telegram_id}:{date_str}:{h}:{N}:{value}
-    parts = (callback.data or "").split(":")
-    if len(parts) != 6:
-        logger.error(
-            "approve_ah_callback: неверное число частей (%d) в callback_data: %s",
-            len(parts), callback.data,
-        )
-        await callback.answer("❌ Некорректные данные.")
-        return
-
-    telegram_id = int(parts[1])
-    date_str = parts[2]
-    h = float(parts[3])
-    N = int(parts[4])
-    value = int(parts[5])
-    h_str = f"{h:.1f}"
-    ah = value * 0.5
-
-    # Парсим дату из "DD.MM.YY"
-    day_s, month_s, year_s = date_str.split(".")
-    day, month, year = int(day_s), int(month_s), 2000 + int(year_s)
-
-    if sheets_client is None:
-        await callback.answer("❌ Ошибка подключения к таблице.")
-        return
-
-    try:
-        sheets_client.write_shift(telegram_id, day, month, year, h, ah)
-    except Exception:
-        error_logger.exception("approve_ah: ошибка записи для user=%s date=%s", telegram_id, date_str)
-        await callback.answer("❌ Ошибка записи.")
-        return
-
-    logger.info(
-        "approve_ah: user=%s date=%s H=%s AH=%s (%s фото из %s), admin=%s",
-        telegram_id, date_str, h_str, _fmt_h(ah), value, N, callback.from_user.id,
-    )
-
-    # Редактируем сообщение: убираем кнопки, добавляем итог
-    ah_str = _fmt_h(ah)
-    original_text = callback.message.text or ""
-    new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
-    try:
-        await callback.message.edit_text(new_text, reply_markup=None)
-    except Exception as e:
-        error_logger.error("approve_ah: не удалось отредактировать сообщение: %s", e)
-
-    await callback.answer()
-
-    # Уведомление официанту
-    if value == 0:
-        waiter_text = (
-            f"📋 Смена {date_str} обработана\n"
-            f"Часы смены = {_fmt_h(h)} ч | Доп. часов не засчитано"
-        )
-    else:
-        waiter_text = (
-            f"📋 Смена {date_str} обработана\n"
-            f"Часы смены = {_fmt_h(h)} ч | Доп. часы = {ah_str} ч ({value} фото из {N})"
-        )
-    try:
-        await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
-    except Exception as e:
-        error_logger.error("approve_ah: не удалось уведомить официанта %s: %s", telegram_id, e)
-
-
-# ---------------------------------------------------------------------------
 # Бармен / Барбэк — шаг 2: парсинг основной смены
 # ---------------------------------------------------------------------------
 
@@ -512,7 +446,7 @@ async def _process_bar_shift_input(message: Message, state: FSMContext, position
 # ---------------------------------------------------------------------------
 
 async def _process_bar_ah_input(message: Message, state: FSMContext, position: str) -> None:
-    from app.services.timeparsing import _parse_time  # локальный импорт — внутренняя функция
+    import re as _re
 
     text = (message.text or "").strip()
     data = await state.get_data()
@@ -525,7 +459,6 @@ async def _process_bar_ah_input(message: Message, state: FSMContext, position: s
         return
 
     # Нормализуем разделитель (en/em dash и пробелы вокруг тире)
-    import re as _re
     normalized = _re.sub(r'\s*[–—\-]\s*', '-', text)
     time_result = _parse_time(normalized)
 
@@ -551,7 +484,6 @@ async def _process_bar_ah_input(message: Message, state: FSMContext, position: s
     else:
         raw_ah = ah_end - ah_start
 
-    from app.services.timeparsing import round_to_half
     ah = round_to_half(raw_ah)
 
     await state.update_data(ah=ah, ah_start=ah_start, ah_end=ah_end)
@@ -641,7 +573,7 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
 
 async def _process_simple_h_shifts(message: Message, state: FSMContext, position: str) -> None:
     tg_id = message.from_user.id
-    lines = [l.strip() for l in (message.text or "").splitlines() if l.strip()]
+    lines = [line.strip() for line in (message.text or "").splitlines() if line.strip()]
 
     if not lines:
         await message.answer("❌ Сообщение пустое. Введите смену(ы).")

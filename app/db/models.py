@@ -2,6 +2,7 @@ import sqlite3
 import logging
 from datetime import datetime
 from typing import Optional, Dict
+from zoneinfo import ZoneInfo
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ def save_user(telegram_id: int, full_name: str, role: str,
             cursor.execute('''
                 INSERT OR REPLACE INTO users (telegram_id, full_name, role, department, hourly_rate, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (telegram_id, full_name, role, department, hourly_rate, datetime.now().isoformat()))
+            ''', (telegram_id, full_name, role, department, hourly_rate, datetime.now(ZoneInfo("Europe/Moscow")).isoformat()))
             conn.commit()
         logger.info("Пользователь %s (%s) сохранён в БД с ролью %s", telegram_id, full_name, role)
     except sqlite3.Error as e:

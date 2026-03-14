@@ -53,12 +53,17 @@ def _split_hm(raw: str, minutes_str: str | None) -> tuple[int, int] | None:
     Разбивает сырую часть времени на (hours, minutes).
     Если минуты переданы отдельно (через . или :) — используем их.
     Иначе, если raw — 4 цифры — трактуем как HHMM.
+    Возвращает None при выходе за допустимые диапазоны.
     """
     if minutes_str is not None:
-        return int(raw), int(minutes_str)
-    if len(raw) == 4:
-        return int(raw[:2]), int(raw[2:])
-    return int(raw), 0
+        h, m = int(raw), int(minutes_str)
+    elif len(raw) == 4:
+        h, m = int(raw[:2]), int(raw[2:])
+    else:
+        h, m = int(raw), 0
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return h, m
 
 
 def _parse_time(token: str) -> tuple[float, float] | None:
@@ -93,10 +98,11 @@ def check_overlap(start1: float, end1: float, start2: float, end2: float) -> boo
         t = s
         if s == e:
             return slots
-        while True:
-            slots.add(t)
+        max_iter = 48  # максимум 48 получасов в сутках
+        for _ in range(max_iter):
+            slots.add(round(t, 6))
             t = (t + 0.5) % 24
-            if t == e % 24:
+            if abs(t - e % 24) < 0.001:
                 break
         return slots
 

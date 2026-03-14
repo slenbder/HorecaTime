@@ -334,7 +334,6 @@ async def process_fio(message: Message, state: FSMContext):
         row_index = sheets_client.add_or_update_pending_user(
             telegram_id=tg_id,
             nickname=nickname,
-            tg_name=tg_name,
             fio_from_user=fio,
             department=department,
             position=position,

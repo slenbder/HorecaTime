@@ -575,6 +575,8 @@ class GoogleSheetsClient:
             cell_value, user_row, day_col, sheet_name,
         )
 
+        self._auto_resize_columns(ws)
+
     # --- Отчёты ---
 
     def get_summary_hours(self, telegram_id: int, sheet_name: str) -> Optional[Dict[str, float]]:

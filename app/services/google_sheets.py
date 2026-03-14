@@ -112,7 +112,7 @@ class GoogleSheetsClient:
         ws = self._get_techlist_worksheet()
         all_values: List[List[Any]] = ws.get_all_values()
 
-        for row_idx, row in enumerate(all_values, start=1):
+        for row_idx, row in enumerate(all_values[1:], start=2):
             if not row:
                 continue
 
@@ -176,12 +176,14 @@ class GoogleSheetsClient:
 
         if existing:
             row_idx = existing["row_index"]
-            ws.update_cell(row_idx, COL_NICKNAME, nickname)
-            ws.update_cell(row_idx, COL_TG_NAME, tg_name)
-            ws.update_cell(row_idx, COL_FIO_FROM_USER, fio_from_user)
-            ws.update_cell(row_idx, COL_LAST_SEEN_AT, str(now_unix))
-            ws.update_cell(row_idx, COL_DEPARTMENT, department)
-            ws.update_cell(row_idx, COL_POSITION, position)
+            ws.batch_update([
+                {"range": f"B{row_idx}", "values": [[nickname]]},
+                {"range": f"C{row_idx}", "values": [[tg_name]]},
+                {"range": f"F{row_idx}", "values": [[str(now_unix)]]},
+                {"range": f"H{row_idx}", "values": [[fio_from_user]]},
+                {"range": f"K{row_idx}", "values": [[department]]},
+                {"range": f"L{row_idx}", "values": [[position]]},
+            ])
             logger.info(
                 "Обновлена заявка пользователя %s в строке %s",
                 telegram_id,
@@ -490,10 +492,14 @@ class GoogleSheetsClient:
                 f"Пользователь {telegram_id} не найден в листе '{sheet_name}'"
             )
 
-        # Найти столбец дня в строке 3 (индекс 2)
+        # Найти столбец дня в строке 3 (индекс 2).
+        # Данные хранятся в диапазонах D–R (4–18) и T–AI (20–35); колонка S (19) пропускается.
+        _VALID_DATA_COLS = set(range(4, 19)) | set(range(20, 36))
         date_row = all_values[2] if len(all_values) > 2 else []
         day_col = None
         for j, cell in enumerate(date_row, start=1):
+            if j not in _VALID_DATA_COLS:
+                continue
             try:
                 if int(str(cell).strip()) == day:
                     day_col = j
@@ -534,6 +540,12 @@ class GoogleSheetsClient:
                 continue
             row_dept = str(row[COL_DEPARTMENT - 1]).strip()
             if row_dept != dept:
+                continue
+            approved = (
+                len(row) >= COL_IN_STAFF_TABLE
+                and str(row[COL_IN_STAFF_TABLE - 1]).strip().upper() == "ДА"
+            )
+            if not approved:
                 continue
             tg_id_raw = str(row[COL_TELEGRAM_ID - 1]).strip()
             if not tg_id_raw.lstrip("-").isdigit():

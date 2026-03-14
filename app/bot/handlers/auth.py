@@ -37,12 +37,6 @@ from config import (
 auth_router = Router()
 logger = logging.getLogger(__name__)
 
-# Используем значения из config напрямую (они уже списки int)
-SUPERADMINS = SUPERADMIN_IDS
-ADMIN_HALL = ADMIN_HALL_IDS
-ADMIN_BAR = ADMIN_BAR_IDS
-ADMIN_KITCHEN = ADMIN_KITCHEN_IDS
-
 VALID_POSITIONS: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
@@ -56,10 +50,10 @@ POSITION_KEYBOARDS = {
     "Кухня": kitchen_positions_keyboard,
 }
 
-logger.info(f"Загружены SUPERADMINS: {SUPERADMINS}")
-logger.info(f"Загружены ADMIN_HALL: {ADMIN_HALL}")
-logger.info(f"Загружены ADMIN_BAR: {ADMIN_BAR}")
-logger.info(f"Загружены ADMIN_KITCHEN: {ADMIN_KITCHEN}")
+logger.debug("Загружены SUPERADMIN_IDS: %s", SUPERADMIN_IDS)
+logger.debug("Загружены ADMIN_HALL_IDS: %s", ADMIN_HALL_IDS)
+logger.debug("Загружены ADMIN_BAR_IDS: %s", ADMIN_BAR_IDS)
+logger.debug("Загружены ADMIN_KITCHEN_IDS: %s", ADMIN_KITCHEN_IDS)
 
 # Инициализируем клиента Google Sheets
 try:
@@ -136,13 +130,13 @@ async def cmd_start(message: Message, state: FSMContext):
         logger.info(f"Результат проверки авторизации: {is_approved}")
 
         if is_approved:
-            await message.answer(
-                "Ты уже авторизован в системе ✅\n"
-                "Скоро здесь появится главное меню (внесение часов, отчёты и т.д.)."
-            )
             cached = RolesCacheService.get_user_role(tg_id)
-            if cached and cached.get("role") and cached["role"] != "guest":
-                await set_commands_for_role(message.bot, tg_id, cached["role"])
+            role = cached["role"] if cached and cached.get("role") and cached["role"] != "guest" else "user"
+            await set_commands_for_role(message.bot, tg_id, role)
+            await message.answer(
+                "👋 Добро пожаловать!",
+                reply_markup=main_menu_keyboard(role),
+            )
             await state.clear()
             return
     except Exception as e:
@@ -311,8 +305,8 @@ async def process_fio(message: Message, state: FSMContext):
             ]
         ])
 
-        logger.info("Отправка заявки администратора суперадминам: %s", SUPERADMINS)
-        for sa_id in SUPERADMINS:
+        logger.info("Отправка заявки администратора суперадминам: %s", SUPERADMIN_IDS)
+        for sa_id in SUPERADMIN_IDS:
             try:
                 await message.bot.send_message(chat_id=sa_id, text=admin_request_text, reply_markup=keyboard)
                 logger.info("Заявка администратора отправлена суперадмину %s", sa_id)
@@ -388,14 +382,14 @@ async def process_fio(message: Message, state: FSMContext):
 
     # Админы подразделений
     if department == "Зал":
-        recipients.extend(ADMIN_HALL)
+        recipients.extend(ADMIN_HALL_IDS)
     elif department == "Бар":
-        recipients.extend(ADMIN_BAR)
+        recipients.extend(ADMIN_BAR_IDS)
     elif department == "Кухня":
-        recipients.extend(ADMIN_KITCHEN)
+        recipients.extend(ADMIN_KITCHEN_IDS)
 
     # Суперадмины получают все заявки
-    recipients.extend(SUPERADMINS)
+    recipients.extend(SUPERADMIN_IDS)
 
     # Убираем дубли
     recipients = list(set(recipients))
@@ -456,16 +450,25 @@ async def process_approve_admin(callback: CallbackQuery):
             await callback.answer("Неизвестный отдел", show_alert=True)
             return
 
+        # Получаем ФИО из Техлиста
+        full_name = ""
+        if sheets_client is not None:
+            try:
+                user_info = sheets_client.get_user_from_techlist(user_tg_id)
+                full_name = user_info.get("fio_from_user", "") if user_info else ""
+            except Exception:
+                logger.warning("approve_admin: не удалось получить ФИО из Техлиста для %s", user_tg_id)
+
         # Сохраняем в SQLite
         RolesCacheService.update_user_role(
             telegram_id=user_tg_id,
-            full_name="",  # ФИО неизвестно на этом этапе
+            full_name=full_name,
             role=role,
             department=dept,
         )
         logger.info(
-            "Суперадмин %s одобрил администратора %s, роль=%s, отдел=%s",
-            callback.from_user.id, user_tg_id, role, dept,
+            "Суперадмин %s одобрил администратора %s (%s), роль=%s, отдел=%s",
+            callback.from_user.id, user_tg_id, full_name, role, dept,
         )
 
         # Устанавливаем команды для новой роли
@@ -526,6 +529,11 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
     Формат callback_data: approve_ah:{telegram_id}:{date_str}:{h}:{N}:{value}
     Пример:               approve_ah:6073294261:03.03.26:10.0:3:2
     """
+    # Защита от двойного нажатия: если уже одобрено — игнорируем
+    if "✅ Одобрено" in (callback.message.text or ""):
+        await callback.answer("Уже обработано другим администратором.")
+        return
+
     parts = (callback.data or "").split(":")
     if len(parts) != 6:
         logger.error(
@@ -927,7 +935,7 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@auth_router.callback_query(F.data.startswith("dismiss_confirm:"))
+@auth_router.callback_query(AuthStates.waiting_dismiss_confirm, F.data.startswith("dismiss_confirm:"))
 async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
     admin_id = callback.from_user.id
     target_id = int(callback.data.split(":")[1])

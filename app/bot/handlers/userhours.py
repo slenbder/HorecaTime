@@ -1,9 +1,16 @@
+import asyncio
 import logging
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Message,
+)
 
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
@@ -58,6 +65,17 @@ SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS
 
 BAR_POSITIONS = {"Бармен", "Барбэк"}
 
+# ---------------------------------------------------------------------------
+# Буферы для накопления медиагрупп (Официант)
+# ---------------------------------------------------------------------------
+
+# mgid → [file_id, ...]
+_mg_photos: dict[str, list[str]] = {}
+# mgid → (first_message, state, parsed_result)
+_mg_context: dict[str, tuple] = {}
+# mgids уже запланированных для обработки
+_mg_scheduled: set[str] = set()
+
 
 # ---------------------------------------------------------------------------
 # Шаг 1 — /shift
@@ -104,6 +122,13 @@ async def cmd_shift(message: Message, state: FSMContext):
             "<code>13.03 10:00-20:00</code>"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
+    elif position == "Официант":
+        await message.answer(
+            "Введите смену и прикрепите фото чеков/карт одним сообщением:\n\n"
+            "<code>13.03 10:00-20:00</code>\n"
+            "📎 (прикрепите фото)"
+        )
+        await state.set_state(ShiftStates.waiting_shift_input)
     else:
         await message.answer("❌ Команда /shift пока недоступна для вашей позиции.")
         await state.clear()
@@ -124,6 +149,10 @@ async def process_shift_input(message: Message, state: FSMContext):
 
     if position in BAR_POSITIONS:
         await _process_bar_shift_input(message, state, position)
+        return
+
+    if position == "Официант":
+        await _process_waiter_shift_input(message, state)
         return
 
     # --- Раннер: одна смена, затем AH ---
@@ -192,6 +221,188 @@ async def process_ah_input(message: Message, state: FSMContext):
 async def process_ah_comment(message: Message, state: FSMContext):
     await state.update_data(comment=(message.text or "").strip())
     await _write_and_finish(message, state)
+
+
+# ---------------------------------------------------------------------------
+# Официант — шаг 2: накопление медиагруппы + запись
+# ---------------------------------------------------------------------------
+
+async def _process_waiter_shift_input(message: Message, state: FSMContext) -> None:
+    tg_id = message.from_user.id
+
+    if not message.photo:
+        await message.answer("❌ Прикрепите фото чеков/карт к сообщению со сменой.")
+        return
+
+    photo_file_id = message.photo[-1].file_id
+    mgid = message.media_group_id
+
+    if mgid:
+        # Медиагруппа: накапливаем фото
+        if mgid not in _mg_photos:
+            # Первое фото группы — парсим заголовок
+            text = (message.caption or "").strip()
+            result = parse_shift(text, "Официант")
+            if result is None:
+                await message.answer("❌ Не удалось распознать формат смены.")
+                return
+            _mg_photos[mgid] = []
+            _mg_context[mgid] = (message, state, result)
+
+        _mg_photos[mgid].append(photo_file_id)
+
+        if mgid not in _mg_scheduled:
+            _mg_scheduled.add(mgid)
+            asyncio.create_task(_delayed_process_waiter(mgid))
+    else:
+        # Одиночное фото
+        text = (message.caption or message.text or "").strip()
+        result = parse_shift(text, "Официант")
+        if result is None:
+            await message.answer("❌ Не удалось распознать формат смены.")
+            return
+        await _send_waiter_report(message, state, tg_id, result, [photo_file_id])
+
+
+async def _delayed_process_waiter(mgid: str) -> None:
+    """Ждёт 1 сек, чтобы все фото группы успели накопиться, затем обрабатывает."""
+    await asyncio.sleep(1.0)
+
+    message, state, result = _mg_context.pop(mgid)
+    photo_ids = _mg_photos.pop(mgid)
+    _mg_scheduled.discard(mgid)
+
+    await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)
+
+
+async def _send_waiter_report(
+    message: Message,
+    state: FSMContext,
+    tg_id: int,
+    result: dict,
+    photo_ids: list[str],
+) -> None:
+    """Отвечает официанту, сбрасывает FSM, отправляет отчёт admin_hall."""
+    day   = result["day"]
+    month = result["month"]
+    year  = result["year"]
+    h     = result["h"]
+    start = result["start"]
+    end   = result["end"]
+    date  = _date_str(day, month, year)
+    N     = len(photo_ids)
+
+    user_data = get_user(tg_id)
+    full_name = user_data["full_name"] if user_data else str(tg_id)
+
+    await state.clear()
+    await message.answer("✅ Смена принята, ожидайте подтверждения администратора.")
+
+    if not ADMIN_HALL_IDS:
+        logger.warning(
+            "_send_waiter_report: ADMIN_HALL_IDS пустой, отчёт официанта %s не отправлен",
+            tg_id,
+        )
+        return
+
+    time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+    h_str = _fmt_h(h)
+    approval_text = (
+        f"👤 {full_name} — Официант\n"
+        f"📅 {date}\n"
+        f"⏱ {time_range} → Часы смены = {h_str} ч\n"
+        f"📎 Приложено фото: {N}\n\n"
+        f"✅ Сколько фото засчитать как доп. часы?"
+    )
+
+    buttons = [
+        InlineKeyboardButton(
+            text=str(i),
+            callback_data=f"approve_ah:{tg_id}:{date}:{h_str}:{N}:{i}",
+        )
+        for i in range(N + 1)
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+    for admin_id in ADMIN_HALL_IDS:
+        try:
+            media = [InputMediaPhoto(media=fid) for fid in photo_ids]
+            await message.bot.send_media_group(chat_id=admin_id, media=media)
+            await message.bot.send_message(
+                chat_id=admin_id, text=approval_text, reply_markup=keyboard
+            )
+            logger.info("_send_waiter_report: уведомлен admin_hall %s", admin_id)
+        except Exception as e:
+            error_logger.error(
+                "_send_waiter_report: не удалось уведомить admin_hall %s: %s", admin_id, e
+            )
+
+
+# ---------------------------------------------------------------------------
+# Официант — callback апрува фото
+# ---------------------------------------------------------------------------
+
+@userhours_router.callback_query(lambda c: c.data and c.data.startswith("approve_ah:"))
+async def approve_ah_callback(callback: CallbackQuery) -> None:
+    # approve_ah:{telegram_id}:{date_str}:{h}:{N}:{value}
+    parts = (callback.data or "").split(":")
+    if len(parts) != 6:
+        await callback.answer("❌ Некорректные данные.")
+        return
+
+    _, tg_id_str, date_str, h_str, n_str, value_str = parts
+    telegram_id = int(tg_id_str)
+    h = float(h_str)
+    N = int(n_str)
+    value = int(value_str)
+    ah = value * 0.5
+
+    # Парсим дату из "DD.MM.YY"
+    day_s, month_s, year_s = date_str.split(".")
+    day, month, year = int(day_s), int(month_s), 2000 + int(year_s)
+
+    if sheets_client is None:
+        await callback.answer("❌ Ошибка подключения к таблице.")
+        return
+
+    try:
+        sheets_client.write_shift(telegram_id, day, month, year, h, ah)
+    except Exception:
+        error_logger.exception("approve_ah: ошибка записи для user=%s date=%s", telegram_id, date_str)
+        await callback.answer("❌ Ошибка записи.")
+        return
+
+    logger.info(
+        "approve_ah: user=%s date=%s H=%s AH=%s (%s фото из %s), admin=%s",
+        telegram_id, date_str, h_str, _fmt_h(ah), value, N, callback.from_user.id,
+    )
+
+    # Редактируем сообщение: убираем кнопки, добавляем итог
+    ah_str = _fmt_h(ah)
+    original_text = callback.message.text or ""
+    new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
+    try:
+        await callback.message.edit_text(new_text, reply_markup=None)
+    except Exception as e:
+        error_logger.error("approve_ah: не удалось отредактировать сообщение: %s", e)
+
+    await callback.answer()
+
+    # Уведомление официанту
+    if value == 0:
+        waiter_text = (
+            f"📋 Смена {date_str} обработана\n"
+            f"Часы смены = {_fmt_h(h)} ч | Доп. часов не засчитано"
+        )
+    else:
+        waiter_text = (
+            f"📋 Смена {date_str} обработана\n"
+            f"Часы смены = {_fmt_h(h)} ч | Доп. часы = {ah_str} ч ({value} фото из {N})"
+        )
+    try:
+        await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
+    except Exception as e:
+        error_logger.error("approve_ah: не удалось уведомить официанта %s: %s", telegram_id, e)
 
 
 # ---------------------------------------------------------------------------

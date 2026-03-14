@@ -81,6 +81,28 @@ def _parse_time(token: str) -> tuple[float, float] | None:
     return start, end
 
 
+def check_overlap(start1: float, end1: float, start2: float, end2: float) -> bool:
+    """
+    Возвращает True если два временных диапазона пересекаются.
+    Учитывает переход через полночь: если start > end — диапазон идёт через 00:00.
+    Алгоритм: развернуть каждый диапазон в набор получасов [0.0, 0.5, ...23.5],
+    проверить пересечение множеств.
+    """
+    def expand(s: float, e: float) -> set:
+        slots: set[float] = set()
+        t = s
+        if s == e:
+            return slots
+        while True:
+            slots.add(t)
+            t = (t + 0.5) % 24
+            if t == e % 24:
+                break
+        return slots
+
+    return bool(expand(start1, end1) & expand(start2, end2))
+
+
 def parse_shift(text: str, position: str) -> dict | None:
     """
     Разбирает строку вида "{дата} {время}" и возвращает словарь:

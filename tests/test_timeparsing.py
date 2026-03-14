@@ -1,6 +1,6 @@
 import datetime
 import pytest
-from app.services.timeparsing import parse_shift, round_to_half, is_weekend
+from app.services.timeparsing import parse_shift, round_to_half, is_weekend, check_overlap
 
 
 # ---------------------------------------------------------------------------
@@ -196,3 +196,25 @@ class TestInvalidInput:
 
     def test_three_tokens(self):
         assert parse_shift("15.03.25 10-18 extra", "Раннер") is None
+
+
+# ---------------------------------------------------------------------------
+# check_overlap
+# ---------------------------------------------------------------------------
+
+class TestCheckOverlap:
+    def test_no_overlap_sequential(self):
+        # 10-20 и 22-02 — не пересекаются
+        assert check_overlap(10.0, 20.0, 22.0, 2.0) is False
+
+    def test_overlap_crossing(self):
+        # 10-22 и 20-02 — пересекаются (20:00–22:00)
+        assert check_overlap(10.0, 22.0, 20.0, 2.0) is True
+
+    def test_both_midnight_overlap(self):
+        # 22-02 и 01-04 — оба через полночь, пересекаются (01:00–02:00)
+        assert check_overlap(22.0, 2.0, 1.0, 4.0) is True
+
+    def test_boundary_no_overlap(self):
+        # 10-20 и 20-23 — конец одного = начало другого, не пересекаются
+        assert check_overlap(10.0, 20.0, 20.0, 23.0) is False

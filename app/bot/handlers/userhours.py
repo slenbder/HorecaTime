@@ -8,8 +8,8 @@ from aiogram.types import Message
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
-from app.services.timeparsing import parse_shift
-from config import ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
+from app.services.timeparsing import parse_shift, check_overlap
+from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
 
 userhours_router = Router()
 logger = logging.getLogger("app")
@@ -56,6 +56,8 @@ HALL_SIMPLE_POSITIONS = {"Хостесс", "Менеджер"}
 # Позиции с механикой «только H, одна ставка, несколько смен одним сообщением»
 SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS
 
+BAR_POSITIONS = {"Бармен", "Барбэк"}
+
 
 # ---------------------------------------------------------------------------
 # Шаг 1 — /shift
@@ -96,6 +98,12 @@ async def cmd_shift(message: Message, state: FSMContext):
             "<code>13.03 10:00-20:00\n14.03 09:00-18:00</code>"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
+    elif position in BAR_POSITIONS:
+        await message.answer(
+            "Введите смену:\n\n"
+            "<code>13.03 10:00-20:00</code>"
+        )
+        await state.set_state(ShiftStates.waiting_shift_input)
     else:
         await message.answer("❌ Команда /shift пока недоступна для вашей позиции.")
         await state.clear()
@@ -112,6 +120,10 @@ async def process_shift_input(message: Message, state: FSMContext):
 
     if position in SIMPLE_H_POSITIONS:
         await _process_simple_h_shifts(message, state, position)
+        return
+
+    if position in BAR_POSITIONS:
+        await _process_bar_shift_input(message, state, position)
         return
 
     # --- Раннер: одна смена, затем AH ---
@@ -144,6 +156,14 @@ async def process_shift_input(message: Message, state: FSMContext):
 
 @userhours_router.message(ShiftStates.waiting_ah_input)
 async def process_ah_input(message: Message, state: FSMContext):
+    data = await state.get_data()
+    position = data.get("position", "Раннер")
+
+    if position in BAR_POSITIONS:
+        await _process_bar_ah_input(message, state, position)
+        return
+
+    # --- Раннер ---
     text = (message.text or "").strip().replace(",", ".")
 
     try:
@@ -172,6 +192,162 @@ async def process_ah_input(message: Message, state: FSMContext):
 async def process_ah_comment(message: Message, state: FSMContext):
     await state.update_data(comment=(message.text or "").strip())
     await _write_and_finish(message, state)
+
+
+# ---------------------------------------------------------------------------
+# Бармен / Барбэк — шаг 2: парсинг основной смены
+# ---------------------------------------------------------------------------
+
+async def _process_bar_shift_input(message: Message, state: FSMContext, position: str) -> None:
+    result = parse_shift(message.text or "", position)
+
+    if result is None:
+        await message.answer(
+            "❌ Не удалось распознать формат. Попробуйте ещё раз:\n\n"
+            "<code>13.03 10:00-20:00</code>"
+        )
+        return
+
+    await state.update_data(**result)
+
+    h = result["h"]
+    date = _date_str(result["day"], result["month"], result["year"])
+
+    await message.answer(
+        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\n"
+        f"Были тусовочные часы?\n"
+        f"Введите диапазон или 0:\n\n"
+        f"<code>22:00-02:00</code>"
+    )
+    await state.set_state(ShiftStates.waiting_ah_input)
+
+
+# ---------------------------------------------------------------------------
+# Бармен / Барбэк — шаг 3: парсинг тусовочных часов + проверка нахлёста
+# ---------------------------------------------------------------------------
+
+async def _process_bar_ah_input(message: Message, state: FSMContext, position: str) -> None:
+    from app.services.timeparsing import _parse_time  # локальный импорт — внутренняя функция
+
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    shift_start: float = data["start"]
+    shift_end: float = data["end"]
+
+    if text == "0":
+        await state.update_data(ah=0.0)
+        await _write_and_finish_bar(message, state, position)
+        return
+
+    # Нормализуем разделитель (en/em dash и пробелы вокруг тире)
+    import re as _re
+    normalized = _re.sub(r'\s*[–—\-]\s*', '-', text)
+    time_result = _parse_time(normalized)
+
+    if time_result is None:
+        await message.answer(
+            "❌ Не удалось распознать формат. "
+            "Введите диапазон (например <code>22:00-02:00</code>) или 0:"
+        )
+        return
+
+    ah_start, ah_end = time_result
+
+    if check_overlap(shift_start, shift_end, ah_start, ah_end):
+        s_str = f"{_fmt_time(shift_start)}–{_fmt_time(shift_end)}"
+        await message.answer(
+            f"❌ Тусовочные часы пересекаются с основной сменой ({s_str}).\n"
+            f"Исправьте диапазон:"
+        )
+        return
+
+    if ah_start > ah_end:
+        raw_ah = 24 - ah_start + ah_end
+    else:
+        raw_ah = ah_end - ah_start
+
+    from app.services.timeparsing import round_to_half
+    ah = round_to_half(raw_ah)
+
+    await state.update_data(ah=ah, ah_start=ah_start, ah_end=ah_end)
+    await _write_and_finish_bar(message, state, position)
+
+
+# ---------------------------------------------------------------------------
+# Запись + уведомления для Бармена / Барбэка
+# ---------------------------------------------------------------------------
+
+async def _write_and_finish_bar(message: Message, state: FSMContext, position: str) -> None:
+    tg_id = message.from_user.id
+    data = await state.get_data()
+
+    day   = data["day"]
+    month = data["month"]
+    year  = data["year"]
+    h     = data["h"]
+    ah    = data.get("ah", 0.0)
+    start = data.get("start", 0.0)
+    end   = data.get("end", 0.0)
+
+    date = _date_str(day, month, year)
+
+    if sheets_client is None:
+        await message.answer("❌ Ошибка записи. Попробуйте позже.")
+        await state.clear()
+        return
+
+    try:
+        sheets_client.write_shift(tg_id, day, month, year, h, ah)
+    except Exception:
+        error_logger.exception("_write_and_finish_bar: ошибка записи смены для %s", tg_id)
+        await message.answer("❌ Ошибка записи. Попробуйте позже.")
+        await state.clear()
+        return
+
+    user_data = get_user(tg_id)
+    full_name = user_data["full_name"] if user_data else str(tg_id)
+
+    logger.info(
+        "Смена записана: user=%s (%s), date=%s, H=%s, AH=%s, position=%s",
+        tg_id, full_name, date, _fmt_h(h), _fmt_h(ah), position,
+    )
+
+    # Ответ пользователю
+    if ah > 0:
+        await message.answer(
+            f"✅ Смена {date} записана\n"
+            f"Часы смены = {_fmt_h(h)} ч | Тусовочные = {_fmt_h(ah)} ч"
+        )
+    else:
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
+
+    # Уведомление администраторам бара
+    time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+    if ah > 0:
+        admin_text = (
+            f"📋 {position} внёс смену\n\n"
+            f"👤 {full_name}\n"
+            f"📅 {date}\n"
+            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч\n"
+            f"🎉 Тусовочные = {_fmt_h(ah)} ч"
+        )
+    else:
+        admin_text = (
+            f"📋 {position} внёс смену\n\n"
+            f"👤 {full_name}\n"
+            f"📅 {date}\n"
+            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
+        )
+
+    recipients = list(set(ADMIN_BAR_IDS + SUPERADMIN_IDS))
+    for admin_id in recipients:
+        try:
+            await message.bot.send_message(chat_id=admin_id, text=admin_text)
+            logger.info("Notified admin %s", admin_id)
+        except Exception as e:
+            error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
+
+    await state.clear()
 
 
 # ---------------------------------------------------------------------------

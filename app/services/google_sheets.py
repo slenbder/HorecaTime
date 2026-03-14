@@ -97,6 +97,25 @@ class GoogleSheetsClient:
         self._spreadsheet = self._client.open_by_key(SPREADSHEET_ID)
         logger.info("Переподключение к Google Sheets выполнено успешно")
 
+    def _auto_resize_columns(self, worksheet) -> None:
+        """Автоподбор ширины всех столбцов листа через Sheets API."""
+        try:
+            body = {
+                "requests": [{
+                    "autoResizeDimensions": {
+                        "dimensions": {
+                            "sheetId": worksheet.id,
+                            "dimension": "COLUMNS",
+                            "startIndex": 0,
+                            "endIndex": worksheet.col_count,
+                        }
+                    }
+                }]
+            }
+            self._spreadsheet.batch_update(body)
+            logger.info("_auto_resize_columns: выполнено для листа '%s'", worksheet.title)
+        except Exception as e:
+            logger.warning("_auto_resize_columns: не удалось изменить ширину столбцов для '%s': %s", worksheet.title, e)
 
     def get_user_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -173,6 +192,7 @@ class GoogleSheetsClient:
             telegram_id,
             next_row,
         )
+        self._auto_resize_columns(ws)
         return next_row
 
     def is_user_approved(self, telegram_id: int) -> bool:
@@ -401,6 +421,7 @@ class GoogleSheetsClient:
             department,
             position,
         )
+        self._auto_resize_columns(month_ws)
         return True
 
     # --- Запись смены ---
@@ -547,7 +568,7 @@ class GoogleSheetsClient:
                     month_row, month_ws.title, telegram_id,
                 )
             else:
-                logger.warning(
+                logger.debug(
                     "dismiss_employee: пользователь %s не найден в месячном листе '%s', "
                     "окраска пропущена",
                     telegram_id, month_ws.title,
@@ -574,7 +595,7 @@ class GoogleSheetsClient:
                     tech_row, telegram_id,
                 )
             else:
-                logger.warning(
+                logger.debug(
                     "dismiss_employee: пользователь %s не найден в Техлисте, удаление пропущено",
                     telegram_id,
                 )

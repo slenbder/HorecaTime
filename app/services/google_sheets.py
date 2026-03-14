@@ -458,6 +458,11 @@ class GoogleSheetsClient:
                 {"range": f"AJ{r}", "values": [[formula_aj]]},
                 {"range": f"AK{r}", "values": [[formula_ak]]},
             ], value_input_option="USER_ENTERED")
+            if position in _SIMPLE_H_POSITIONS:
+                _num_fmt = {"numberFormat": {"type": "NUMBER", "pattern": "0.##"}}
+                month_ws.format(f"S{r}", _num_fmt)
+                month_ws.format(f"AJ{r}", _num_fmt)
+                month_ws.format(f"AK{r}", _num_fmt)
             logger.info(
                 "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s)",
                 r, month_ws.title, position in _SIMPLE_H_POSITIONS,
@@ -546,7 +551,8 @@ class GoogleSheetsClient:
 
         cell_value = f"{_fmt(h)}/{_fmt(ah)}" if ah > 0 else _fmt(h)
 
-        ws.update_cell(user_row, day_col, cell_value)
+        cell_addr = gspread.utils.rowcol_to_a1(user_row, day_col)
+        ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
         logger.info(
             "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
             cell_value, user_row, day_col, sheet_name,

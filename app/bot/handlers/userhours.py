@@ -367,8 +367,17 @@ async def _delayed_process_waiter(mgid: str) -> None:
     """Ждёт 1 сек, чтобы все фото группы успели накопиться, затем обрабатывает."""
     await asyncio.sleep(1.0)
 
+    photo_ids = _mg_photos.get(mgid)
+    if photo_ids is None:
+        _mg_photos.pop(mgid, None)
+        _mg_context.pop(mgid, None)
+        _mg_scheduled.discard(mgid)
+        return
+    if not photo_ids:
+        return
+
     message, state, result = _mg_context.pop(mgid)
-    photo_ids = _mg_photos.pop(mgid)
+    _mg_photos.pop(mgid)
     _mg_scheduled.discard(mgid)
 
     await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)

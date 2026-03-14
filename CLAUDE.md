@@ -27,7 +27,7 @@ project/
 │   ├── bot/
 │   │   ├── handlers/
 │   │   │   ├── auth.py            ✅ approve-flow, admin registration, /dismiss (superadmin)
-│   │   │   ├── userhours.py       ✅ FSM внесения смены (Раннер, Кухня, Хостесс, Менеджер)
+│   │   │   ├── userhours.py       ✅ FSM внесения смены (Раннер, Кухня, Хостесс, Менеджер, Бармен, Барбэк)
 │   │   │   ├── userreports.py     ❌
 │   │   │   ├── admin.py           ❌
 │   │   │   └── superadmin.py      ❌
@@ -372,6 +372,11 @@ VALID_POSITIONS = {
 - Константы KITCHEN_POSITIONS, HALL_SIMPLE_POSITIONS, SIMPLE_H_POSITIONS в userhours.py
 - Уведомления: Кухня → ADMIN_KITCHEN_IDS + SUPERADMIN_IDS, Зал → ADMIN_HALL_IDS + SUPERADMIN_IDS
 
+**Этап 4B ✅ завершён:**
+- FSM внесения смены для Бармена/Барбэка (H + тусовочные AH, проверка нахлёста)
+- `check_overlap()` в timeparsing.py — проверка пересечения временных диапазонов с учётом перехода через полночь
+- 37 тестов (pytest), все зелёные
+
 **Вне этапов ✅ завершено:**
 - Регистрация администраторов через бота (выбор "Сотрудник / Администратор" на первом шаге)
 - Заявка администратора летит только SUPERADMIN_IDS, апрув суперадмином
@@ -379,7 +384,6 @@ VALID_POSITIONS = {
 - Функция увольнения /dismiss (superadmin + developer): inline-флоу, подтверждение, красит ячейку A в #FFCCCC, удаляет из Техлиста и SQLite, сбрасывает FSM/кеш/команды, уведомляет сотрудника
 
 **Что впереди:**
-- Этап 4B: FSM для Бармена/Барбэка (H + AH тусовочные, проверка нахлёста)
 - Этап 4C: FSM для Официанта (H + фото + медиагруппа + inline апрув admin_hall)
 - Этапы 5-10: отчёты, ставки, рассылки, PDF, переключение месяца, Docker, деплой
 

@@ -149,6 +149,7 @@ async def cmd_shift(message: Message, state: FSMContext):
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position == "Официант":
+        logger.info("cmd_shift: Официант, user=%s, устанавливаем waiting_shift_input", tg_id)
         await message.answer(
             "Введите смену:\n\n"
             f"<code>{example}</code>\n\n"
@@ -255,6 +256,14 @@ async def process_ah_comment(message: Message, state: FSMContext):
 
 async def _process_waiter_shift_input(message: Message, state: FSMContext) -> None:
     tg_id = message.from_user.id
+    logger.info(
+        "_process_waiter_shift_input: вызван, user=%s, has_photo=%s, "
+        "has_caption=%s, media_group_id=%s",
+        tg_id,
+        bool(message.photo),
+        bool(message.caption),
+        message.media_group_id,
+    )
 
     if not message.photo:
         # Без фото — парсим текст и записываем сразу

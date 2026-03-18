@@ -213,6 +213,7 @@ class GoogleSheetsClient:
 
         try:
             month_ws = self._get_current_month_worksheet()
+            all_rows = month_ws.get_all_values()
         except Exception as e:
             logger.warning(
                 "Не удалось получить текущий лист месяца при проверке полной авторизации %s: %s",
@@ -220,8 +221,6 @@ class GoogleSheetsClient:
                 e,
             )
             return False
-
-        all_rows = month_ws.get_all_values()
         if not all_rows:
             logger.warning("Лист месяца '%s' пуст", month_ws.title)
             return False
@@ -513,6 +512,7 @@ class GoogleSheetsClient:
 
         try:
             ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
         except WorksheetNotFound:
             raise ValueError(f"Лист '{sheet_name}' не найден")
         except Exception as e:
@@ -520,10 +520,9 @@ class GoogleSheetsClient:
             self._reconnect()
             try:
                 ws = self._spreadsheet.worksheet(sheet_name)
+                all_values = ws.get_all_values()
             except WorksheetNotFound:
                 raise ValueError(f"Лист '{sheet_name}' не найден")
-
-        all_values = ws.get_all_values()
 
         # Найти строку пользователя по telegram_id в колонке B (индекс 1)
         user_row = None
@@ -583,14 +582,19 @@ class GoogleSheetsClient:
         logger.info("get_summary_hours: telegram_id=%s, sheet='%s'", telegram_id, sheet_name)
         try:
             ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
         except WorksheetNotFound:
             logger.info("get_summary_hours: лист '%s' не найден", sheet_name)
             return None
         except Exception as e:
-            logger.warning("get_summary_hours: ошибка доступа к листу '%s': %s", sheet_name, e)
-            return None
-
-        all_values = ws.get_all_values()
+            logger.warning("get_summary_hours: ошибка доступа к листу '%s', реконнект: %s", sheet_name, e)
+            self._reconnect()
+            try:
+                ws = self._spreadsheet.worksheet(sheet_name)
+                all_values = ws.get_all_values()
+            except WorksheetNotFound:
+                logger.info("get_summary_hours: лист '%s' не найден после реконнекта", sheet_name)
+                return None
 
         user_row_idx = None
         for i, row in enumerate(all_values, start=1):
@@ -649,8 +653,14 @@ class GoogleSheetsClient:
         Каждый элемент: {"telegram_id": int, "full_name": str, "position": str}
         """
         logger.info("get_employees_by_dept: dept=%s", dept)
-        ws = self._get_techlist_worksheet()
-        all_values = ws.get_all_values()
+        try:
+            ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
+            all_values = ws.get_all_values()
+        except Exception as e:
+            logger.warning("get_employees_by_dept: ошибка доступа, реконнект: %s", e)
+            self._reconnect()
+            ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
+            all_values = ws.get_all_values()
         result = []
         for row in all_values[1:]:
             if len(row) < COL_DEPARTMENT:

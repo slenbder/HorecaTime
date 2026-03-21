@@ -93,30 +93,33 @@ def _build_hours_second_lines(data: dict, position: str | None, rate: dict | Non
         f"📊 {sheet_label}",
         f"Отработано: {_fmt(h2)} ч",
     ]
-    if position in _BAR_POSITIONS and ah2 > 0:
+    if ah2 > 0:
         lines.append(f"Доп. часы: {_fmt(ah2)} ч")
-    elif ah2 > 0:
-        lines.append(f"Доп. часы: {_fmt(ah2)} ч")
-
-    lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
-    if ah_tot > 0 and position not in _BAR_POSITIONS:
-        lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
 
     if rate is None:
         lines.append("(ставка не установлена — обратитесь к администратору)")
+        lines.append("")
+        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+        if ah_tot > 0 and position not in _BAR_POSITIONS:
+            lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
         return lines
 
     base = rate["base_rate"]
     extra = rate["extra_rate"]
 
     if position in _BAR_POSITIONS:
-        earnings_month_h = h_tot * base
-        earnings_month_ah = ah_tot * (extra or base)
-        earnings_month = earnings_month_h + earnings_month_ah
-        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_month)} р")
+        earnings_second = h2 * base + ah2 * (extra or base)
+        earnings_total = h_tot * base + ah_tot * (extra or base)
     else:
-        earnings_month = h_tot * base
-        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_month)} р")
+        earnings_second = h2 * base
+        earnings_total = h_tot * base
+
+    lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
+    lines.append("")
+    lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+    if ah_tot > 0 and position not in _BAR_POSITIONS:
+        lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+    lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
 
     return lines
 

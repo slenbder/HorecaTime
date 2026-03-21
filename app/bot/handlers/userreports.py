@@ -59,7 +59,7 @@ def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None
     if rate is None:
         if ah > 0 and position not in _BAR_POSITIONS:
             lines.append(f"Доп. часы: {_fmt(ah)} ч")
-        lines.append("(ставка не установлена)")
+        lines.append("(ставка не установлена — обратитесь к администратору)")
         return lines
 
     base = rate["base_rate"]
@@ -103,7 +103,7 @@ def _build_hours_second_lines(data: dict, position: str | None, rate: dict | Non
         lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
 
     if rate is None:
-        lines.append("(ставка не установлена)")
+        lines.append("(ставка не установлена — обратитесь к администратору)")
         return lines
 
     base = rate["base_rate"]
@@ -139,7 +139,9 @@ async def cmd_hours_first(message: Message):
         await message.answer("📊 Данные не найдены.")
         return
 
-    position = user_data.get("position")
+    position = user_data.get("position") or None
+    if not position:
+        logger.warning("hours_first: у пользователя %s не установлена позиция", tg_id)
     rate = await get_rate(DB_PATH, position) if position else None
 
     lines = _build_hours_first_lines(data, position, rate)
@@ -164,7 +166,9 @@ async def cmd_hours_second(message: Message):
         await message.answer("📊 Данные не найдены.")
         return
 
-    position = user_data.get("position")
+    position = user_data.get("position") or None
+    if not position:
+        logger.warning("hours_second: у пользователя %s не установлена позиция", tg_id)
     rate = await get_rate(DB_PATH, position) if position else None
 
     lines = _build_hours_second_lines(data, position, rate)
@@ -190,7 +194,9 @@ async def cmd_hours_last(message: Message):
         await message.answer("📊 Данные за прошлый месяц недоступны.")
         return
 
-    position = user_data.get("position")
+    position = user_data.get("position") or None
+    if not position:
+        logger.warning("hours_last: у пользователя %s не установлена позиция", tg_id)
     rate = await get_rate(DB_PATH, position) if position else None
 
     lines = _build_hours_second_lines(data, position, rate, sheet_label=sheet_name)

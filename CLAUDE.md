@@ -28,7 +28,7 @@ project/
 │   │   ├── handlers/
 │   │   │   ├── auth.py            ✅ approve-flow, admin registration, /dismiss (superadmin)
 │   │   │   ├── userhours.py       ✅ FSM внесения смены (все позиции)
-│   │   │   ├── userreports.py     ❌
+│   │   │   ├── userreports.py     ✅ /hours_first, /hours_second, /hours_last
 │   │   │   ├── admin.py           ❌
 │   │   │   └── superadmin.py      ❌
 │   │   ├── fsm/
@@ -42,7 +42,7 @@ project/
 │   │   └── middlewares/
 │   │       └── roles.py           ✅ импорт ID из config (не из auth.py!), роль developer
 │   ├── services/
-│   │   ├── google_sheets.py       ✅ _reconnect(), write_shift(), user_exists_in_techlist(), dismiss_employee(), get_employees_by_dept()
+│   │   ├── google_sheets.py       ✅ _reconnect(), write_shift(), user_exists_in_techlist(), dismiss_employee(), get_employees_by_dept(), get_summary_hours()
 │   │   ├── roles_cache.py         ✅
 │   │   ├── timeparsing.py         ✅ parse_shift, round_to_half, is_weekend
 │   │   ├── businesslogic.py       ❌
@@ -164,7 +164,7 @@ fsm_storage (
 | `admin_bar` | + ставки и сообщения бара |
 | `admin_kitchen` | + ставки кухни |
 | `superadmin` | Всё + переключение месяца + PDF + рассылка всем |
-| `developer` | Все права superadmin + алерты об ошибках + получает сообщения через inline-кнопку «Написать разработчику», которая отображается у всех ролей кроме него самого |
+| `developer` | Все права superadmin + алерты об ошибках + получает сообщения через команду /contact_dev (есть у всех ролей кроме developer) |
 
 ---
 
@@ -384,6 +384,13 @@ VALID_POSITIONS = {
 - approve_ah_callback в auth.py: запись H+AH, редактирование сообщения, уведомление официанту
 - Фикс: approve_ah_callback зарегистрирован до generic approve_ хендлера
 
+**Этап 5 ✅ завершён:**
+- `/hours_first`, `/hours_second`, `/hours_last` в userreports.py
+- `get_summary_hours()` в google_sheets.py — читает S/AJ/AK, парсит H/AH
+- Формулы S/AJ/AK вставляются автоматически при добавлении сотрудника в месячный лист
+- Название текущего листа определяется динамически: `_get_current_sheet_name()` → "Март 2026"
+- Колонки D:AN месячного листа форматируются как "Обычный текст" (предотвращает интерпретацию как даты)
+
 **Вне этапов ✅ завершено:**
 - Регистрация администраторов через бота (выбор "Сотрудник / Администратор" на первом шаге)
 - Заявка администратора летит только SUPERADMIN_IDS, апрув суперадмином
@@ -391,7 +398,6 @@ VALID_POSITIONS = {
 - Функция увольнения /dismiss (superadmin + developer): inline-флоу, подтверждение, красит ячейку A в #FFCCCC, удаляет из Техлиста и SQLite, сбрасывает FSM/кеш/команды, уведомляет сотрудника
 
 **Что впереди:**
-- Этап 5: отчёты по часам (/hours_first, /hours_second, /hours_last)
 - Этап 6: заработок (/earnings)
 - Этап 7: ставки (просмотр и изменение)
 - Этап 8: рассылки (/message_dept, /message_all)
@@ -415,3 +421,4 @@ VALID_POSITIONS = {
 - Красные строки **НЕ переносятся** в новый месячный лист (реализуется в `monthly_switch.py`)
 - Из Техлиста строка **удаляется**, из месячного листа — **нет** (история часов сохраняется)
 - **approve_ah_callback** должен быть зарегистрирован ДО generic `approve_`/`reject_` хендлеров в `auth.py`
+- **Формат ячеек месячного листа**: колонки D:AN должны иметь формат "Обычный текст" (настраивается вручную в таблице) — иначе числа интерпретируются как даты

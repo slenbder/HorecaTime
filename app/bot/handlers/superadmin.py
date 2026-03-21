@@ -44,11 +44,13 @@ def _rates_keyboard() -> InlineKeyboardMarkup:
 @superadmin_router.message(Command("rates_all"))
 async def cmd_rates_all(message: Message):
     tg_id = message.from_user.id
+    logger.info("/rates_all: запрос от %s", tg_id)
     user_data = get_user(tg_id)
     if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
+        logger.warning("/rates_all: доступ запрещён для %s (user_data=%s)", tg_id, user_data)
         return
 
-    logger.info("rates_all: запрос от %s", tg_id)
+    logger.info("/rates_all: роль подтверждена, загружаю ставки")
     rates = await get_all_rates(DB_PATH)
 
     # Сортируем в нужном порядке
@@ -72,11 +74,13 @@ async def cmd_rates_all(message: Message):
 @superadmin_router.message(Command("set_rate_all"))
 async def cmd_set_rate_all(message: Message, state: FSMContext):
     tg_id = message.from_user.id
+    logger.info("/set_rate_all: запрос от %s", tg_id)
     user_data = get_user(tg_id)
     if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
+        logger.warning("/set_rate_all: доступ запрещён для %s (user_data=%s)", tg_id, user_data)
         return
 
-    logger.info("set_rate_all: запрос от %s", tg_id)
+    logger.info("/set_rate_all: роль подтверждена, запускаю FSM")
     await state.set_state(SetRateStates.waiting_set_rate_position)
     await message.answer(
         "Выберите позицию для изменения ставки:",

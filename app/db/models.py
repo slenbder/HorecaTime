@@ -3,9 +3,28 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict
 from zoneinfo import ZoneInfo
+
+import aiosqlite
+
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_RATES = [
+    ("Бармен",            350.0, 500.0),
+    ("Барбэк",            250.0, 400.0),
+    ("Официант",          250.0, None),
+    ("Раннер",            200.0, 300.0),
+    ("Хостесс",           200.0, None),
+    ("Менеджер",          350.0, None),
+    ("Горячий цех",       280.0, None),
+    ("Холодный цех",      250.0, None),
+    ("Кондитерский цех",  280.0, None),
+    ("Заготовочный цех",  230.0, None),
+    ("Коренной цех",      230.0, None),
+    ("МОП",               180.0, None),
+    ("Су-шеф",            500.0, None),
+]
 
 
 def init_database():
@@ -21,10 +40,17 @@ def init_database():
                 full_name TEXT NOT NULL,
                 role TEXT NOT NULL,
                 department TEXT,
+                position TEXT,
                 hourly_rate REAL,
                 created_at TEXT NOT NULL
             )
         ''')
+        # Миграция: добавить колонку position для уже существующих баз
+        try:
+            cursor.execute('ALTER TABLE users ADD COLUMN position TEXT')
+        except sqlite3.OperationalError:
+            pass  # колонка уже существует
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS fsm_storage (
                 chat_id INTEGER NOT NULL,
@@ -35,12 +61,30 @@ def init_database():
                 PRIMARY KEY (chat_id, user_id, bot_id)
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS rates (
+                position   TEXT PRIMARY KEY,
+                base_rate  REAL NOT NULL,
+                extra_rate REAL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+        # Вставить дефолтные ставки, если таблица пустая
+        cursor.execute('SELECT COUNT(*) FROM rates')
+        if cursor.fetchone()[0] == 0:
+            now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
+            cursor.executemany(
+                'INSERT INTO rates (position, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?)',
+                [(pos, base, extra, now_str) for pos, base, extra in _DEFAULT_RATES],
+            )
+            logger.info("Дефолтные ставки вставлены в таблицу rates")
         conn.commit()
     logger.info("База данных успешно инициализирована")
 
 
 def save_user(telegram_id: int, full_name: str, role: str,
-              department: Optional[str] = None, hourly_rate: Optional[float] = None):
+              department: Optional[str] = None, hourly_rate: Optional[float] = None,
+              position: Optional[str] = None):
     """
     Сохраняет или обновляет пользователя в БД.
     """
@@ -48,9 +92,11 @@ def save_user(telegram_id: int, full_name: str, role: str,
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR REPLACE INTO users (telegram_id, full_name, role, department, hourly_rate, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (telegram_id, full_name, role, department, hourly_rate, datetime.now(ZoneInfo("Europe/Moscow")).isoformat()))
+                INSERT OR REPLACE INTO users
+                    (telegram_id, full_name, role, department, position, hourly_rate, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (telegram_id, full_name, role, department, position, hourly_rate,
+                  datetime.now(ZoneInfo("Europe/Moscow")).isoformat()))
             conn.commit()
         logger.info("Пользователь %s (%s) сохранён в БД с ролью %s", telegram_id, full_name, role)
     except sqlite3.Error as e:
@@ -66,7 +112,7 @@ def get_user(telegram_id: int) -> Optional[Dict]:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                'SELECT telegram_id, full_name, role, department, hourly_rate '
+                'SELECT telegram_id, full_name, role, department, position, hourly_rate '
                 'FROM users WHERE telegram_id = ?',
                 (telegram_id,)
             )
@@ -77,7 +123,8 @@ def get_user(telegram_id: int) -> Optional[Dict]:
                     "full_name": row[1],
                     "role": row[2],
                     "department": row[3],
-                    "hourly_rate": row[4],
+                    "position": row[4],
+                    "hourly_rate": row[5],
                 }
     except sqlite3.Error as e:
         logger.error("Ошибка при получении пользователя %s из БД: %s", telegram_id, e)
@@ -118,3 +165,49 @@ def delete_user(telegram_id: int) -> None:
     except sqlite3.Error as e:
         logger.error("Ошибка при удалении пользователя %s из БД: %s", telegram_id, e)
         raise
+
+
+# --- Ставки (async, aiosqlite) ---
+
+async def get_rate(db_path: str, position: str) -> Optional[Dict]:
+    """
+    Возвращает ставку для позиции: {"position", "base_rate", "extra_rate"} или None.
+    """
+    logger.info("get_rate: position=%s", position)
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT position, base_rate, extra_rate FROM rates WHERE position = ?',
+            (position,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {"position": row[0], "base_rate": row[1], "extra_rate": row[2]}
+
+
+async def get_all_rates(db_path: str) -> list[dict]:
+    """
+    Возвращает все ставки, отсортированные по позиции.
+    """
+    logger.info("get_all_rates: запрос всех ставок")
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT position, base_rate, extra_rate FROM rates ORDER BY position'
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [{"position": r[0], "base_rate": r[1], "extra_rate": r[2]} for r in rows]
+
+
+async def update_rate(db_path: str, position: str, base_rate: float,
+                      extra_rate: Optional[float] = None) -> None:
+    """
+    Обновляет ставку для позиции.
+    """
+    now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
+    logger.info("update_rate: position=%s base_rate=%s extra_rate=%s", position, base_rate, extra_rate)
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            'INSERT OR REPLACE INTO rates (position, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?)',
+            (position, base_rate, extra_rate, now_str),
+        )
+        await db.commit()

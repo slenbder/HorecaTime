@@ -139,6 +139,7 @@ users (
     full_name   TEXT NOT NULL,
     role        TEXT NOT NULL,  -- user/admin_hall/admin_bar/admin_kitchen/superadmin/developer
     department  TEXT,           -- Зал/Бар/Кухня
+    position    TEXT,           -- Официант/Раннер/Бармен/... (заполняется при approve)
     hourly_rate REAL,
     created_at  TEXT NOT NULL
 )
@@ -151,6 +152,15 @@ fsm_storage (
     data    TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (chat_id, user_id, bot_id)
 )
+
+rates (
+    position   TEXT PRIMARY KEY,  -- Бармен/Барбэк/Официант/Раннер/...
+    base_rate  REAL NOT NULL,     -- базовая ставка р/час
+    extra_rate REAL,              -- повышенная/тусовочная ставка (NULL если нет)
+    updated_at TEXT NOT NULL
+)
+-- Дефолтные значения вставляются при init_database() если таблица пустая.
+-- Позиции с extra_rate: Бармен (350/500), Барбэк (250/400), Раннер (200/300).
 ```
 
 ---

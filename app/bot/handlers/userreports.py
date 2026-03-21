@@ -6,8 +6,9 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from app.db.models import get_user
+from app.db.models import get_user, get_rate
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
+from config import DB_PATH
 
 reports_router = Router()
 logger = logging.getLogger(__name__)
@@ -20,6 +21,10 @@ except Exception:
     sheets_client = None
 
 _ALLOWED_ROLES = {"user", "admin_hall", "admin_bar", "admin_kitchen", "superadmin", "developer"}
+
+# Позиции, у которых AH = тусовочные часы с повышенной ставкой
+_BAR_POSITIONS = {"Бармен", "Барбэк"}
+
 
 def _get_current_sheet_name() -> str:
     now = datetime.now(ZoneInfo("Europe/Moscow"))
@@ -35,6 +40,85 @@ def _get_last_month_sheet_name() -> str:
 
 def _fmt(v: float) -> str:
     return str(int(v)) if v == int(v) else str(v)
+
+
+def _fmt_money(v: float) -> str:
+    return str(int(v)) if v == int(v) else f"{v:.2f}"
+
+
+def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None) -> list[str]:
+    h = data["h_first"]
+    ah = data["ah_first"]
+    lines = [
+        "📊 Первая половина месяца (1–15)",
+        f"Отработано: {_fmt(h)} ч",
+    ]
+    if position in _BAR_POSITIONS and ah > 0:
+        lines.append(f"Доп. часы: {_fmt(ah)} ч")
+
+    if rate is None:
+        if ah > 0 and position not in _BAR_POSITIONS:
+            lines.append(f"Доп. часы: {_fmt(ah)} ч")
+        lines.append("(ставка не установлена)")
+        return lines
+
+    base = rate["base_rate"]
+    extra = rate["extra_rate"]
+
+    if position in _BAR_POSITIONS:
+        earnings_h = h * base
+        earnings_ah = ah * (extra or base)
+        total = earnings_h + earnings_ah
+        lines.append(f"• {_fmt(h)} ч × {_fmt_money(base)} р = {_fmt_money(earnings_h)} р")
+        if ah > 0:
+            lines.append(f"• Доп. часы: {_fmt(ah)} ч × {_fmt_money(extra or base)} р = {_fmt_money(earnings_ah)} р")
+        lines.append(f"💰 Итого: {_fmt_money(total)} р")
+    else:
+        if ah > 0:
+            lines.append(f"Доп. часы: {_fmt(ah)} ч")
+        earnings = h * base
+        lines.append(f"💰 Заработок: {_fmt_money(earnings)} р")
+
+    return lines
+
+
+def _build_hours_second_lines(data: dict, position: str | None, rate: dict | None,
+                               sheet_label: str = "Вторая половина месяца (16–конец)") -> list[str]:
+    h2 = data["h_second"]
+    ah2 = data["ah_second"]
+    h_tot = data["h_total"]
+    ah_tot = data["ah_total"]
+
+    lines = [
+        f"📊 {sheet_label}",
+        f"Отработано: {_fmt(h2)} ч",
+    ]
+    if position in _BAR_POSITIONS and ah2 > 0:
+        lines.append(f"Доп. часы: {_fmt(ah2)} ч")
+    elif ah2 > 0:
+        lines.append(f"Доп. часы: {_fmt(ah2)} ч")
+
+    lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+    if ah_tot > 0 and position not in _BAR_POSITIONS:
+        lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+
+    if rate is None:
+        lines.append("(ставка не установлена)")
+        return lines
+
+    base = rate["base_rate"]
+    extra = rate["extra_rate"]
+
+    if position in _BAR_POSITIONS:
+        earnings_month_h = h_tot * base
+        earnings_month_ah = ah_tot * (extra or base)
+        earnings_month = earnings_month_h + earnings_month_ah
+        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_month)} р")
+    else:
+        earnings_month = h_tot * base
+        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_month)} р")
+
+    return lines
 
 
 @reports_router.message(Command("hours_first"))
@@ -55,13 +139,10 @@ async def cmd_hours_first(message: Message):
         await message.answer("📊 Данные не найдены.")
         return
 
-    lines = [
-        "📊 Первая половина месяца (1–15)",
-        f"Отработано: {_fmt(data['h_first'])} ч",
-    ]
-    if data["ah_first"] > 0:
-        lines.append(f"Доп. часы: {_fmt(data['ah_first'])} ч")
+    position = user_data.get("position")
+    rate = await get_rate(DB_PATH, position) if position else None
 
+    lines = _build_hours_first_lines(data, position, rate)
     await message.answer("\n".join(lines))
 
 
@@ -83,16 +164,10 @@ async def cmd_hours_second(message: Message):
         await message.answer("📊 Данные не найдены.")
         return
 
-    lines = [
-        "📊 Вторая половина месяца (16–конец)",
-        f"Отработано: {_fmt(data['h_second'])} ч",
-    ]
-    if data["ah_second"] > 0:
-        lines.append(f"Доп. часы: {_fmt(data['ah_second'])} ч")
-    lines.append(f"Всего за месяц: {_fmt(data['h_total'])} ч")
-    if data["ah_total"] > 0:
-        lines.append(f"Доп. часы за месяц: {_fmt(data['ah_total'])} ч")
+    position = user_data.get("position")
+    rate = await get_rate(DB_PATH, position) if position else None
 
+    lines = _build_hours_second_lines(data, position, rate)
     await message.answer("\n".join(lines))
 
 
@@ -112,15 +187,11 @@ async def cmd_hours_last(message: Message):
 
     data = sheets_client.get_summary_hours(tg_id, sheet_name)
     if data is None:
-        # Различаем: лист не существует vs пользователь не найден
         await message.answer("📊 Данные за прошлый месяц недоступны.")
         return
 
-    lines = [
-        f"📊 {sheet_name}",
-        f"Отработано: {_fmt(data['h_total'])} ч",
-    ]
-    if data["ah_total"] > 0:
-        lines.append(f"Доп. часы: {_fmt(data['ah_total'])} ч")
+    position = user_data.get("position")
+    rate = await get_rate(DB_PATH, position) if position else None
 
+    lines = _build_hours_second_lines(data, position, rate, sheet_label=sheet_name)
     await message.answer("\n".join(lines))

@@ -9,6 +9,7 @@ _USER_COMMANDS = [
     BotCommand(command="shift",        description="Внести смену"),
     BotCommand(command="hours_first",  description="Часы: первая половина месяца"),
     BotCommand(command="hours_second", description="Часы: вторая половина месяца"),
+    BotCommand(command="hours_last",   description="Часы за прошлый месяц"),
     BotCommand(command="earnings",     description="Мой заработок"),
     BotCommand(command="schedule",     description="График на месяц"),
     BotCommand(command="contact_dev",  description="Написать разработчику"),

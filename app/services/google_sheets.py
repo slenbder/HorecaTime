@@ -527,7 +527,7 @@ class GoogleSheetsClient:
         # Найти строку пользователя по telegram_id в колонке B (индекс 1)
         user_row = None
         for i, row in enumerate(all_values, start=1):
-            if len(row) > 1 and str(row[1]).strip() == str(telegram_id):
+            if len(row) > 1 and str(row[1]).strip() == str(telegram_id).strip():
                 user_row = i
                 break
 
@@ -598,7 +598,7 @@ class GoogleSheetsClient:
 
         user_row_idx = None
         for i, row in enumerate(all_values, start=1):
-            if len(row) > 1 and str(row[1]).strip() == str(telegram_id):
+            if len(row) > 1 and str(row[1]).strip() == str(telegram_id).strip():
                 user_row_idx = i
                 break
 
@@ -701,7 +701,7 @@ class GoogleSheetsClient:
             all_values = month_ws.get_all_values()
             month_row = None
             for i, row in enumerate(all_values, start=1):
-                if len(row) > 1 and str(row[1]).strip() == str(telegram_id):
+                if len(row) > 1 and str(row[1]).strip() == str(telegram_id).strip():
                     month_row = i
                     break
             if month_row is not None:

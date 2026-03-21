@@ -21,7 +21,9 @@ except Exception:
 
 _ALLOWED_ROLES = {"user", "admin_hall", "admin_bar", "admin_kitchen", "superadmin", "developer"}
 
-CURRENT_SHEET = "Часы"
+def _get_current_sheet_name() -> str:
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    return f"{MONTH_NAMES_RU[now.month]} {now.year}"
 
 
 def _get_last_month_sheet_name() -> str:
@@ -48,7 +50,7 @@ async def cmd_hours_first(message: Message):
         await message.answer("📊 Ошибка подключения к таблице.")
         return
 
-    data = sheets_client.get_summary_hours(tg_id, CURRENT_SHEET)
+    data = sheets_client.get_summary_hours(tg_id, _get_current_sheet_name())
     if data is None:
         await message.answer("📊 Данные не найдены.")
         return
@@ -76,7 +78,7 @@ async def cmd_hours_second(message: Message):
         await message.answer("📊 Ошибка подключения к таблице.")
         return
 
-    data = sheets_client.get_summary_hours(tg_id, CURRENT_SHEET)
+    data = sheets_client.get_summary_hours(tg_id, _get_current_sheet_name())
     if data is None:
         await message.answer("📊 Данные не найдены.")
         return

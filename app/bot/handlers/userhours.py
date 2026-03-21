@@ -94,8 +94,8 @@ def _shift_example() -> str:
 
 # mgid → [file_id, ...]
 _mg_photos: dict[str, list[str]] = {}
-# mgid → (first_message, state, parsed_result)
-_mg_context: dict[str, tuple] = {}
+# mgid → {"caption": str|None, "message": Message, "state": FSMContext}
+_mg_context: dict[str, dict] = {}
 # mgids уже запланированных для обработки
 _mg_scheduled: set[str] = set()
 
@@ -149,6 +149,7 @@ async def cmd_shift(message: Message, state: FSMContext):
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position == "Официант":
+        logger.info("cmd_shift: Официант, user=%s, устанавливаем waiting_shift_input", tg_id)
         await message.answer(
             "Введите смену:\n\n"
             f"<code>{example}</code>\n\n"
@@ -255,6 +256,14 @@ async def process_ah_comment(message: Message, state: FSMContext):
 
 async def _process_waiter_shift_input(message: Message, state: FSMContext) -> None:
     tg_id = message.from_user.id
+    logger.info(
+        "_process_waiter_shift_input: вызван, user=%s, has_photo=%s, "
+        "has_caption=%s, media_group_id=%s",
+        tg_id,
+        bool(message.photo),
+        bool(message.caption),
+        message.media_group_id,
+    )
 
     if not message.photo:
         # Без фото — парсим текст и записываем сразу
@@ -273,21 +282,21 @@ async def _process_waiter_shift_input(message: Message, state: FSMContext) -> No
     mgid = message.media_group_id
 
     if mgid:
-        # Медиагруппа: накапливаем фото
+        # Медиагруппа: накапливаем фото, caption читаем из любого фото группы
         if mgid not in _mg_photos:
-            # Первое фото группы — парсим заголовок
-            text = (message.caption or "").strip()
-            result = parse_shift(text, "Официант")
-            if result is None:
-                await message.answer("❌ Не удалось распознать формат смены.")
-                _mg_photos[mgid] = None  # sentinel: группа помечена как ошибочная
-                return
             _mg_photos[mgid] = []
-            _mg_context[mgid] = (message, state, result)
+            _mg_context[mgid] = {"caption": None, "message": message, "state": state}
 
         if _mg_photos[mgid] is None:
             # Группа уже помечена как ошибочная — игнорируем последующие фото
             return
+
+        if message.caption and _mg_context[mgid]["caption"] is None:
+            _mg_context[mgid]["caption"] = message.caption
+            logger.info(
+                "_process_waiter_shift_input: caption получен от фото в группе %s, user=%s",
+                mgid, tg_id,
+            )
 
         _mg_photos[mgid].append(photo_file_id)
 
@@ -367,9 +376,32 @@ async def _delayed_process_waiter(mgid: str) -> None:
     """Ждёт 1 сек, чтобы все фото группы успели накопиться, затем обрабатывает."""
     await asyncio.sleep(1.0)
 
-    message, state, result = _mg_context.pop(mgid)
-    photo_ids = _mg_photos.pop(mgid)
+    photo_ids = _mg_photos.get(mgid)
+    if photo_ids is None:
+        _mg_photos.pop(mgid, None)
+        _mg_context.pop(mgid, None)
+        _mg_scheduled.discard(mgid)
+        return
+    if not photo_ids:
+        return
+
+    ctx = _mg_context.pop(mgid)
+    _mg_photos.pop(mgid)
     _mg_scheduled.discard(mgid)
+
+    message = ctx["message"]
+    state = ctx["state"]
+    caption = (ctx["caption"] or "").strip()
+
+    logger.info(
+        "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
+        mgid, len(photo_ids), caption,
+    )
+
+    result = parse_shift(caption, "Официант")
+    if result is None:
+        await message.answer("❌ Не удалось распознать формат смены.")
+        return
 
     await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)
 

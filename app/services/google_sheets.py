@@ -213,6 +213,7 @@ class GoogleSheetsClient:
 
         try:
             month_ws = self._get_current_month_worksheet()
+            all_rows = month_ws.get_all_values()
         except Exception as e:
             logger.warning(
                 "Не удалось получить текущий лист месяца при проверке полной авторизации %s: %s",
@@ -220,8 +221,6 @@ class GoogleSheetsClient:
                 e,
             )
             return False
-
-        all_rows = month_ws.get_all_values()
         if not all_rows:
             logger.warning("Лист месяца '%s' пуст", month_ws.title)
             return False
@@ -422,34 +421,63 @@ class GoogleSheetsClient:
             position,
         )
 
-        # Вставить итоговые формулы H/AH в S, AJ, AK новой строки
+        # Задать текстовый формат для строки данных, чтобы Google Sheets
+        # не интерпретировал "1.5" или "10/1.5" как даты
+        try:
+            month_ws.format(
+                f"D{new_row}:AN{new_row}",
+                {"numberFormat": {"type": "TEXT"}},
+            )
+            logger.info(
+                "ensure_user: TEXT-формат задан для D%s:AN%s листа '%s'",
+                new_row, new_row, month_ws.title,
+            )
+        except Exception as e:
+            logger.warning(
+                "ensure_user: не удалось задать TEXT-формат для строки %s: %s",
+                new_row, e,
+            )
+
+        # Вставить итоговые формулы в S, AJ, AK новой строки
+        _SIMPLE_H_POSITIONS = {
+            "Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
+            "Заготовочный цех", "Коренной цех", "МОП", "Хостесс", "Менеджер",
+        }
         try:
             r = new_row
-            formula_s = (
-                f'=SUMPRODUCT(IF(D{r}:R{r}="";;0;;IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-                f'IFERROR(VALUE(LEFT(D{r}:R{r};FIND("/";D{r}:R{r})-1));0);'
-                f'IFERROR(VALUE(D{r}:R{r});0))))&"/"&'
-                f'SUMPRODUCT(IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-                f'IFERROR(VALUE(MID(D{r}:R{r};FIND("/";D{r}:R{r})+1;100));0);0))'
-            )
-            formula_aj = (
-                f'=SUMPRODUCT(IF(T{r}:AI{r}="";;0;;IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-                f'IFERROR(VALUE(LEFT(T{r}:AI{r};FIND("/";T{r}:AI{r})-1));0);'
-                f'IFERROR(VALUE(T{r}:AI{r});0))))&"/"&'
-                f'SUMPRODUCT(IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-                f'IFERROR(VALUE(MID(T{r}:AI{r};FIND("/";T{r}:AI{r})+1;100));0);0))'
-            )
-            formula_ak = (
-                f'=(VALUE(LEFT(S{r};FIND("/";S{r})-1))+VALUE(LEFT(AJ{r};FIND("/";AJ{r})-1)))'
-                f'&"/"&'
-                f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
-            )
+            if position in _SIMPLE_H_POSITIONS:
+                formula_s = f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IFERROR(VALUE(D{r}:R{r});0)))'
+                formula_aj = f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IFERROR(VALUE(T{r}:AI{r});0)))'
+                formula_ak = f'=S{r}+AJ{r}'
+            else:
+                formula_s = (
+                    f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IF(ISNUMBER(FIND("/";D{r}:R{r}));'
+                    f'IFERROR(VALUE(LEFT(D{r}:R{r};FIND("/";D{r}:R{r})-1));0);'
+                    f'IFERROR(VALUE(D{r}:R{r});0))))&"/"&'
+                    f'SUMPRODUCT(IF(ISNUMBER(FIND("/";D{r}:R{r}));'
+                    f'IFERROR(VALUE(MID(D{r}:R{r};FIND("/";D{r}:R{r})+1;100));0);0))'
+                )
+                formula_aj = (
+                    f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
+                    f'IFERROR(VALUE(LEFT(T{r}:AI{r};FIND("/";T{r}:AI{r})-1));0);'
+                    f'IFERROR(VALUE(T{r}:AI{r});0))))&"/"&'
+                    f'SUMPRODUCT(IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
+                    f'IFERROR(VALUE(MID(T{r}:AI{r};FIND("/";T{r}:AI{r})+1;100));0);0))'
+                )
+                formula_ak = (
+                    f'=(VALUE(LEFT(S{r};FIND("/";S{r})-1))+VALUE(LEFT(AJ{r};FIND("/";AJ{r})-1)))'
+                    f'&"/"&'
+                    f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
+                )
             month_ws.batch_update([
                 {"range": f"S{r}", "values": [[formula_s]]},
                 {"range": f"AJ{r}", "values": [[formula_aj]]},
                 {"range": f"AK{r}", "values": [[formula_ak]]},
             ], value_input_option="USER_ENTERED")
-            logger.info("Формулы S/AJ/AK вставлены в строку %s листа '%s'", r, month_ws.title)
+            logger.info(
+                "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s)",
+                r, month_ws.title, position in _SIMPLE_H_POSITIONS,
+            )
         except Exception as e:
             logger.warning(
                 "Не удалось вставить формулы в строку %s листа '%s': %s",
@@ -484,6 +512,7 @@ class GoogleSheetsClient:
 
         try:
             ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
         except WorksheetNotFound:
             raise ValueError(f"Лист '{sheet_name}' не найден")
         except Exception as e:
@@ -491,10 +520,9 @@ class GoogleSheetsClient:
             self._reconnect()
             try:
                 ws = self._spreadsheet.worksheet(sheet_name)
+                all_values = ws.get_all_values()
             except WorksheetNotFound:
                 raise ValueError(f"Лист '{sheet_name}' не найден")
-
-        all_values = ws.get_all_values()
 
         # Найти строку пользователя по telegram_id в колонке B (индекс 1)
         user_row = None
@@ -534,11 +562,14 @@ class GoogleSheetsClient:
 
         cell_value = f"{_fmt(h)}/{_fmt(ah)}" if ah > 0 else _fmt(h)
 
-        ws.update_cell(user_row, day_col, cell_value)
+        cell_addr = gspread.utils.rowcol_to_a1(user_row, day_col)
+        ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
         logger.info(
             "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
             cell_value, user_row, day_col, sheet_name,
         )
+
+        self._auto_resize_columns(ws)
 
     # --- Отчёты ---
 
@@ -551,14 +582,19 @@ class GoogleSheetsClient:
         logger.info("get_summary_hours: telegram_id=%s, sheet='%s'", telegram_id, sheet_name)
         try:
             ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
         except WorksheetNotFound:
             logger.info("get_summary_hours: лист '%s' не найден", sheet_name)
             return None
         except Exception as e:
-            logger.warning("get_summary_hours: ошибка доступа к листу '%s': %s", sheet_name, e)
-            return None
-
-        all_values = ws.get_all_values()
+            logger.warning("get_summary_hours: ошибка доступа к листу '%s', реконнект: %s", sheet_name, e)
+            self._reconnect()
+            try:
+                ws = self._spreadsheet.worksheet(sheet_name)
+                all_values = ws.get_all_values()
+            except WorksheetNotFound:
+                logger.info("get_summary_hours: лист '%s' не найден после реконнекта", sheet_name)
+                return None
 
         user_row_idx = None
         for i, row in enumerate(all_values, start=1):
@@ -617,8 +653,14 @@ class GoogleSheetsClient:
         Каждый элемент: {"telegram_id": int, "full_name": str, "position": str}
         """
         logger.info("get_employees_by_dept: dept=%s", dept)
-        ws = self._get_techlist_worksheet()
-        all_values = ws.get_all_values()
+        try:
+            ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
+            all_values = ws.get_all_values()
+        except Exception as e:
+            logger.warning("get_employees_by_dept: ошибка доступа, реконнект: %s", e)
+            self._reconnect()
+            ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
+            all_values = ws.get_all_values()
         result = []
         for row in all_values[1:]:
             if len(row) < COL_DEPARTMENT:

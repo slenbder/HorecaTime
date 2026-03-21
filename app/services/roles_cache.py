@@ -26,12 +26,13 @@ class RolesCacheService:
         return user_data
 
     @staticmethod
-    def update_user_role(telegram_id: int, full_name: str, role: str, 
-                        department: Optional[str] = None, hourly_rate: Optional[float] = None):
+    def update_user_role(telegram_id: int, full_name: str, role: str,
+                         department: Optional[str] = None, hourly_rate: Optional[float] = None,
+                         position: Optional[str] = None):
         """
         Обновляет данные пользователя в кеше (SQLite).
         """
-        save_user(telegram_id, full_name, role, department, hourly_rate)
+        save_user(telegram_id, full_name, role, department, hourly_rate, position)
         logger.info(f"Кеш обновлён для пользователя {telegram_id}: роль {role}")
 
     @staticmethod

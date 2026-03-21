@@ -690,6 +690,7 @@ async def process_approve(callback: CallbackQuery):
             full_name=fio,
             role="user",
             department=department,
+            position=position,
         )
         logger.info(f"Пользователь {user_tg_id} добавлен в кеш ролей: {department}, {position}")
 

@@ -11,3 +11,9 @@ class AuthStates(StatesGroup):
     waiting_dismiss_dept_type = State()  # выбор: Сотрудник или Администратор
     waiting_dismiss_dept = State()       # выбор подразделения
     waiting_dismiss_confirm = State()    # подтверждение увольнения
+
+
+class SetRateStates(StatesGroup):
+    waiting_set_rate_position = State()  # выбор позиции через inline-кнопки
+    waiting_set_rate_base = State()      # ввод базовой ставки
+    waiting_set_rate_extra = State()     # ввод повышенной ставки (только для позиций с extra_rate)

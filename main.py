@@ -31,6 +31,7 @@ async def main():
     from app.bot.handlers.auth import auth_router
     from app.bot.handlers.userhours import userhours_router
     from app.bot.handlers.userreports import reports_router
+    from app.bot.handlers.admin import admin_router
     from app.bot.handlers.superadmin import superadmin_router
     from app.bot.middlewares.roles import RoleMiddleware
 
@@ -48,6 +49,7 @@ async def main():
     dp.include_router(auth_router)
     dp.include_router(userhours_router)
     dp.include_router(reports_router)
+    dp.include_router(admin_router)
     dp.include_router(superadmin_router)
 
     logger.info("Бот HorecaTime запущен, начинаю поллинг")

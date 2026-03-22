@@ -16,14 +16,15 @@ _USER_COMMANDS = [
 _ADMIN_EXTRA_COMMANDS = [
     BotCommand(command="rates",        description="Ставки отдела"),
     BotCommand(command="set_rate",     description="Изменить ставку"),
-    BotCommand(command="message_dept", description="Сообщение отделу"),
+    BotCommand(command="message_dept", description="Сообщение сотрудникам отдела"),
 ]
 
 _SUPERADMIN_COMMANDS = [
     BotCommand(command="schedule",     description="График на месяц"),
     BotCommand(command="rates_all",    description="Ставки всех отделов"),
     BotCommand(command="set_rate_all", description="Изменить ставку"),
-    BotCommand(command="message_all",  description="Сообщение сотрудникам"),
+    BotCommand(command="message_dept", description="Сообщение отделу"),
+    BotCommand(command="message_all",  description="Сообщение всем сотрудникам"),
     BotCommand(command="switch_month", description="Переход на новый месяц"),
     BotCommand(command="dismiss",      description="Уволить сотрудника"),
 ]

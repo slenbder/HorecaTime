@@ -11,6 +11,8 @@ class AuthStates(StatesGroup):
     waiting_dismiss_dept_type = State()  # выбор: Сотрудник или Администратор
     waiting_dismiss_dept = State()       # выбор подразделения
     waiting_dismiss_confirm = State()    # подтверждение увольнения
+    waiting_broadcast_text = State()     # ожидание текста рассылки
+    waiting_broadcast_dept = State()     # выбор отдела для рассылки (admin_*)
 
 
 class SetRateStates(StatesGroup):

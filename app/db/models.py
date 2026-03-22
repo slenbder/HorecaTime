@@ -167,6 +167,42 @@ def delete_user(telegram_id: int) -> None:
         raise
 
 
+# --- Выборки пользователей (async, aiosqlite) ---
+
+async def get_users_by_department(db_path: str, department: str) -> list[dict]:
+    """
+    Возвращает всех пользователей с указанным department
+    (исключая superadmin и developer).
+    """
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT telegram_id, full_name, role, department '
+            'FROM users WHERE department = ? AND role NOT IN ("superadmin", "developer")',
+            (department,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {"telegram_id": r[0], "full_name": r[1], "role": r[2], "department": r[3]}
+        for r in rows
+    ]
+
+
+async def get_all_users(db_path: str) -> list[dict]:
+    """
+    Возвращает всех пользователей кроме superadmin и developer.
+    """
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT telegram_id, full_name, role, department '
+            'FROM users WHERE role NOT IN ("superadmin", "developer")'
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {"telegram_id": r[0], "full_name": r[1], "role": r[2], "department": r[3]}
+        for r in rows
+    ]
+
+
 # --- Ставки (async, aiosqlite) ---
 
 async def get_rate(db_path: str, position: str) -> Optional[Dict]:

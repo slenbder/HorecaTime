@@ -8,7 +8,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
-from app.bot.fsm.auth_states import SetRateStates
+from app.bot.fsm.auth_states import AuthStates, SetRateStates
 from app.db.models import get_all_rates, update_rate
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
 
@@ -41,6 +41,20 @@ def _rates_keyboard() -> InlineKeyboardMarkup:
         for pos in _POSITIONS_ORDER
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@superadmin_router.message(Command("message_all"))
+async def cmd_message_all(message: Message, state: FSMContext):
+    tg_id = message.from_user.id
+    logger.info("/message_all: запрос от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("/message_all: доступ запрещён для %s", tg_id)
+        await message.answer("⛔️ Недостаточно прав.")
+        return
+
+    await state.update_data(broadcast_type="all")
+    await state.set_state(AuthStates.waiting_broadcast_text)
+    await message.answer("Введите текст сообщения для всех сотрудников:")
 
 
 @superadmin_router.message(Command("rates_all"))

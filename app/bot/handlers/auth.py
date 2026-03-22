@@ -8,7 +8,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    BotCommandScopeChat,
+    BotCommandScopeChat, ReplyKeyboardRemove,
 )
 
 from app.bot.fsm.auth_states import AuthStates
@@ -516,6 +516,7 @@ async def process_approve_admin(callback: CallbackQuery):
             await callback.bot.send_message(
                 chat_id=user_tg_id,
                 text=f"✅ Доступ предоставлен!\n\nТы добавлен как администратор отдела {dept}.",
+                reply_markup=ReplyKeyboardRemove(),
             )
             if SHEET_URL:
                 await callback.bot.send_message(
@@ -741,7 +742,8 @@ async def process_approve(callback: CallbackQuery):
         try:
             await callback.bot.send_message(
                 chat_id=user_tg_id,
-                text="✅ Твоя заявка одобрена!\n\nТеперь ты можешь вносить рабочие часы и смотреть отчёты."
+                text="✅ Твоя заявка одобрена!\n\nТеперь ты можешь вносить рабочие часы и смотреть отчёты.",
+                reply_markup=ReplyKeyboardRemove(),
             )
             if SHEET_URL:
                 await callback.bot.send_message(

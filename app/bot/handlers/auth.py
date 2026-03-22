@@ -32,6 +32,7 @@ from config import (
     ADMIN_KITCHEN_IDS,
     DEVELOPER_ID,
     DB_PATH,
+    SHEET_URL,
 )
 
 auth_router = Router()
@@ -197,6 +198,59 @@ async def process_admin_dept(message: Message, state: FSMContext):
     await state.set_state(AuthStates.entering_fio)
 
 
+@auth_router.message(AuthStates.waiting_admin_email)
+async def process_admin_email(message: Message, state: FSMContext):
+    email = (message.text or "").strip()
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        await message.answer("❌ Некорректный формат email. Попробуйте ещё раз:")
+        return
+
+    data = await state.get_data()
+    fio = data.get("fio", "")
+    department = data.get("department", "")
+    tg_id = message.from_user.id
+
+    logger.info(
+        "Администратор %s ввёл email: %s, отдел: %s", tg_id, email, department
+    )
+
+    admin_request_text = (
+        f"🔑 Заявка администратора\n\n"
+        f"👤 {fio}\n"
+        f"🏢 Отдел: {department}\n"
+        f"📧 Email: {email}\n\n"
+        f"ID: {tg_id}"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Одобрить",
+                callback_data=f"approve_admin:{tg_id}:{department}",
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"reject_admin:{tg_id}",
+            ),
+        ]
+    ])
+
+    logger.info("Отправка заявки администратора суперадминам: %s", SUPERADMIN_IDS)
+    for sa_id in SUPERADMIN_IDS:
+        try:
+            await message.bot.send_message(chat_id=sa_id, text=admin_request_text, reply_markup=keyboard)
+            logger.info("Заявка администратора отправлена суперадмину %s", sa_id)
+        except Exception as e:
+            logger.exception("Не удалось отправить заявку администратора суперадмину %s: %s", sa_id, e)
+
+    await message.answer(
+        "Спасибо! Твоя заявка на роль администратора отправлена.\n"
+        "После одобрения ты получишь доступ к панели управления отделом."
+    )
+    logger.info("Заявка администратора от пользователя %s завершена", tg_id)
+    await state.clear()
+
+
 @auth_router.message(AuthStates.waiting_admin_dept)
 async def process_admin_dept_invalid(message: Message):
     await message.answer(
@@ -294,39 +348,12 @@ async def process_fio(message: Message, state: FSMContext):
 
     # --- Ветка: заявка администратора ---
     if registration_type == "admin":
-        admin_request_text = (
-            f"🔑 Заявка администратора\n\n"
-            f"👤 {fio}\n"
-            f"🏢 Отдел: {department}\n\n"
-            f"ID: {tg_id}"
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Одобрить",
-                    callback_data=f"approve_admin:{tg_id}:{department}",
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отклонить",
-                    callback_data=f"reject_admin:{tg_id}",
-                ),
-            ]
-        ])
-
-        logger.info("Отправка заявки администратора суперадминам: %s", SUPERADMIN_IDS)
-        for sa_id in SUPERADMIN_IDS:
-            try:
-                await message.bot.send_message(chat_id=sa_id, text=admin_request_text, reply_markup=keyboard)
-                logger.info("Заявка администратора отправлена суперадмину %s", sa_id)
-            except Exception as e:
-                logger.exception("Не удалось отправить заявку администратора суперадмину %s: %s", sa_id, e)
-
+        await state.update_data(fio=fio)
         await message.answer(
-            "Спасибо! Твоя заявка на роль администратора отправлена.\n"
-            "После одобрения ты получишь доступ к панели управления отделом."
+            "Введите вашу электронную почту Google (gmail.com):\n\n"
+            "Она будет использована для предоставления доступа к таблице."
         )
-        logger.info("Заявка администратора от пользователя %s завершена", tg_id)
-        await state.clear()
+        await state.set_state(AuthStates.waiting_admin_email)
         return
 
     # --- Ветка: заявка сотрудника (существующая логика) ---
@@ -487,6 +514,11 @@ async def process_approve_admin(callback: CallbackQuery):
                 chat_id=user_tg_id,
                 text=f"✅ Доступ предоставлен!\n\nТы добавлен как администратор отдела {dept}.",
             )
+            if SHEET_URL:
+                await callback.bot.send_message(
+                    chat_id=user_tg_id,
+                    text=f"📊 Ссылка на график:\n{SHEET_URL}",
+                )
         except Exception as e:
             logger.error("Не удалось уведомить администратора %s: %s", user_tg_id, e)
 
@@ -708,6 +740,11 @@ async def process_approve(callback: CallbackQuery):
                 chat_id=user_tg_id,
                 text="✅ Твоя заявка одобрена!\n\nТеперь ты можешь вносить рабочие часы и смотреть отчёты."
             )
+            if SHEET_URL:
+                await callback.bot.send_message(
+                    chat_id=user_tg_id,
+                    text=f"📊 Ссылка на график:\n{SHEET_URL}",
+                )
         except Exception as e:
             logger.error(f"Не удалось уведомить пользователя {user_tg_id}: {e}")
 

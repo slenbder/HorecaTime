@@ -826,3 +826,51 @@ class GoogleSheetsClient:
                 "dismiss_employee: ошибка при удалении из Техлиста для %s: %s",
                 telegram_id, e,
             )
+
+    def get_sheet_id_by_name(self, sheet_name: str) -> int | None:
+        """Возвращает числовой gid листа по его названию."""
+        worksheets = self._spreadsheet.worksheets()
+        for ws in worksheets:
+            if ws.title == sheet_name:
+                return ws.id
+        return None
+
+    def get_section_range(self, sheet_name: str, department: str) -> str | None:
+        """
+        Возвращает A1-диапазон блока отдела в месячном листе.
+        department: "КУХНЯ" | "БАР" | "ЗАЛ"
+        Ищет строку с заголовком отдела и следующего отдела,
+        возвращает диапазон от заголовка до последней строки блока.
+        Если не найдено — возвращает None (весь лист).
+        """
+        ws = self._spreadsheet.worksheet(sheet_name)
+        all_values = ws.get_all_values()
+
+        ALL_DEPTS = ["кухня", "бар", "зал"]
+        dept_lower = department.lower()
+        start_row = None
+        end_row = len(all_values)
+
+        for i, row in enumerate(all_values):
+            # Проверяем каждую ячейку строки без учёта регистра
+            row_lower = [str(c).strip().lower() for c in row]
+            cell_a = str(row[0]).strip()
+            cell_b = str(row[1]).strip() if len(row) > 1 else ""
+
+            if dept_lower in row_lower and not cell_a and not cell_b:
+                start_row = i + 1  # 1-based
+            elif start_row:
+                # Проверяем следующий заголовок отдела
+                if any(d in row_lower for d in ALL_DEPTS) and not cell_a and not cell_b:
+                    end_row = i  # строка следующего заголовка (0-based = 1-based строка выше)
+                    break
+
+        if start_row is None:
+            logger.info("get_section_range: dept=%s, not found", department)
+            return None
+
+        last_col = "AN"
+        result = f"A{start_row}:{last_col}{end_row}"
+        logger.info("get_section_range: dept=%s, found start_row=%s, end_row=%s, range=%s",
+                    department, start_row, end_row, result)
+        return result

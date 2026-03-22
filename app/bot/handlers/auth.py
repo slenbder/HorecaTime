@@ -222,11 +222,12 @@ async def process_admin_email(message: Message, state: FSMContext):
         f"📧 Email: {email}\n\n"
         f"ID: {tg_id}"
     )
+    safe_name = fio.replace(":", "_")
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
                 text="✅ Одобрить",
-                callback_data=f"approve_admin:{tg_id}:{department}",
+                callback_data=f"approve_admin:{tg_id}:{department}:{safe_name}",
             ),
             InlineKeyboardButton(
                 text="❌ Отклонить",
@@ -477,6 +478,7 @@ async def process_approve_admin(callback: CallbackQuery):
             return
         user_tg_id = int(parts[1])
         dept = parts[2]
+        full_name = parts[3].replace("_", " ") if len(parts) > 3 else ""
 
         role = DEPT_TO_ADMIN_ROLE.get(dept)
         if not role:
@@ -484,14 +486,6 @@ async def process_approve_admin(callback: CallbackQuery):
             await callback.answer("Неизвестный отдел", show_alert=True)
             return
 
-        # Получаем ФИО из Техлиста
-        full_name = ""
-        if sheets_client is not None:
-            try:
-                user_info = sheets_client.get_user_from_techlist(user_tg_id)
-                full_name = user_info.get("fio_from_user", "") if user_info else ""
-            except Exception:
-                logger.warning("approve_admin: не удалось получить ФИО из Техлиста для %s", user_tg_id)
         logger.info("process_approve_admin: full_name='%s' для %s", full_name, user_tg_id)
 
         # Сохраняем в SQLite

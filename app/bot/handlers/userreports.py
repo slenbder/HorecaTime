@@ -9,7 +9,7 @@ from aiogram.types import Message, BufferedInputFile
 from app.db.models import get_user, get_rate, get_rate_for_period
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
-from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID
+from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID
 
 reports_router = Router()
 logger = logging.getLogger(__name__)
@@ -231,11 +231,18 @@ _SUPERADMIN_ROLES = {"superadmin", "developer"}
 async def cmd_schedule(message: Message):
     tg_id = message.from_user.id
     logger.info("schedule: получена команда от %s", tg_id)
-    user_data = get_user(tg_id)
-    if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
-        return
 
-    logger.info("schedule: запрос от %s (роль=%s)", tg_id, user_data.get("role"))
+    # superadmin и developer не регистрируются в SQLite — определяем по config
+    is_superadmin = tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID
+    if is_superadmin:
+        role = "developer" if tg_id == DEVELOPER_ID else "superadmin"
+    else:
+        user_data = get_user(tg_id)
+        if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
+            return
+        role = user_data.get("role")
+
+    logger.info("schedule: запрос от %s (роль=%s)", tg_id, role)
 
     if sheets_client is None or pdf_service is None:
         await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")
@@ -251,9 +258,8 @@ async def cmd_schedule(message: Message):
             await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")
             return
 
-        role = user_data.get("role")
         if role in _SUPERADMIN_ROLES:
-            range_a1 = None
+            range_a1 = None  # весь лист
         else:
             department = user_data.get("department")
             dept_header = _DEPT_HEADER.get(department) if department else None

@@ -30,7 +30,7 @@ project/
 │   │   │   ├── userhours.py       ✅ FSM внесения смены (все позиции)
 │   │   │   ├── userreports.py     ✅ /hours_first, /hours_second, /hours_last
 │   │   │   ├── admin.py           ❌
-│   │   │   └── superadmin.py      ❌
+│   │   │   └── superadmin.py      ✅ /rates_all, /set_rate_all
 │   │   ├── fsm/
 │   │   │   ├── auth_states.py     ✅ AuthStates + waiting_role_type, waiting_admin_dept, waiting_dismiss_*
 │   │   │   ├── shift_states.py    ✅ ShiftStates (waiting_shift_input, waiting_ah_input, waiting_ah_comment)
@@ -401,6 +401,14 @@ VALID_POSITIONS = {
 - Название текущего листа определяется динамически: `_get_current_sheet_name()` → "Март 2026"
 - Колонки D:AN месячного листа форматируются как "Обычный текст" (предотвращает интерпретацию как даты)
 
+**Этап 6 ✅ завершён:**
+- Таблица `rates` в SQLite с дефолтными ставками для всех позиций
+- Поле `position` добавлено в таблицу `users`
+- `/hours_first`, `/hours_second`, `/hours_last` показывают заработок в рублях
+- `/rates_all` — просмотр всех ставок (superadmin + developer)
+- `/set_rate_all` — изменение ставок через FSM (superadmin + developer)
+- Проверка прав superadmin/developer через config.py (не через SQLite)
+
 **Вне этапов ✅ завершено:**
 - Регистрация администраторов через бота (выбор "Сотрудник / Администратор" на первом шаге)
 - Заявка администратора летит только SUPERADMIN_IDS, апрув суперадмином
@@ -408,12 +416,10 @@ VALID_POSITIONS = {
 - Функция увольнения /dismiss (superadmin + developer): inline-флоу, подтверждение, красит ячейку A в #FFCCCC, удаляет из Техлиста и SQLite, сбрасывает FSM/кеш/команды, уведомляет сотрудника
 
 **Что впереди:**
-- Этап 6: заработок (/earnings)
-- Этап 7: ставки (просмотр и изменение)
-- Этап 8: рассылки (/message_dept, /message_all)
-- Этап 9: PDF + график (/schedule)
-- Этап 10: переключение месяца (/switch_month)
-- Этап 11: Docker + деплой
+- Этап 7: рассылки (/message_dept, /message_all)
+- Этап 8: PDF + график (/schedule)
+- Этап 9: переключение месяца (/switch_month)
+- Этап 10: Docker + деплой
 
 ---
 
@@ -432,3 +438,4 @@ VALID_POSITIONS = {
 - Из Техлиста строка **удаляется**, из месячного листа — **нет** (история часов сохраняется)
 - **approve_ah_callback** должен быть зарегистрирован ДО generic `approve_`/`reject_` хендлеров в `auth.py`
 - **Формат ячеек месячного листа**: колонки D:AN должны иметь формат "Обычный текст" (настраивается вручную в таблице) — иначе числа интерпретируются как даты
+- **Проверка прав superadmin/developer** — через `SUPERADMIN_IDS`/`DEVELOPER_ID` из `config.py`, не через SQLite (суперадмины не регистрируются в таблице `users`)

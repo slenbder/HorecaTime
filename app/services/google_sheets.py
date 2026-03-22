@@ -826,3 +826,40 @@ class GoogleSheetsClient:
                 "dismiss_employee: ошибка при удалении из Техлиста для %s: %s",
                 telegram_id, e,
             )
+
+    def get_sheet_id_by_name(self, sheet_name: str) -> int | None:
+        """Возвращает числовой gid листа по его названию."""
+        worksheets = self._spreadsheet.worksheets()
+        for ws in worksheets:
+            if ws.title == sheet_name:
+                return ws.id
+        return None
+
+    def get_section_range(self, sheet_name: str, department: str) -> str | None:
+        """
+        Возвращает A1-диапазон блока отдела в месячном листе.
+        department: "КУХНЯ" | "БАР" | "ЗАЛ"
+        Ищет строку с заголовком отдела и следующего отдела,
+        возвращает диапазон от заголовка до последней строки блока.
+        Если не найдено — возвращает None (весь лист).
+        """
+        ws = self._spreadsheet.worksheet(sheet_name)
+        all_values = ws.get_all_values()
+
+        DEPT_HEADERS = ["КУХНЯ", "БАР", "ЗАЛ"]
+        start_row = None
+        end_row = len(all_values)
+
+        for i, row in enumerate(all_values):
+            cell_c = str(row[2]).strip() if len(row) > 2 else ""
+            if cell_c == department and not row[0] and not row[1]:
+                start_row = i + 1  # 1-based
+            elif start_row is not None and cell_c in DEPT_HEADERS and cell_c != department:
+                end_row = i  # строка следующего заголовка (0-based = 1-based строка выше)
+                break
+
+        if start_row is None:
+            return None
+
+        last_col = "AN"
+        return f"A{start_row}:{last_col}{end_row}"

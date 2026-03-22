@@ -4,14 +4,16 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 
 from app.db.models import get_user, get_rate, get_rate_for_period
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
-from config import DB_PATH
+from app.services.pdfservice import PDFService
+from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID
 
 reports_router = Router()
 logger = logging.getLogger(__name__)
+error_logger = logging.getLogger("errors")
 
 try:
     sheets_client = GoogleSheetsClient()
@@ -19,6 +21,13 @@ try:
 except Exception:
     logger.exception("userreports: Ошибка при инициализации GoogleSheetsClient")
     sheets_client = None
+
+try:
+    pdf_service = PDFService(GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID)
+    logger.info("userreports: PDFService успешно инициализирован")
+except Exception:
+    logger.exception("userreports: Ошибка при инициализации PDFService")
+    pdf_service = None
 
 _ALLOWED_ROLES = {"user", "admin_hall", "admin_bar", "admin_kitchen", "superadmin", "developer"}
 
@@ -207,3 +216,62 @@ async def cmd_hours_last(message: Message):
 
     lines = _build_hours_second_lines(data, position, rate, sheet_label=sheet_name)
     await message.answer("\n".join(lines))
+
+
+_DEPT_HEADER = {
+    "Зал": "ЗАЛ",
+    "Бар": "БАР",
+    "Кухня": "КУХНЯ",
+}
+
+_SUPERADMIN_ROLES = {"superadmin", "developer"}
+
+
+@reports_router.message(Command("schedule"))
+async def cmd_schedule(message: Message):
+    tg_id = message.from_user.id
+    user_data = get_user(tg_id)
+    if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
+        return
+
+    logger.info("schedule: запрос от %s (роль=%s)", tg_id, user_data.get("role"))
+
+    if sheets_client is None or pdf_service is None:
+        await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")
+        return
+
+    await message.answer("⏳ Генерирую график, подождите...")
+
+    sheet_name = _get_current_sheet_name()
+    try:
+        sheet_id = sheets_client.get_sheet_id_by_name(sheet_name)
+        if sheet_id is None:
+            logger.warning("schedule: лист '%s' не найден", sheet_name)
+            await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")
+            return
+
+        role = user_data.get("role")
+        if role in _SUPERADMIN_ROLES:
+            range_a1 = None
+        else:
+            department = user_data.get("department")
+            dept_header = _DEPT_HEADER.get(department) if department else None
+            if dept_header:
+                range_a1 = sheets_client.get_section_range(sheet_name, dept_header)
+            else:
+                range_a1 = None
+
+        pdf_bytes = await pdf_service.get_pdf_bytes(sheet_id, range_a1)
+        logger.info(
+            "schedule: PDF сгенерирован для %s, лист='%s', range=%s, размер=%d байт",
+            tg_id, sheet_name, range_a1, len(pdf_bytes),
+        )
+
+        await message.answer_document(
+            BufferedInputFile(pdf_bytes, filename=f"График_{sheet_name}.pdf"),
+            caption=f"📊 {sheet_name}",
+        )
+
+    except Exception as e:
+        error_logger.exception("schedule: ошибка генерации PDF для %s: %s", tg_id, e)
+        await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")

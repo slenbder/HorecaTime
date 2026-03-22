@@ -132,7 +132,19 @@ async def cmd_start(message: Message, state: FSMContext):
                 await state.set_state(AuthStates.waiting_role_type)
                 return
 
-    # 1. Проверяем, есть ли пользователь и одобрен ли он
+    # 1a. Администраторы в Техлист не записываются — авторизуем по SQLite
+    if cached_user and cached_user.get("role") in ("admin_hall", "admin_bar", "admin_kitchen"):
+        role = cached_user["role"]
+        logger.info("User %s (role=%s) авторизован через SQLite, Техлист не проверяем", tg_id, role)
+        await set_commands_for_role(message.bot, tg_id, role)
+        await message.answer(
+            "Ты уже авторизован в системе ✅\n"
+            "Используй меню команд для внесения смен и просмотра отчётов."
+        )
+        await state.clear()
+        return
+
+    # 1b. Проверяем, есть ли пользователь и одобрен ли он
     try:
         logger.info(f"Проверка авторизации пользователя {tg_id}")
         is_approved = sheets_client.is_user_fully_authorized(tg_id)

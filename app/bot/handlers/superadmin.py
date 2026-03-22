@@ -9,13 +9,15 @@ from aiogram.types import (
 )
 
 from app.bot.fsm.auth_states import SetRateStates
-from app.db.models import get_user, get_all_rates, get_rate, update_rate
-from config import DB_PATH
+from app.db.models import get_all_rates, update_rate
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
 
 superadmin_router = Router()
 logger = logging.getLogger(__name__)
 
-_ALLOWED_ROLES = {"superadmin", "developer"}
+
+def _is_allowed(tg_id: int) -> bool:
+    return tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID
 
 # Позиции, у которых есть повышенная ставка
 _POSITIONS_WITH_EXTRA = {"Бармен", "Барбэк", "Раннер"}
@@ -44,11 +46,13 @@ def _rates_keyboard() -> InlineKeyboardMarkup:
 @superadmin_router.message(Command("rates_all"))
 async def cmd_rates_all(message: Message):
     tg_id = message.from_user.id
-    user_data = get_user(tg_id)
-    if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
+    logger.info("/rates_all: запрос от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("/rates_all: доступ запрещён для %s", tg_id)
+        await message.answer("⛔️ Недостаточно прав.")
         return
 
-    logger.info("rates_all: запрос от %s", tg_id)
+    logger.info("/rates_all: доступ разрешён, загружаю ставки")
     rates = await get_all_rates(DB_PATH)
 
     # Сортируем в нужном порядке
@@ -72,11 +76,13 @@ async def cmd_rates_all(message: Message):
 @superadmin_router.message(Command("set_rate_all"))
 async def cmd_set_rate_all(message: Message, state: FSMContext):
     tg_id = message.from_user.id
-    user_data = get_user(tg_id)
-    if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
+    logger.info("/set_rate_all: запрос от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("/set_rate_all: доступ запрещён для %s", tg_id)
+        await message.answer("⛔️ Недостаточно прав.")
         return
 
-    logger.info("set_rate_all: запрос от %s", tg_id)
+    logger.info("/set_rate_all: доступ разрешён, запускаю FSM")
     await state.set_state(SetRateStates.waiting_set_rate_position)
     await message.answer(
         "Выберите позицию для изменения ставки:",

@@ -7,10 +7,9 @@ error_logger = logging.getLogger("errors")
 
 _USER_COMMANDS = [
     BotCommand(command="shift",        description="Внести смену"),
-    BotCommand(command="hours_first",  description="Часы: первая половина месяца"),
-    BotCommand(command="hours_second", description="Часы: вторая половина месяца"),
-    BotCommand(command="hours_last",   description="Часы за прошлый месяц"),
-    BotCommand(command="earnings",     description="Мой заработок"),
+    BotCommand(command="hours_first",  description="Часы и заработок: 1–15"),
+    BotCommand(command="hours_second", description="Часы и заработок: 16–конец + итог"),
+    BotCommand(command="hours_last",   description="Часы и заработок за прошлый месяц"),
     BotCommand(command="schedule",     description="График на месяц"),
     BotCommand(command="contact_dev",  description="Написать разработчику"),
 ]

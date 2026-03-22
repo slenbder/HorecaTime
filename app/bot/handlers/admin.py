@@ -10,7 +10,7 @@ from aiogram.types import (
 )
 
 from app.bot.fsm.auth_states import AuthStates, SetRateStates
-from app.db.models import get_users_by_department, get_all_users, get_all_rates, update_rate
+from app.db.models import get_users_by_department, get_all_users, get_all_rates, update_rate, get_user
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS
 
 admin_router = Router()
@@ -46,7 +46,7 @@ ROLE_TO_SENDER = {
 }
 
 
-def _resolve_sender_role(tg_id: int) -> str:
+def _resolve_sender_role(tg_id: int) -> str | None:
     if tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID:
         return "superadmin"
     if tg_id in ADMIN_HALL_IDS:
@@ -55,7 +55,7 @@ def _resolve_sender_role(tg_id: int) -> str:
         return "admin_bar"
     if tg_id in ADMIN_KITCHEN_IDS:
         return "admin_kitchen"
-    return "superadmin"
+    return None
 
 
 def _dept_keyboard() -> InlineKeyboardMarkup:
@@ -85,6 +85,9 @@ def _rates_keyboard_for_dept(dept: str) -> InlineKeyboardMarkup:
 async def cmd_rates(message: Message):
     tg_id = message.from_user.id
     role = _resolve_sender_role(tg_id)
+    if role is None:
+        user_data = get_user(tg_id)
+        role = user_data["role"] if user_data else None
     if role not in _ROLE_TO_DEPT:
         logger.warning("/rates: доступ запрещён для %s (role=%s)", tg_id, role)
         await message.answer("⛔️ Недостаточно прав.")
@@ -118,6 +121,9 @@ async def cmd_rates(message: Message):
 async def cmd_set_rate(message: Message, state: FSMContext):
     tg_id = message.from_user.id
     role = _resolve_sender_role(tg_id)
+    if role is None:
+        user_data = get_user(tg_id)
+        role = user_data["role"] if user_data else None
     if role not in _ROLE_TO_DEPT:
         logger.warning("/set_rate: доступ запрещён для %s (role=%s)", tg_id, role)
         await message.answer("⛔️ Недостаточно прав.")

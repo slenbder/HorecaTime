@@ -112,16 +112,24 @@ async def cmd_start(message: Message, state: FSMContext):
             exists_in_techlist = True  # fail-safe: не сбрасываем при ошибке
 
         if not exists_in_techlist:
-            logger.info("User %s not found in Техлист, resetting", tg_id)
-            delete_user(tg_id)
-            await state.clear()
-            await _clear_commands(message.bot, tg_id)
-            await message.answer(
-                "Привет! Давай настроим твою авторизацию.\n\nКем ты являешься?",
-                reply_markup=role_type_keyboard(),
-            )
-            await state.set_state(AuthStates.waiting_role_type)
-            return
+            cached_role = cached_user.get("role", "")
+            if cached_role in ("admin_hall", "admin_bar", "admin_kitchen"):
+                # Администраторы в Техлист не записываются — не сбрасываем
+                logger.info(
+                    "User %s (role=%s) not in Техлист — admin, skipping resync",
+                    tg_id, cached_role,
+                )
+            else:
+                logger.info("User %s not found in Техлист, resetting", tg_id)
+                delete_user(tg_id)
+                await state.clear()
+                await _clear_commands(message.bot, tg_id)
+                await message.answer(
+                    "Привет! Давай настроим твою авторизацию.\n\nКем ты являешься?",
+                    reply_markup=role_type_keyboard(),
+                )
+                await state.set_state(AuthStates.waiting_role_type)
+                return
 
     # 1. Проверяем, есть ли пользователь и одобрен ли он
     try:

@@ -846,18 +846,24 @@ class GoogleSheetsClient:
         ws = self._spreadsheet.worksheet(sheet_name)
         all_values = ws.get_all_values()
 
-        DEPT_HEADERS = ["КУХНЯ", "БАР", "ЗАЛ"]
+        ALL_DEPTS = ["кухня", "бар", "зал"]
+        dept_lower = department.lower()
         start_row = None
         end_row = len(all_values)
 
         for i, row in enumerate(all_values):
-            # Ищем заголовок в любой ячейке строки
-            row_text = " ".join(str(c).strip() for c in row)
-            if department in row_text and not str(row[0]).strip() and not str(row[1]).strip():
+            # Проверяем каждую ячейку строки без учёта регистра
+            row_lower = [str(c).strip().lower() for c in row]
+            cell_a = str(row[0]).strip()
+            cell_b = str(row[1]).strip() if len(row) > 1 else ""
+
+            if dept_lower in row_lower and not cell_a and not cell_b:
                 start_row = i + 1  # 1-based
-            elif start_row is not None and any(h in row_text for h in DEPT_HEADERS if h != department) and not str(row[0]).strip() and not str(row[1]).strip():
-                end_row = i  # строка следующего заголовка (0-based = 1-based строка выше)
-                break
+            elif start_row:
+                # Проверяем следующий заголовок отдела
+                if any(d in row_lower for d in ALL_DEPTS) and not cell_a and not cell_b:
+                    end_row = i  # строка следующего заголовка (0-based = 1-based строка выше)
+                    break
 
         if start_row is None:
             logger.info("get_section_range: dept=%s, not found", department)

@@ -8,7 +8,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    BotCommandScopeChat,
+    BotCommandScopeChat, ReplyKeyboardRemove,
 )
 
 from app.bot.fsm.auth_states import AuthStates
@@ -32,6 +32,7 @@ from config import (
     ADMIN_KITCHEN_IDS,
     DEVELOPER_ID,
     DB_PATH,
+    SHEET_URL,
 )
 
 auth_router = Router()
@@ -131,7 +132,19 @@ async def cmd_start(message: Message, state: FSMContext):
                 await state.set_state(AuthStates.waiting_role_type)
                 return
 
-    # 1. Проверяем, есть ли пользователь и одобрен ли он
+    # 1a. Администраторы в Техлист не записываются — авторизуем по SQLite
+    if cached_user and cached_user.get("role") in ("admin_hall", "admin_bar", "admin_kitchen"):
+        role = cached_user["role"]
+        logger.info("User %s (role=%s) авторизован через SQLite, Техлист не проверяем", tg_id, role)
+        await set_commands_for_role(message.bot, tg_id, role)
+        await message.answer(
+            "Ты уже авторизован в системе ✅\n"
+            "Используй меню команд для внесения смен и просмотра отчётов."
+        )
+        await state.clear()
+        return
+
+    # 1b. Проверяем, есть ли пользователь и одобрен ли он
     try:
         logger.info(f"Проверка авторизации пользователя {tg_id}")
         is_approved = sheets_client.is_user_fully_authorized(tg_id)
@@ -195,6 +208,60 @@ async def process_admin_dept(message: Message, state: FSMContext):
     await state.update_data(department=dept)
     await message.answer("Введи своё Фамилию и Имя:")
     await state.set_state(AuthStates.entering_fio)
+
+
+@auth_router.message(AuthStates.waiting_admin_email)
+async def process_admin_email(message: Message, state: FSMContext):
+    email = (message.text or "").strip()
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        await message.answer("❌ Некорректный формат email. Попробуйте ещё раз:")
+        return
+
+    data = await state.get_data()
+    fio = data.get("fio", "")
+    department = data.get("department", "")
+    tg_id = message.from_user.id
+
+    logger.info(
+        "Администратор %s ввёл email: %s, отдел: %s", tg_id, email, department
+    )
+
+    admin_request_text = (
+        f"🔑 Заявка администратора\n\n"
+        f"👤 {fio}\n"
+        f"🏢 Отдел: {department}\n"
+        f"📧 Email: {email}\n\n"
+        f"ID: {tg_id}"
+    )
+    safe_name = fio.replace(":", "_")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Одобрить",
+                callback_data=f"approve_admin:{tg_id}:{department}:{safe_name}",
+            ),
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"reject_admin:{tg_id}",
+            ),
+        ]
+    ])
+
+    logger.info("Отправка заявки администратора суперадминам: %s", SUPERADMIN_IDS)
+    for sa_id in SUPERADMIN_IDS:
+        try:
+            await message.bot.send_message(chat_id=sa_id, text=admin_request_text, reply_markup=keyboard)
+            logger.info("Заявка администратора отправлена суперадмину %s", sa_id)
+        except Exception as e:
+            logger.exception("Не удалось отправить заявку администратора суперадмину %s: %s", sa_id, e)
+
+    await message.answer(
+        "Спасибо! Твоя заявка на роль администратора отправлена.\n"
+        "После одобрения ты получишь доступ к панели управления отделом."
+    )
+    logger.info("Заявка администратора от пользователя %s завершена", tg_id)
+    await state.clear()
 
 
 @auth_router.message(AuthStates.waiting_admin_dept)
@@ -294,39 +361,12 @@ async def process_fio(message: Message, state: FSMContext):
 
     # --- Ветка: заявка администратора ---
     if registration_type == "admin":
-        admin_request_text = (
-            f"🔑 Заявка администратора\n\n"
-            f"👤 {fio}\n"
-            f"🏢 Отдел: {department}\n\n"
-            f"ID: {tg_id}"
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Одобрить",
-                    callback_data=f"approve_admin:{tg_id}:{department}",
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отклонить",
-                    callback_data=f"reject_admin:{tg_id}",
-                ),
-            ]
-        ])
-
-        logger.info("Отправка заявки администратора суперадминам: %s", SUPERADMIN_IDS)
-        for sa_id in SUPERADMIN_IDS:
-            try:
-                await message.bot.send_message(chat_id=sa_id, text=admin_request_text, reply_markup=keyboard)
-                logger.info("Заявка администратора отправлена суперадмину %s", sa_id)
-            except Exception as e:
-                logger.exception("Не удалось отправить заявку администратора суперадмину %s: %s", sa_id, e)
-
+        await state.update_data(fio=fio)
         await message.answer(
-            "Спасибо! Твоя заявка на роль администратора отправлена.\n"
-            "После одобрения ты получишь доступ к панели управления отделом."
+            "Введите вашу электронную почту Google (gmail.com):\n\n"
+            "Она будет использована для предоставления доступа к таблице."
         )
-        logger.info("Заявка администратора от пользователя %s завершена", tg_id)
-        await state.clear()
+        await state.set_state(AuthStates.waiting_admin_email)
         return
 
     # --- Ветка: заявка сотрудника (существующая логика) ---
@@ -438,6 +478,12 @@ DEPT_TO_ADMIN_ROLE = {
     "Кухня": "admin_kitchen",
 }
 
+ROLE_TO_POSITION = {
+    "admin_hall": "Администратор зала",
+    "admin_bar": "Администратор бара",
+    "admin_kitchen": "Администратор кухни",
+}
+
 
 @auth_router.callback_query(F.data.startswith("approve_admin:"))
 async def process_approve_admin(callback: CallbackQuery):
@@ -450,6 +496,7 @@ async def process_approve_admin(callback: CallbackQuery):
             return
         user_tg_id = int(parts[1])
         dept = parts[2]
+        full_name = parts[3].replace("_", " ") if len(parts) > 3 else ""
 
         role = DEPT_TO_ADMIN_ROLE.get(dept)
         if not role:
@@ -457,21 +504,16 @@ async def process_approve_admin(callback: CallbackQuery):
             await callback.answer("Неизвестный отдел", show_alert=True)
             return
 
-        # Получаем ФИО из Техлиста
-        full_name = ""
-        if sheets_client is not None:
-            try:
-                user_info = sheets_client.get_user_from_techlist(user_tg_id)
-                full_name = user_info.get("fio_from_user", "") if user_info else ""
-            except Exception:
-                logger.warning("approve_admin: не удалось получить ФИО из Техлиста для %s", user_tg_id)
+        logger.info("process_approve_admin: full_name='%s' для %s", full_name, user_tg_id)
 
         # Сохраняем в SQLite
+        position = ROLE_TO_POSITION.get(role, role)
         RolesCacheService.update_user_role(
             telegram_id=user_tg_id,
             full_name=full_name,
             role=role,
             department=dept,
+            position=position,
         )
         logger.info(
             "Суперадмин %s одобрил администратора %s (%s), роль=%s, отдел=%s",
@@ -486,7 +528,13 @@ async def process_approve_admin(callback: CallbackQuery):
             await callback.bot.send_message(
                 chat_id=user_tg_id,
                 text=f"✅ Доступ предоставлен!\n\nТы добавлен как администратор отдела {dept}.",
+                reply_markup=ReplyKeyboardRemove(),
             )
+            if SHEET_URL:
+                await callback.bot.send_message(
+                    chat_id=user_tg_id,
+                    text=f"📊 Ссылка на график:\n{SHEET_URL}",
+                )
         except Exception as e:
             logger.error("Не удалось уведомить администратора %s: %s", user_tg_id, e)
 
@@ -706,8 +754,14 @@ async def process_approve(callback: CallbackQuery):
         try:
             await callback.bot.send_message(
                 chat_id=user_tg_id,
-                text="✅ Твоя заявка одобрена!\n\nТеперь ты можешь вносить рабочие часы и смотреть отчёты."
+                text="✅ Твоя заявка одобрена!\n\nТеперь ты можешь вносить рабочие часы и смотреть отчёты.",
+                reply_markup=ReplyKeyboardRemove(),
             )
+            if SHEET_URL:
+                await callback.bot.send_message(
+                    chat_id=user_tg_id,
+                    text=f"📊 Ссылка на график:\n{SHEET_URL}",
+                )
         except Exception as e:
             logger.error(f"Не удалось уведомить пользователя {user_tg_id}: {e}")
 
@@ -932,8 +986,8 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
         tech_info = sheets_client.get_user_from_techlist(target_id)
     else:
         tech_info = None
-    position = tech_info["position"] if tech_info else "—"
-    dept = tech_info["department"] if tech_info else "—"
+    position = (tech_info["position"] if tech_info else "") or (user_data.get("position") if user_data else "") or (user_data.get("role") if user_data else "") or "—"
+    dept = (tech_info["department"] if tech_info else "") or (user_data.get("department") if user_data else "") or "—"
 
     await state.update_data(
         dismiss_target_id=target_id,

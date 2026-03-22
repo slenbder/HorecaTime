@@ -492,6 +492,7 @@ async def process_approve_admin(callback: CallbackQuery):
                 full_name = user_info.get("fio_from_user", "") if user_info else ""
             except Exception:
                 logger.warning("approve_admin: не удалось получить ФИО из Техлиста для %s", user_tg_id)
+        logger.info("process_approve_admin: full_name='%s' для %s", full_name, user_tg_id)
 
         # Сохраняем в SQLite
         RolesCacheService.update_user_role(

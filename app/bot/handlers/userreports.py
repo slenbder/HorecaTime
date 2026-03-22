@@ -230,6 +230,7 @@ _SUPERADMIN_ROLES = {"superadmin", "developer"}
 @reports_router.message(Command("schedule"))
 async def cmd_schedule(message: Message):
     tg_id = message.from_user.id
+    logger.info("schedule: получена команда от %s", tg_id)
     user_data = get_user(tg_id)
     if not user_data or user_data.get("role") not in _ALLOWED_ROLES:
         return

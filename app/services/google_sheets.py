@@ -412,6 +412,39 @@ class GoogleSheetsClient:
             value_input_option="USER_ENTERED",
         )
 
+        # Явно применяем границы для новой строки
+        _solid = {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
+        try:
+            borders_body = {
+                "requests": [{
+                    "updateBorders": {
+                        "range": {
+                            "sheetId": month_ws.id,
+                            "startRowIndex": new_row - 1,  # 0-based
+                            "endRowIndex": new_row,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": month_ws.col_count,
+                        },
+                        "top":             _solid,
+                        "bottom":          _solid,
+                        "left":            _solid,
+                        "right":           _solid,
+                        "innerHorizontal": _solid,
+                        "innerVertical":   _solid,
+                    }
+                }]
+            }
+            self._spreadsheet.batch_update(borders_body)
+            logger.info(
+                "ensure_user: границы применены к строке %s листа '%s'",
+                new_row, month_ws.title,
+            )
+        except Exception as e:
+            logger.warning(
+                "ensure_user: не удалось применить границы к строке %s: %s",
+                new_row, e,
+            )
+
         logger.info(
             "Пользователь %s добавлен в лист '%s' в строку %s (department=%s, position=%s)",
             telegram_id,

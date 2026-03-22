@@ -784,16 +784,22 @@ async def contact_dev_send(message: Message, state: FSMContext):
     user_data = get_user(tg_id)
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
+    username = message.from_user.username
+    if username:
+        user_mention = f'<a href="https://t.me/{username}">@{username}</a>'
+    else:
+        user_mention = full_name
+
     logger.info("Пользователь %s (%s) отправляет сообщение разработчику", tg_id, full_name)
 
     dev_text = (
         f"📨 Сообщение от пользователя\n\n"
-        f"👤 {full_name} (ID: {tg_id})\n\n"
+        f"👤 {user_mention} — {full_name}\n\n"
         f"{text}"
     )
 
     try:
-        await message.bot.send_message(chat_id=DEVELOPER_ID, text=dev_text)
+        await message.bot.send_message(chat_id=DEVELOPER_ID, text=dev_text, parse_mode="HTML")
         await message.answer("✅ Сообщение отправлено разработчику")
     except Exception:
         error_logger = logging.getLogger("errors")

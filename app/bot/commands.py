@@ -11,7 +11,6 @@ _USER_COMMANDS = [
     BotCommand(command="hours_second", description="Часы и заработок: 16–конец + итог"),
     BotCommand(command="hours_last",   description="Часы и заработок за прошлый месяц"),
     BotCommand(command="schedule",     description="График на месяц"),
-    BotCommand(command="contact_dev",  description="Написать разработчику"),
 ]
 
 _ADMIN_EXTRA_COMMANDS = [
@@ -29,12 +28,16 @@ _SUPERADMIN_COMMANDS = [
     BotCommand(command="dismiss",      description="Уволить сотрудника"),
 ]
 
+_CONTACT_DEV = [
+    BotCommand(command="contact_dev",  description="Написать разработчику"),
+]
+
 _ROLE_COMMANDS: dict[str, list[BotCommand]] = {
-    "user":           _USER_COMMANDS,
-    "admin_hall":     _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS,
-    "admin_bar":      _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS,
-    "admin_kitchen":  _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS,
-    "superadmin":     _SUPERADMIN_COMMANDS,
+    "user":           _USER_COMMANDS + _CONTACT_DEV,
+    "admin_hall":     _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _CONTACT_DEV,
+    "admin_bar":      _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _CONTACT_DEV,
+    "admin_kitchen":  _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _CONTACT_DEV,
+    "superadmin":     _SUPERADMIN_COMMANDS + _CONTACT_DEV,
     "developer":      _SUPERADMIN_COMMANDS,
 }
 

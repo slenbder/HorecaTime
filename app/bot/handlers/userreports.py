@@ -6,7 +6,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from app.db.models import get_user, get_rate
+from app.db.models import get_user, get_rate, get_rate_for_period
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from config import DB_PATH
 
@@ -200,7 +200,10 @@ async def cmd_hours_last(message: Message):
     position = user_data.get("position") or None
     if not position:
         logger.warning("hours_last: у пользователя %s не установлена позиция", tg_id)
-    rate = await get_rate(DB_PATH, position) if position else None
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    prev_month = now.month - 1 if now.month > 1 else 12
+    prev_year = now.year if now.month > 1 else now.year - 1
+    rate = await get_rate_for_period(DB_PATH, position, prev_month, prev_year) if position else None
 
     lines = _build_hours_second_lines(data, position, rate, sheet_label=sheet_name)
     await message.answer("\n".join(lines))

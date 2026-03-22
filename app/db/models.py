@@ -69,6 +69,16 @@ def init_database():
                 updated_at TEXT NOT NULL
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS rates_history (
+                position   TEXT NOT NULL,
+                base_rate  REAL NOT NULL,
+                extra_rate REAL,
+                month      INTEGER NOT NULL,
+                year       INTEGER NOT NULL,
+                PRIMARY KEY (position, month, year)
+            )
+        ''')
         # Вставить дефолтные ставки, если таблица пустая
         cursor.execute('SELECT COUNT(*) FROM rates')
         if cursor.fetchone()[0] == 0:
@@ -232,6 +242,46 @@ async def get_all_rates(db_path: str) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
     return [{"position": r[0], "base_rate": r[1], "extra_rate": r[2]} for r in rows]
+
+
+async def snapshot_rates(db_path: str, month: int, year: int) -> None:
+    """
+    Копирует текущие ставки из rates в rates_history для указанного месяца/года.
+    Если запись уже существует — не перезаписывает (INSERT OR IGNORE).
+    """
+    logger.info("snapshot_rates: сохранение снимка ставок для %d/%d", month, year)
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute('SELECT position, base_rate, extra_rate FROM rates') as cursor:
+            rows = await cursor.fetchall()
+        await db.executemany(
+            'INSERT OR IGNORE INTO rates_history (position, base_rate, extra_rate, month, year) '
+            'VALUES (?, ?, ?, ?, ?)',
+            [(r[0], r[1], r[2], month, year) for r in rows],
+        )
+        await db.commit()
+    logger.info("snapshot_rates: сохранено %d записей для %d/%d", len(rows), month, year)
+
+
+async def get_rate_for_period(db_path: str, position: str, month: int, year: int) -> Optional[Dict]:
+    """
+    Читает ставку из rates_history для указанной позиции и периода.
+    Если не найдено — возвращает текущую ставку из rates как fallback.
+    """
+    logger.info("get_rate_for_period: position=%s month=%d year=%d", position, month, year)
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT position, base_rate, extra_rate FROM rates_history '
+            'WHERE position = ? AND month = ? AND year = ?',
+            (position, month, year),
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is not None:
+        return {"position": row[0], "base_rate": row[1], "extra_rate": row[2]}
+    logger.warning(
+        "get_rate_for_period: снимок для %s %d/%d не найден, используем текущую ставку",
+        position, month, year,
+    )
+    return await get_rate(db_path, position)
 
 
 async def update_rate(db_path: str, position: str, base_rate: float,

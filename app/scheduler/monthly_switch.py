@@ -7,7 +7,7 @@ from aiogram import Bot
 
 from config import SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
 from app.services.google_sheets import MONTH_NAMES_RU
-from app.db.models import get_all_users
+from app.db.models import get_all_users, snapshot_rates
 
 logger = logging.getLogger("app")
 error_logger = logging.getLogger("errors")
@@ -136,6 +136,13 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
         next_name = f"{MONTH_NAMES_RU[next_month]} {next_year}"
 
         logger.info("switch_month: начинаю переключение '%s' → '%s'", current_name, next_name)
+
+        # Сохраняем снимок ставок ДО копирования листа
+        await snapshot_rates(db_path, current_month, current_year)
+        logger.info(
+            "switch_month: снимок ставок сохранён для %s %d",
+            MONTH_NAMES_RU[current_month], current_year,
+        )
 
         # Проверка: лист следующего месяца уже существует
         existing_titles = {ws.title for ws in sheets_client._spreadsheet.worksheets()}

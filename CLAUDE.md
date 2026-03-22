@@ -161,6 +161,18 @@ rates (
 )
 -- Дефолтные значения вставляются при init_database() если таблица пустая.
 -- Позиции с extra_rate: Бармен (350/500), Барбэк (250/400), Раннер (200/300).
+
+rates_history (
+    position   TEXT NOT NULL,
+    base_rate  REAL NOT NULL,
+    extra_rate REAL,
+    month      INTEGER NOT NULL,
+    year       INTEGER NOT NULL,
+    PRIMARY KEY (position, month, year)
+)
+-- Снимок делается автоматически при switch_month() до копирования листа.
+-- При /hours_last заработок считается по ставке из rates_history.
+-- Если снимок не найден — fallback на текущую ставку из rates.
 ```
 
 ---

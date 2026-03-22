@@ -11,7 +11,7 @@ from aiogram.types import (
 
 from app.bot.fsm.auth_states import AuthStates
 from app.db.models import get_users_by_department, get_all_users
-from config import DB_PATH
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS
 
 admin_router = Router()
 logger = logging.getLogger(__name__)
@@ -26,6 +26,26 @@ _ROLE_TO_DEPT = {
 }
 
 _DEPT_BUTTONS = ["Зал", "Бар", "Кухня"]
+
+ROLE_TO_SENDER = {
+    "admin_hall":    "администратора Зала",
+    "admin_bar":     "администратора Бара",
+    "admin_kitchen": "администратора Кухни",
+    "superadmin":    "администрации",
+    "developer":     "администрации",
+}
+
+
+def _resolve_sender_role(tg_id: int) -> str:
+    if tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID:
+        return "superadmin"
+    if tg_id in ADMIN_HALL_IDS:
+        return "admin_hall"
+    if tg_id in ADMIN_BAR_IDS:
+        return "admin_bar"
+    if tg_id in ADMIN_KITCHEN_IDS:
+        return "admin_kitchen"
+    return "superadmin"
 
 
 def _dept_keyboard() -> InlineKeyboardMarkup:
@@ -97,7 +117,9 @@ async def msg_broadcast_text(message: Message, state: FSMContext):
         recipients = await get_users_by_department(DB_PATH, dept)
         label = f"сотрудникам отдела {dept}"
 
-    broadcast_text = f"📢 Сообщение от администрации\n\n{text}"
+    sender_role = _resolve_sender_role(tg_id)
+    sender_label = ROLE_TO_SENDER[sender_role]
+    broadcast_text = f"📢 Сообщение от {sender_label}\n\n{text}"
     sent = 0
     for user in recipients:
         try:

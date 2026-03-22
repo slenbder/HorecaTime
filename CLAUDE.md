@@ -415,10 +415,16 @@ VALID_POSITIONS = {
 - Суперадмины и developer пропускают регистрацию — сразу главное меню
 - Функция увольнения /dismiss (superadmin + developer): inline-флоу, подтверждение, красит ячейку A в #FFCCCC, удаляет из Техлиста и SQLite, сбрасывает FSM/кеш/команды, уведомляет сотрудника
 
+**Этап 9 🔄 в разработке:**
+- `app/scheduler/monthly_switch.py` — `switch_month()`, `notify_upcoming_switch()`, `notify_switch_done()`
+- `GoogleSheetsClient.get_dismissed_rows()` — читает фон ячеек A через Sheets REST API (includeGridData)
+- `/switch_month` в superadmin.py — inline-подтверждение, вызов switch_month + notify_switch_done
+- APScheduler в main.py: 1-е число 12:00 МСК — напоминание, 18:00 МСК — переключение
+- Алгоритм: duplicate_sheet → update C2/T2 → clear смены активных → delete уволенных (снизу вверх)
+
 **Что впереди:**
 - Этап 7: рассылки (/message_dept, /message_all)
 - Этап 8: PDF + график (/schedule)
-- Этап 9: переключение месяца (/switch_month)
 - Этап 10: Docker + деплой
 
 ---

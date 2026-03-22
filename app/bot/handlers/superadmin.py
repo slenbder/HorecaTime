@@ -10,7 +10,11 @@ from aiogram.types import (
 
 from app.bot.fsm.auth_states import AuthStates, SetRateStates
 from app.db.models import get_all_rates, update_rate
+from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
+from app.services.google_sheets import GoogleSheetsClient
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
+
+_sheets_client = GoogleSheetsClient()
 
 superadmin_router = Router()
 logger = logging.getLogger(__name__)
@@ -176,3 +180,70 @@ async def _save_rate(message: Message, state: FSMContext,
     await message.answer(
         f"✅ Ставка обновлена: {position} — {_fmt_money(base_rate)} р/ч{extra_str}"
     )
+
+
+@superadmin_router.message(Command("switch_month"))
+async def cmd_switch_month(message: Message):
+    tg_id = message.from_user.id
+    logger.info("/switch_month: запрос от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("/switch_month: доступ запрещён для %s", tg_id)
+        await message.answer("⛔️ Недостаточно прав.")
+        return
+
+    next_name, _, _ = get_next_sheet_name()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, переключить", callback_data="switch_month_confirm"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="switch_month_cancel"),
+        ]
+    ])
+    await message.answer(
+        f"⚠️ Переключение месяца\n\n"
+        f"Будет создан новый лист <b>{next_name}</b>.\n"
+        f"Все активные сотрудники будут перенесены.\n"
+        f"Уволенные сотрудники (красные строки) — удалены.\n\n"
+        f"Продолжить?",
+        reply_markup=keyboard,
+    )
+
+
+@superadmin_router.callback_query(F.data == "switch_month_confirm")
+async def cb_switch_month_confirm(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    logger.info("switch_month_confirm: от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("switch_month_confirm: доступ запрещён для %s", tg_id)
+        await callback.answer("⛔️ Недостаточно прав.", show_alert=True)
+        return
+
+    await callback.message.edit_text("⏳ Переключаю месяц, подождите...")
+    await callback.answer()
+
+    try:
+        result = await switch_month(callback.bot, _sheets_client, DB_PATH)
+        await callback.message.edit_text(
+            f"✅ Готово!\n\n"
+            f"Старый лист: {result['old_sheet']}\n"
+            f"Новый лист: {result['new_sheet']}\n"
+            f"Перенесено сотрудников: {result['transferred']}\n"
+            f"Удалено уволенных: {result['removed']}"
+            + (f"\nАномалий: {result['anomalies']}" if result["anomalies"] else "")
+        )
+        logger.info(
+            "switch_month_confirm: переключение завершено. %s → %s",
+            result["old_sheet"], result["new_sheet"],
+        )
+        await notify_switch_done(callback.bot, DB_PATH, result)
+    except Exception as e:
+        logger.error("switch_month_confirm: ошибка переключения: %s", e)
+        await callback.message.edit_text(
+            f"❌ Ошибка при переключении месяца:\n\n{type(e).__name__}: {e}"
+        )
+
+
+@superadmin_router.callback_query(F.data == "switch_month_cancel")
+async def cb_switch_month_cancel(callback: CallbackQuery):
+    logger.info("switch_month_cancel: от %s", callback.from_user.id)
+    await callback.message.edit_text("❌ Переключение месяца отменено.")
+    await callback.answer()

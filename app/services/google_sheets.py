@@ -687,6 +687,49 @@ class GoogleSheetsClient:
         logger.info("get_employees_by_dept: найдено %d сотрудников в отделе '%s'", len(result), dept)
         return result
 
+    def get_dismissed_rows(self, sheet_name: str) -> set:
+        """
+        Returns a set of 1-based row indices where cell A has #FFCCCC background
+        (red=1.0, green≈0.8, blue≈0.8 — set by dismiss_employee).
+
+        Uses the Sheets REST API with includeGridData=True.
+        Falls back to an empty set on any error (safe default: no rows deleted).
+        """
+        result: set = set()
+        try:
+            url = f"https://sheets.googleapis.com/v4/spreadsheets/{SPREADSHEET_ID}"
+            params = {
+                "ranges": f"'{sheet_name}'!A:A",
+                "includeGridData": "true",
+                "fields": "sheets.data.rowData.values.effectiveFormat.backgroundColor",
+            }
+            response = self._client.http_client.request("GET", url, params=params)
+            data = response.json()
+            sheets_data = data.get("sheets", [])
+            if sheets_data:
+                rows = sheets_data[0].get("data", [{}])[0].get("rowData", [])
+                for i, row_data in enumerate(rows, start=1):
+                    values = row_data.get("values", [{}])
+                    if not values:
+                        continue
+                    bg = values[0].get("effectiveFormat", {}).get("backgroundColor", {})
+                    r = bg.get("red", 1.0)
+                    g = bg.get("green", 1.0)
+                    b = bg.get("blue", 1.0)
+                    # #FFCCCC: red=1.0, green=0.8, blue=0.8
+                    if r >= 0.95 and g <= 0.85 and b <= 0.85:
+                        result.add(i)
+            logger.info(
+                "get_dismissed_rows: лист='%s', найдено %d красных строк",
+                sheet_name, len(result),
+            )
+        except Exception as e:
+            logger.warning(
+                "get_dismissed_rows: не удалось получить форматирование листа '%s': %s",
+                sheet_name, e,
+            )
+        return result
+
     def dismiss_employee(self, telegram_id: int) -> None:
         """
         Увольняет сотрудника:

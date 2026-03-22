@@ -19,7 +19,7 @@ _SIMPLE_H_POSITIONS = {
 
 
 def get_next_sheet_name() -> tuple[str, int, int]:
-    """Returns (sheet_name, month, year) for the next month."""
+    """Returns (sheet_name, month, year) for the next month based on current date."""
     now = datetime.now(ZoneInfo("Europe/Moscow"))
     if now.month == 12:
         return f"{MONTH_NAMES_RU[1]} {now.year + 1}", 1, now.year + 1
@@ -30,6 +30,41 @@ def get_next_sheet_name() -> tuple[str, int, int]:
 def _get_current_sheet_name() -> str:
     now = datetime.now(ZoneInfo("Europe/Moscow"))
     return f"{MONTH_NAMES_RU[now.month]} {now.year}"
+
+
+# Обратный словарь: "Январь" → 1, "Февраль" → 2, ...
+_MONTH_NAME_TO_NUM = {name: num for num, name in MONTH_NAMES_RU.items()}
+
+
+def _find_last_month_sheet(spreadsheet) -> tuple[str, int, int]:
+    """
+    Finds the last monthly sheet in the spreadsheet by scanning all sheet titles.
+    A monthly sheet title matches the pattern "{MonthName} {Year}",
+    where MonthName is in MONTH_NAMES_RU and Year is a 4-digit number.
+
+    Returns (sheet_name, month, year) for the latest month found.
+    Raises ValueError if no monthly sheets are found.
+    """
+    all_sheets = spreadsheet.worksheets()
+    monthly: list[tuple[int, int, str]] = []  # (year, month, title)
+
+    for ws in all_sheets:
+        parts = ws.title.strip().split()
+        if len(parts) != 2:
+            continue
+        month_name, year_str = parts
+        if month_name not in _MONTH_NAME_TO_NUM:
+            continue
+        if not (year_str.isdigit() and len(year_str) == 4):
+            continue
+        monthly.append((int(year_str), _MONTH_NAME_TO_NUM[month_name], ws.title))
+
+    if not monthly:
+        raise ValueError("switch_month: ни одного месячного листа не найдено в таблице")
+
+    monthly.sort()
+    last_year, last_month, last_name = monthly[-1]
+    return last_name, last_month, last_year
 
 
 def _make_formulas(r: int, position: str) -> tuple[str, str, str]:
@@ -77,17 +112,46 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
     Returns:
         {old_sheet, new_sheet, transferred, removed, anomalies}
     """
-    current_name = _get_current_sheet_name()
-    next_name, next_month, next_year = get_next_sheet_name()
-
-    logger.info("switch_month: начинаю переключение '%s' → '%s'", current_name, next_name)
-
     transferred = 0
     removed = 0
     anomalies = 0
 
     try:
-        # Step a/b: Duplicate current sheet
+        # Step a: Determine current (last existing) and next sheet names from the spreadsheet
+        try:
+            current_name, current_month, current_year = _find_last_month_sheet(
+                sheets_client._spreadsheet
+            )
+        except Exception as e:
+            logger.warning("switch_month: реконнект перед поиском листов: %s", e)
+            sheets_client._reconnect()
+            current_name, current_month, current_year = _find_last_month_sheet(
+                sheets_client._spreadsheet
+            )
+
+        if current_month == 12:
+            next_month, next_year = 1, current_year + 1
+        else:
+            next_month, next_year = current_month + 1, current_year
+        next_name = f"{MONTH_NAMES_RU[next_month]} {next_year}"
+
+        logger.info("switch_month: начинаю переключение '%s' → '%s'", current_name, next_name)
+
+        # Проверка: лист следующего месяца уже существует
+        existing_titles = {ws.title for ws in sheets_client._spreadsheet.worksheets()}
+        if next_name in existing_titles:
+            logger.warning(
+                "switch_month: лист '%s' уже существует, переключение отменено", next_name
+            )
+            return {
+                "old_sheet": current_name,
+                "new_sheet": next_name,
+                "transferred": 0,
+                "removed": 0,
+                "anomalies": 0,
+            }
+
+        # Step b: Duplicate current sheet
         try:
             source_ws = sheets_client._spreadsheet.worksheet(current_name)
         except Exception as e:
@@ -95,47 +159,37 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             sheets_client._reconnect()
             source_ws = sheets_client._spreadsheet.worksheet(current_name)
 
+        new_ws = sheets_client._spreadsheet.duplicate_sheet(
+            source_sheet_id=source_ws.id,
+            new_sheet_name=next_name,
+        )
+        logger.info("switch_month: лист '%s' скопирован как '%s'", current_name, next_name)
+
+        # Переместить новый лист в конец (duplicate_sheet вставляет в начало)
         try:
-            new_ws = sheets_client._spreadsheet.duplicate_sheet(
-                source_sheet_id=source_ws.id,
-                new_sheet_name=next_name,
+            all_sheets = sheets_client._spreadsheet.worksheets()
+            last_index = len(all_sheets) - 1
+            move_body = {
+                "requests": [{
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": new_ws.id,
+                            "index": last_index,
+                        },
+                        "fields": "index",
+                    }
+                }]
+            }
+            sheets_client._spreadsheet.batch_update(move_body)
+            logger.info(
+                "switch_month: лист '%s' перемещён в позицию %d (конец)",
+                next_name, last_index,
             )
-            logger.info("switch_month: лист '%s' скопирован как '%s'", current_name, next_name)
-
-            # Переместить новый лист в конец (duplicate_sheet вставляет в начало)
-            try:
-                all_sheets = sheets_client._spreadsheet.worksheets()
-                last_index = len(all_sheets) - 1
-                move_body = {
-                    "requests": [{
-                        "updateSheetProperties": {
-                            "properties": {
-                                "sheetId": new_ws.id,
-                                "index": last_index,
-                            },
-                            "fields": "index",
-                        }
-                    }]
-                }
-                sheets_client._spreadsheet.batch_update(move_body)
-                logger.info(
-                    "switch_month: лист '%s' перемещён в позицию %d (конец)",
-                    next_name, last_index,
-                )
-            except Exception as move_err:
-                logger.warning(
-                    "switch_month: не удалось переместить лист '%s' в конец: %s",
-                    next_name, move_err,
-                )
-
-        except Exception as dup_err:
-            # Sheet may already exist (re-run scenario)
-            logger.warning("switch_month: duplicate_sheet ошибка: %s — пробуем использовать существующий", dup_err)
-            try:
-                new_ws = sheets_client._spreadsheet.worksheet(next_name)
-                logger.warning("switch_month: используем существующий лист '%s'", next_name)
-            except Exception:
-                raise dup_err
+        except Exception as move_err:
+            logger.warning(
+                "switch_month: не удалось переместить лист '%s' в конец: %s",
+                next_name, move_err,
+            )
 
         # Step c: Update C2 (month name) and T2 (year)
         new_ws.update_cell(2, 3, MONTH_NAMES_RU[next_month])

@@ -273,5 +273,6 @@ async def cmd_schedule(message: Message):
         )
 
     except Exception as e:
+        logger.error("schedule: ошибка генерации PDF для %s: %s", tg_id, e, exc_info=True)
         error_logger.exception("schedule: ошибка генерации PDF для %s: %s", tg_id, e)
         await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")

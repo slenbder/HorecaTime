@@ -851,15 +851,20 @@ class GoogleSheetsClient:
         end_row = len(all_values)
 
         for i, row in enumerate(all_values):
-            cell_c = str(row[2]).strip() if len(row) > 2 else ""
-            if cell_c == department and not row[0] and not row[1]:
+            # Ищем заголовок в любой ячейке строки
+            row_text = " ".join(str(c).strip() for c in row)
+            if department in row_text and not str(row[0]).strip() and not str(row[1]).strip():
                 start_row = i + 1  # 1-based
-            elif start_row is not None and cell_c in DEPT_HEADERS and cell_c != department:
+            elif start_row is not None and any(h in row_text for h in DEPT_HEADERS if h != department) and not str(row[0]).strip() and not str(row[1]).strip():
                 end_row = i  # строка следующего заголовка (0-based = 1-based строка выше)
                 break
 
         if start_row is None:
+            logger.info("get_section_range: dept=%s, not found", department)
             return None
 
         last_col = "AN"
-        return f"A{start_row}:{last_col}{end_row}"
+        result = f"A{start_row}:{last_col}{end_row}"
+        logger.info("get_section_range: dept=%s, found start_row=%s, end_row=%s, range=%s",
+                    department, start_row, end_row, result)
+        return result

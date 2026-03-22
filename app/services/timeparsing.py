@@ -114,6 +114,10 @@ def parse_shift(text: str, position: str) -> dict | None:
     Разбирает строку вида "{дата} {время}" и возвращает словарь:
       day, month, year, start, end, h, is_weekend
     Возвращает None при невалидном формате.
+
+    # Формат даты: DD.MM или DD.MM.YY (например 03.03 или 03.03.26)
+    # Формат времени: HH:MM-HH:MM, HHMM-HHMM, HH-HH, HH.MM-HH.MM
+    # Разделитель времени: любое тире (-, –, —) с пробелами или без
     """
     if not text:
         return None

@@ -673,7 +673,8 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
     except Exception as e:
         logging.getLogger("errors").error(
-            "approve_ah_callback: не удалось уведомить официанта %s: %s", telegram_id, e,
+            "approve_ah: смена записана но уведомление официанту %s не отправлено: %s",
+            telegram_id, e,
         )
 
 

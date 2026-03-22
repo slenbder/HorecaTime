@@ -415,17 +415,25 @@ VALID_POSITIONS = {
 - Суперадмины и developer пропускают регистрацию — сразу главное меню
 - Функция увольнения /dismiss (superadmin + developer): inline-флоу, подтверждение, красит ячейку A в #FFCCCC, удаляет из Техлиста и SQLite, сбрасывает FSM/кеш/команды, уведомляет сотрудника
 
-**Этап 9 🔄 в разработке:**
-- `app/scheduler/monthly_switch.py` — `switch_month()`, `notify_upcoming_switch()`, `notify_switch_done()`
-- `GoogleSheetsClient.get_dismissed_rows()` — читает фон ячеек A через Sheets REST API (includeGridData)
-- `/switch_month` в superadmin.py — inline-подтверждение, вызов switch_month + notify_switch_done
-- APScheduler в main.py: 1-е число 12:00 МСК — напоминание, 18:00 МСК — переключение
-- Алгоритм: duplicate_sheet → update C2/T2 → clear смены активных → delete уволенных (снизу вверх)
+**Этап 7 ✅ завершён:**
+- `/message_dept` — рассылка по отделу (admin_* + superadmin/developer)
+- `/message_all` — рассылка всем (superadmin/developer)
+- Заголовок рассылки зависит от роли отправителя
+- `get_users_by_department()` и `get_all_users()` в models.py
+
+**Этап 9 ✅ завершён:**
+- `switch_month()` — копирует текущий лист, очищает смены, переносит активных сотрудников
+- Красные строки (уволенные) не переносятся — двойная проверка: цвет + Техлист
+- Следующий месяц определяется по последнему существующему листу
+- Новый лист вставляется в конец (правее всех)
+- APScheduler: уведомление в 12:00 + переключение в 18:00 (1-е число, МСК)
+- `/switch_month` — ручное переключение с подтверждением (superadmin/developer)
+- Email в заявке администратора + ссылка на таблицу при апруве
+- Авторизация admin_hall/bar/kitchen не требует Техлиста
 
 **Что впереди:**
-- Этап 7: рассылки (/message_dept, /message_all)
-- Этап 8: PDF + график (/schedule)
-- Этап 10: Docker + деплой
+- Этап 8: PDF + график `/schedule` (ожидаем комментарии заказчиков)
+- Этап 10: финальный аудит + фиксы + Docker + деплой
 
 ---
 

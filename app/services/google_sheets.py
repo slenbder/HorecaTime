@@ -412,38 +412,36 @@ class GoogleSheetsClient:
             value_input_option="USER_ENTERED",
         )
 
-        # Копируем форматирование границ из строки выше новой строки
+        # Явно применяем границы для новой строки
+        _solid = {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
         try:
-            copy_format_body = {
+            borders_body = {
                 "requests": [{
-                    "copyPaste": {
-                        "source": {
+                    "updateBorders": {
+                        "range": {
                             "sheetId": month_ws.id,
-                            "startRowIndex": new_row - 2,  # строка выше (0-based)
-                            "endRowIndex": new_row - 1,
-                            "startColumnIndex": 0,
-                            "endColumnIndex": month_ws.col_count,
-                        },
-                        "destination": {
-                            "sheetId": month_ws.id,
-                            "startRowIndex": new_row - 1,  # новая строка (0-based)
+                            "startRowIndex": new_row - 1,  # 0-based
                             "endRowIndex": new_row,
                             "startColumnIndex": 0,
                             "endColumnIndex": month_ws.col_count,
                         },
-                        "pasteType": "PASTE_FORMAT",
-                        "pasteOrientation": "NORMAL",
+                        "top":             _solid,
+                        "bottom":          _solid,
+                        "left":            _solid,
+                        "right":           _solid,
+                        "innerHorizontal": _solid,
+                        "innerVertical":   _solid,
                     }
                 }]
             }
-            self._spreadsheet.batch_update(copy_format_body)
+            self._spreadsheet.batch_update(borders_body)
             logger.info(
-                "ensure_user: скопировано форматирование границ в строку %s листа '%s'",
+                "ensure_user: границы применены к строке %s листа '%s'",
                 new_row, month_ws.title,
             )
         except Exception as e:
             logger.warning(
-                "ensure_user: не удалось скопировать форматирование границ в строку %s: %s",
+                "ensure_user: не удалось применить границы к строке %s: %s",
                 new_row, e,
             )
 

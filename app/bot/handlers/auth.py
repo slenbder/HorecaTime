@@ -466,6 +466,12 @@ DEPT_TO_ADMIN_ROLE = {
     "Кухня": "admin_kitchen",
 }
 
+ROLE_TO_POSITION = {
+    "admin_hall": "Администратор зала",
+    "admin_bar": "Администратор бара",
+    "admin_kitchen": "Администратор кухни",
+}
+
 
 @auth_router.callback_query(F.data.startswith("approve_admin:"))
 async def process_approve_admin(callback: CallbackQuery):
@@ -489,11 +495,13 @@ async def process_approve_admin(callback: CallbackQuery):
         logger.info("process_approve_admin: full_name='%s' для %s", full_name, user_tg_id)
 
         # Сохраняем в SQLite
+        position = ROLE_TO_POSITION.get(role, role)
         RolesCacheService.update_user_role(
             telegram_id=user_tg_id,
             full_name=full_name,
             role=role,
             department=dept,
+            position=position,
         )
         logger.info(
             "Суперадмин %s одобрил администратора %s (%s), роль=%s, отдел=%s",
@@ -964,8 +972,8 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
         tech_info = sheets_client.get_user_from_techlist(target_id)
     else:
         tech_info = None
-    position = tech_info["position"] if tech_info else "—"
-    dept = tech_info["department"] if tech_info else "—"
+    position = (tech_info["position"] if tech_info else "") or (user_data.get("position") if user_data else "") or (user_data.get("role") if user_data else "") or "—"
+    dept = (tech_info["department"] if tech_info else "") or (user_data.get("department") if user_data else "") or "—"
 
     await state.update_data(
         dismiss_target_id=target_id,

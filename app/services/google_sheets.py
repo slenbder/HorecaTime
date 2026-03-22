@@ -412,6 +412,41 @@ class GoogleSheetsClient:
             value_input_option="USER_ENTERED",
         )
 
+        # Копируем форматирование границ из строки выше новой строки
+        try:
+            copy_format_body = {
+                "requests": [{
+                    "copyPaste": {
+                        "source": {
+                            "sheetId": month_ws.id,
+                            "startRowIndex": new_row - 2,  # строка выше (0-based)
+                            "endRowIndex": new_row - 1,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": month_ws.col_count,
+                        },
+                        "destination": {
+                            "sheetId": month_ws.id,
+                            "startRowIndex": new_row - 1,  # новая строка (0-based)
+                            "endRowIndex": new_row,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": month_ws.col_count,
+                        },
+                        "pasteType": "PASTE_FORMAT",
+                        "pasteOrientation": "NORMAL",
+                    }
+                }]
+            }
+            self._spreadsheet.batch_update(copy_format_body)
+            logger.info(
+                "ensure_user: скопировано форматирование границ в строку %s листа '%s'",
+                new_row, month_ws.title,
+            )
+        except Exception as e:
+            logger.warning(
+                "ensure_user: не удалось скопировать форматирование границ в строку %s: %s",
+                new_row, e,
+            )
+
         logger.info(
             "Пользователь %s добавлен в лист '%s' в строку %s (department=%s, position=%s)",
             telegram_id,

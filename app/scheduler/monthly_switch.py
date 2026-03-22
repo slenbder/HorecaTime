@@ -101,6 +101,33 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 new_sheet_name=next_name,
             )
             logger.info("switch_month: лист '%s' скопирован как '%s'", current_name, next_name)
+
+            # Переместить новый лист в конец (duplicate_sheet вставляет в начало)
+            try:
+                all_sheets = sheets_client._spreadsheet.worksheets()
+                last_index = len(all_sheets) - 1
+                move_body = {
+                    "requests": [{
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": new_ws.id,
+                                "index": last_index,
+                            },
+                            "fields": "index",
+                        }
+                    }]
+                }
+                sheets_client._spreadsheet.batch_update(move_body)
+                logger.info(
+                    "switch_month: лист '%s' перемещён в позицию %d (конец)",
+                    next_name, last_index,
+                )
+            except Exception as move_err:
+                logger.warning(
+                    "switch_month: не удалось переместить лист '%s' в конец: %s",
+                    next_name, move_err,
+                )
+
         except Exception as dup_err:
             # Sheet may already exist (re-run scenario)
             logger.warning("switch_month: duplicate_sheet ошибка: %s — пробуем использовать существующий", dup_err)

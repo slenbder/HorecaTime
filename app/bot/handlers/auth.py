@@ -425,16 +425,24 @@ async def process_fio(message: Message, state: FSMContext):
         await state.clear()
         return
 
+    # Вычисляем отображаемую должность
+    if department == "Кухня":
+        display_title = custom_title if custom_title else "Повар"
+    else:
+        display_title = position
+
+    mention = f'<a href="https://t.me/{nickname}">@{nickname}</a>' if nickname else "не указан"
+
     # 2. Формируем текст заявки с inline-кнопками
     text = (
         "📝 <b>Новая заявка на доступ к боту:</b>\n\n"
         f"👤 <b>ФИО:</b> {fio}\n"
         f"🏢 <b>Отдел:</b> {department}\n"
-        f"💼 <b>Позиция:</b> {position}\n\n"
+        f"💼 <b>Позиция:</b> {position}\n"
+        f"🔧 <b>Должность:</b> {display_title}\n"
         f"🆔 Telegram ID: <code>{tg_id}</code>\n"
-        f"📱 Ник: @{nickname if nickname else '—'}\n"
-        f"📋 Имя (TG): {tg_name or '—'}\n"
-        f"📊 Строка в Техлисте: {row_index}\n\n"
+        f"📱 Ник: {mention}\n"
+        f"📋 Строка в Техлисте: {row_index}\n\n"
         "❓ <b>Добавить пользователя в график?</b>"
     )
 
@@ -478,6 +486,7 @@ async def process_fio(message: Message, state: FSMContext):
                 await message.bot.send_message(
                     chat_id=admin_id,
                     text=text,
+                    parse_mode="HTML",
                     reply_markup=keyboard
                 )
                 logger.info(f"Заявка отправлена админу {admin_id}")
@@ -491,6 +500,7 @@ async def process_fio(message: Message, state: FSMContext):
         "Спасибо! Твои данные сохранены:\n\n"
         f"Отдел: {department}\n"
         f"Позиция: {position}\n"
+        f"Должность: {display_title}\n"
         f"ФИО: {fio}\n\n"
         "Заявка на доступ отправлена администратору.\n"
         "После одобрения ты сможешь вносить рабочие часы и смотреть отчёты."

@@ -496,13 +496,23 @@ async def _process_bar_shift_input(message: Message, state: FSMContext, position
     await state.update_data(**result)
 
     h = result["h"]
+    end = result["end"]
     date = _date_str(result["day"], result["month"], result["year"])
+
+    start_hour = int(end) % 24
+    start_min = 30 if (end % 1) >= 0.5 else 0
+    start_str = f"{start_hour:02d}:{start_min:02d}"
+
+    total_half = int(end * 2) + 8
+    end_hour = (total_half // 2) % 24
+    end_min = 30 if total_half % 2 else 0
+    end_str = f"{end_hour:02d}:{end_min:02d}"
 
     await message.answer(
         f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\n"
         f"Были тусовочные часы?\n"
         f"Введите диапазон или 0:\n\n"
-        f"<code>22:00-02:00</code>"
+        f"<code>{start_str}-{end_str}</code>"
     )
     await state.set_state(ShiftStates.waiting_ah_input)
 

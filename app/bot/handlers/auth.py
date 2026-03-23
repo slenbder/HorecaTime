@@ -38,6 +38,14 @@ from config import (
 auth_router = Router()
 logger = logging.getLogger(__name__)
 
+
+def make_mention(username: str | None, full_name: str) -> str:
+    """Возвращает кликабельный ник или ФИО если ника нет."""
+    if username:
+        return f'<a href="https://t.me/{username}">{full_name}</a>'
+    return full_name
+
+
 VALID_POSITIONS: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
@@ -711,7 +719,7 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
     original_text = callback.message.text or ""
     new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
     try:
-        await callback.message.edit_text(new_text, reply_markup=None)
+        await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None)
     except Exception as e:
         logging.getLogger("errors").error(
             "approve_ah_callback: не удалось отредактировать сообщение: %s", e,
@@ -769,6 +777,8 @@ async def process_approve(callback: CallbackQuery):
         fio = user_info.get("fio_from_user", "Неизвестно")
         department = user_info.get("department", "")
         position = user_info.get("position", "")
+        _nickname = (user_info.get("nickname") or "").lstrip("@") or None
+        mention = make_mention(_nickname, fio)
 
         # Одобряем пользователя в таблице
         sheets_client.mark_user_approved(row_index)
@@ -835,7 +845,8 @@ async def process_approve(callback: CallbackQuery):
 
         # Обновляем сообщение админа
         await callback.message.edit_text(
-            text=callback.message.text + "\n\n✅ ОДОБРЕНО",
+            text=callback.message.text + f"\n\n✅ {mention} одобрен. Роль: user",
+            parse_mode="HTML",
             reply_markup=None
         )
 

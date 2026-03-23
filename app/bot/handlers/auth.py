@@ -48,6 +48,25 @@ VALID_POSITIONS: dict[str, list[str]] = {
 # Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
 _pending_custom_titles: dict[int, str] = {}
 
+POSITION_TO_SECTION: dict[str, str] = {
+    "Су-шеф": "Руководящий состав",
+    "Горячий цех": "Горячий цех",
+    "Холодный цех": "Холодный цех",
+    "Кондитерский цех": "Кондитерский цех",
+    "Заготовочный цех": "Заготовочный цех",
+    "Коренной цех": "Коренной цех",
+    "МОП": "МОП",
+    "Бармен": "Бармены",
+    "Барбэк": "Барбэки",
+    "Менеджер": "Менеджеры",
+    "Официант": "Официанты",
+    "Раннер": "Раннеры",
+    "Хостесс": "Хостесс",
+    "Администратор зала": "Зал",
+    "Администратор бара": "Бар",
+    "Администратор кухни": "Кухня",
+}
+
 POSITION_KEYBOARDS = {
     "Зал":   hall_positions_keyboard,
     "Бар":   bar_positions_keyboard,
@@ -1042,8 +1061,9 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
         dismiss_target_dept=dept,
     )
 
+    position_display = POSITION_TO_SECTION.get(position, position)
     await callback.message.edit_text(
-        f"⚠️ Уволить {full_name} ({position}, {dept})?\n\nЭто действие нельзя отменить.",
+        f"⚠️ Уволить {full_name} ({position_display}, {dept})?\n\nЭто действие нельзя отменить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Да, уволить", callback_data=f"dismiss_confirm:{target_id}")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],

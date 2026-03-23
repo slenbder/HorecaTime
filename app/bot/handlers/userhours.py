@@ -36,6 +36,13 @@ except Exception:
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
 
+def make_mention(username: str | None, full_name: str) -> str:
+    """Возвращает кликабельный ник или ФИО если ника нет."""
+    if username:
+        return f'<a href="https://t.me/{username}">{full_name}</a>'
+    return full_name
+
+
 def _fmt_h(v: float) -> str:
     """8.0 → '8', 8.5 → '8.5'"""
     return str(int(v)) if v == int(v) else str(v)
@@ -357,16 +364,17 @@ async def _write_waiter_no_photo(
         logger.warning("_write_waiter_no_photo: получатели пустые, уведомление не отправлено")
         return
 
+    mention = make_mention(message.from_user.username, full_name)
     time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
     admin_text = (
         f"📋 Официант внёс смену\n\n"
-        f"👤 {full_name}\n"
+        f"👤 {mention}\n"
         f"📅 {date}\n"
         f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
     )
     for admin_id in recipients:
         try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text)
+            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
             logger.info("_write_waiter_no_photo: уведомлен %s", admin_id)
         except Exception as e:
             error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
@@ -437,10 +445,11 @@ async def _send_waiter_report(
         )
         return
 
+    mention = make_mention(message.from_user.username, full_name)
     time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
     h_str = _fmt_h(h)
     approval_text = (
-        f"👤 {full_name} — Официант\n"
+        f"👤 {mention} — Официант\n"
         f"📅 {date}\n"
         f"⏱ {time_range} → Часы смены = {h_str} ч\n"
         f"📎 Приложено фото: {N}\n\n"
@@ -461,7 +470,7 @@ async def _send_waiter_report(
             media = [InputMediaPhoto(media=fid) for fid in photo_ids]
             await message.bot.send_media_group(chat_id=admin_id, media=media)
             await message.bot.send_message(
-                chat_id=admin_id, text=approval_text, reply_markup=keyboard
+                chat_id=admin_id, text=approval_text, parse_mode="HTML", reply_markup=keyboard
             )
             logger.info("_send_waiter_report: уведомлен %s", admin_id)
         except Exception as e:
@@ -596,11 +605,12 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
         await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
 
     # Уведомление администраторам бара
+    mention = make_mention(message.from_user.username, full_name)
     time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
     if ah > 0:
         admin_text = (
             f"📋 {position} внёс смену\n\n"
-            f"👤 {full_name}\n"
+            f"👤 {mention}\n"
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч\n"
             f"🎉 Тусовочные = {_fmt_h(ah)} ч"
@@ -608,7 +618,7 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
     else:
         admin_text = (
             f"📋 {position} внёс смену\n\n"
-            f"👤 {full_name}\n"
+            f"👤 {mention}\n"
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
         )
@@ -616,7 +626,7 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
     recipients = list(set(ADMIN_BAR_IDS + SUPERADMIN_IDS))
     for admin_id in recipients:
         try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text)
+            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
@@ -655,6 +665,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
 
     user_data = get_user(tg_id)
     full_name = user_data["full_name"] if user_data else str(tg_id)
+    mention = make_mention(message.from_user.username, full_name)
 
     if position in KITCHEN_POSITIONS:
         recipients = list(set(ADMIN_KITCHEN_IDS + SUPERADMIN_IDS))
@@ -688,13 +699,13 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
         time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
         admin_text = (
             f"📋 {position} внёс смену\n\n"
-            f"👤 {full_name}\n"
+            f"👤 {mention}\n"
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
         )
         for admin_id in recipients:
             try:
-                await message.bot.send_message(chat_id=admin_id, text=admin_text)
+                await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
                 logger.info("Notified admin %s", admin_id)
             except Exception as e:
                 error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
@@ -759,13 +770,14 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
         await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
 
     # Уведомление admin_hall
+    mention = make_mention(message.from_user.username, full_name)
     weekend_mark = " 🌟 (выходной)" if is_weekend else ""
     time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
 
     if ah > 0:
         admin_text = (
             f"📋 Раннер внёс смену\n\n"
-            f"👤 {full_name}\n"
+            f"👤 {mention}\n"
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}\n"
             f"🔢 Доп. часы = {_fmt_h(ah)} ч\n"
@@ -774,7 +786,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     else:
         admin_text = (
             f"📋 Раннер внёс смену\n\n"
-            f"👤 {full_name}\n"
+            f"👤 {mention}\n"
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}"
         )
@@ -782,7 +794,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
     for admin_id in recipients:
         try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text)
+            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)

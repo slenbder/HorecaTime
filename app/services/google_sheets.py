@@ -347,7 +347,7 @@ class GoogleSheetsClient:
 
         return last_employee_row
 
-    def ensure_user_in_current_month_hours(self, telegram_id: int) -> bool:
+    def ensure_user_in_current_month_hours(self, telegram_id: int, custom_title: Optional[str] = None) -> bool:
         logger.info("Добавление пользователя %s в график текущего месяца", telegram_id)
         user_info = self.get_user_by_telegram_id(telegram_id)
         if not user_info:
@@ -406,8 +406,9 @@ class GoogleSheetsClient:
 
         new_row = insert_after_row + 1
 
+        display_position = custom_title if custom_title else position
         month_ws.insert_row(
-            [full_name, str(telegram_id), position],
+            [full_name, str(telegram_id), display_position],
             index=new_row,
             value_input_option="USER_ENTERED",
         )

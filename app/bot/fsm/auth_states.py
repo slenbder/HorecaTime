@@ -14,6 +14,7 @@ class AuthStates(StatesGroup):
     waiting_dismiss_confirm = State()    # подтверждение увольнения
     waiting_broadcast_text = State()     # ожидание текста рассылки
     waiting_broadcast_dept = State()     # выбор отдела для рассылки (admin_*)
+    waiting_kitchen_title = State()      # ввод должности для Шеф/Су-шеф
 
 
 class SetRateStates(StatesGroup):

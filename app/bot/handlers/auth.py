@@ -41,9 +41,12 @@ logger = logging.getLogger(__name__)
 VALID_POSITIONS: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Су-шеф", "Горячий цех", "Холодный цех",
+    "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
                "Кондитерский цех", "Заготовочный цех", "Коренной цех", "МОП"],
 }
+
+# Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
+_pending_custom_titles: dict[int, str] = {}
 
 POSITION_KEYBOARDS = {
     "Зал":   hall_positions_keyboard,
@@ -328,8 +331,33 @@ async def process_position(message: Message, state: FSMContext):
     # ↑ конец валидации
 
     logger.info(f"Пользователь {message.from_user.id} выбрал позицию: {position}")
-    await state.update_data(position=position)
 
+    if position == "Шеф/Су-шеф":
+        await state.update_data(position="Су-шеф")
+        await message.answer(
+            "Введите вашу должность (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await state.set_state(AuthStates.waiting_kitchen_title)
+        return
+
+    if department == "Кухня":
+        await state.update_data(position=position, custom_title="Повар")
+    else:
+        await state.update_data(position=position)
+
+    await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
+    await state.set_state(AuthStates.entering_fio)
+
+
+@auth_router.message(AuthStates.waiting_kitchen_title)
+async def process_kitchen_title(message: Message, state: FSMContext):
+    custom_title = (message.text or "").strip()
+    logger.info(
+        "Пользователь %s ввёл должность для Шеф/Су-шеф: '%s'",
+        message.from_user.id, custom_title,
+    )
+    await state.update_data(custom_title=custom_title)
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
 
@@ -348,6 +376,7 @@ async def process_fio(message: Message, state: FSMContext):
     data = await state.get_data()
     department = data.get("department")
     position = data.get("position")
+    custom_title = data.get("custom_title")
     registration_type = data.get("registration_type", "user")
 
     tg_id = message.from_user.id
@@ -467,6 +496,8 @@ async def process_fio(message: Message, state: FSMContext):
         "После одобрения ты сможешь вносить рабочие часы и смотреть отчёты."
     )
     logger.info(f"Регистрация пользователя {tg_id} завершена успешно")
+    if custom_title:
+        _pending_custom_titles[tg_id] = custom_title
     await state.clear()
 
 
@@ -717,8 +748,11 @@ async def process_approve(callback: CallbackQuery):
         )
 
         # Сразу добавляем пользователя в график текущего месяца
+        pending_custom_title = _pending_custom_titles.pop(user_tg_id, None)
         try:
-            inserted = sheets_client.ensure_user_in_current_month_hours(user_tg_id)
+            inserted = sheets_client.ensure_user_in_current_month_hours(
+                user_tg_id, custom_title=pending_custom_title
+            )
             logger.info(
                 "Синхронизация в график завершена для %s, inserted=%s",
                 user_tg_id,
@@ -802,6 +836,7 @@ async def process_reject(callback: CallbackQuery):
             return
 
         logger.info(f"Админ {callback.from_user.id} отклонил пользователя {user_tg_id}")
+        _pending_custom_titles.pop(user_tg_id, None)
 
         # Уведомляем пользователя
         try:

@@ -494,10 +494,22 @@ async def process_fio(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Вычисляем отображаемую должность
-    if department == "Кухня":
-        display_title = custom_title if custom_title else "Повар"
+    # Вычисляем отображаемые позицию и должность
+    DOP_POSITIONS = ["Грузчик", "Закупщик"]
+    if position in DOP_POSITIONS:
+        position_display = "Дополнительные сотрудники"
+        display_title = position
+    elif position == "Су-шеф" and custom_title:
+        position_display = "Руководящий состав"
+        display_title = custom_title
+    elif department == "Кухня":
+        position_display = position
+        display_title = "Повар"
+    elif department == "МОП":
+        position_display = position
+        display_title = position
     else:
+        position_display = position
         display_title = position
 
     mention = f'<a href="https://t.me/{nickname}">@{nickname}</a>' if nickname else "не указан"
@@ -507,7 +519,7 @@ async def process_fio(message: Message, state: FSMContext):
         "📝 <b>Новая заявка на доступ к боту:</b>\n\n"
         f"👤 <b>ФИО:</b> {fio}\n"
         f"🏢 <b>Отдел:</b> {department}\n"
-        f"💼 <b>Позиция:</b> {position}\n"
+        f"💼 <b>Позиция:</b> {position_display}\n"
         f"🔧 <b>Должность:</b> {display_title}\n"
         f"🆔 Telegram ID: <code>{tg_id}</code>\n"
         f"📱 Ник: {mention}\n"
@@ -570,7 +582,7 @@ async def process_fio(message: Message, state: FSMContext):
     await message.answer(
         "Спасибо! Твои данные сохранены:\n\n"
         f"Отдел: {department}\n"
-        f"Позиция: {position}\n"
+        f"Позиция: {position_display}\n"
         f"Должность: {display_title}\n"
         f"ФИО: {fio}\n\n"
         "Заявка на доступ отправлена администратору.\n"

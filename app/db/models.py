@@ -22,7 +22,10 @@ _DEFAULT_RATES = [
     ("Кондитерский цех",  280.0, None),
     ("Заготовочный цех",  230.0, None),
     ("Коренной цех",      230.0, None),
-    ("МОП",               180.0, None),
+    ("Грузчик",           180.0, None),
+    ("Закупщик",          180.0, None),
+    ("Клининг",           200.0, None),
+    ("Котломой",          200.0, None),
     ("Су-шеф",            500.0, None),
 ]
 
@@ -88,6 +91,14 @@ def init_database():
                 [(pos, base, extra, now_str) for pos, base, extra in _DEFAULT_RATES],
             )
             logger.info("Дефолтные ставки вставлены в таблицу rates")
+        else:
+            # Миграция: добавить новые позиции если они отсутствуют
+            now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
+            cursor.executemany(
+                'INSERT OR IGNORE INTO rates (position, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?)',
+                [(pos, base, extra, now_str) for pos, base, extra in _DEFAULT_RATES],
+            )
+            logger.info("Миграция ставок: добавлены недостающие позиции")
         conn.commit()
     logger.info("База данных успешно инициализирована")
 

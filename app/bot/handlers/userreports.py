@@ -248,13 +248,14 @@ async def cmd_schedule(message: Message):
         await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")
         return
 
-    await message.answer("⏳ Генерирую график, подождите...")
+    wait_msg = await message.answer("⏳ Генерирую график, подождите...")
 
     sheet_name = _get_current_sheet_name()
     try:
         sheet_id = sheets_client.get_sheet_id_by_name(sheet_name)
         if sheet_id is None:
             logger.warning("schedule: лист '%s' не найден", sheet_name)
+            await wait_msg.delete()
             await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")
             return
 
@@ -278,8 +279,10 @@ async def cmd_schedule(message: Message):
             BufferedInputFile(pdf_bytes, filename=f"График_{sheet_name}.pdf"),
             caption=f"📊 {sheet_name}",
         )
+        await wait_msg.delete()
 
     except Exception as e:
         logger.error("schedule: ошибка генерации PDF для %s: %s", tg_id, e, exc_info=True)
         error_logger.exception("schedule: ошибка генерации PDF для %s: %s", tg_id, e)
+        await wait_msg.delete()
         await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")

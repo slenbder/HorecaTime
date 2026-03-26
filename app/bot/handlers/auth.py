@@ -1,4 +1,5 @@
 import logging
+import re
 
 from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
@@ -19,6 +20,8 @@ from app.bot.keyboards.common import (
     hall_positions_keyboard,
     bar_positions_keyboard,
     kitchen_positions_keyboard,
+    kitchen_dop_keyboard,
+    mop_positions_keyboard,
     main_menu_keyboard,
 )
 
@@ -50,11 +53,22 @@ VALID_POSITIONS: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
     "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
-               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "МОП"],
+               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "Доп."],
+    "МОП":   ["Клининг", "Котломой"],
 }
+
+VALID_DOP_POSITIONS = ["Грузчик", "Закупщик"]
 
 # Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
 _pending_custom_titles: dict[int, str] = {}
+
+# Временное хранилище данных заявки администратора (tg_id → {full_name, department, email})
+_pending_admins: dict[int, dict] = {}
+
+
+def _is_valid_gmail(email: str) -> bool:
+    pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
+    return bool(re.match(pattern, email.strip().lower()))
 
 POSITION_TO_SECTION: dict[str, str] = {
     "Су-шеф": "Руководящий состав",
@@ -63,7 +77,10 @@ POSITION_TO_SECTION: dict[str, str] = {
     "Кондитерский цех": "Кондитерский цех",
     "Заготовочный цех": "Заготовочный цех",
     "Коренной цех": "Коренной цех",
-    "МОП": "МОП",
+    "Грузчик": "Дополнительные сотрудники",
+    "Закупщик": "Дополнительные сотрудники",
+    "Клининг": "Клининг",
+    "Котломой": "Котломой",
     "Бармен": "Бармены",
     "Барбэк": "Барбэки",
     "Менеджер": "Менеджеры",
@@ -79,6 +96,7 @@ POSITION_KEYBOARDS = {
     "Зал":   hall_positions_keyboard,
     "Бар":   bar_positions_keyboard,
     "Кухня": kitchen_positions_keyboard,
+    "МОП":   mop_positions_keyboard,
 }
 
 logger.debug("Загружены SUPERADMIN_IDS: %s", SUPERADMIN_IDS)
@@ -244,8 +262,12 @@ async def process_admin_dept(message: Message, state: FSMContext):
 async def process_admin_email(message: Message, state: FSMContext):
     email = (message.text or "").strip()
 
-    if "@" not in email or "." not in email.split("@")[-1]:
-        await message.answer("❌ Некорректный формат email. Попробуйте ещё раз:")
+    if not _is_valid_gmail(email):
+        await message.answer(
+            "❌ Принимается только Gmail адрес.\n\n"
+            "Пример: yourname@gmail.com\n\n"
+            "Введите корректный Gmail:"
+        )
         return
 
     data = await state.get_data()
@@ -264,12 +286,12 @@ async def process_admin_email(message: Message, state: FSMContext):
         f"📧 Email: {email}\n\n"
         f"ID: {tg_id}"
     )
-    safe_name = fio.replace(":", "_")
+    _pending_admins[tg_id] = {"full_name": fio, "department": department, "email": email}
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
                 text="✅ Одобрить",
-                callback_data=f"approve_admin:{tg_id}:{department}:{safe_name}",
+                callback_data=f"approve_admin:{tg_id}",
             ),
             InlineKeyboardButton(
                 text="❌ Отклонить",
@@ -302,7 +324,7 @@ async def process_admin_dept_invalid(message: Message):
     )
 
 
-@auth_router.message(AuthStates.choosing_department, F.text.in_(["Зал", "Бар", "Кухня"]))
+@auth_router.message(AuthStates.choosing_department, F.text.in_(["Зал", "Бар", "Кухня", "МОП"]))
 async def process_department(message: Message, state: FSMContext):
     department = message.text
     logger.info(f"Пользователь {message.from_user.id} выбрал отдел: {department}")
@@ -317,6 +339,11 @@ async def process_department(message: Message, state: FSMContext):
         await message.answer(
             "Выбери свою позицию:",
             reply_markup=bar_positions_keyboard(),
+        )
+    elif department == "МОП":
+        await message.answer(
+            "Выбери свою позицию:",
+            reply_markup=mop_positions_keyboard(),
         )
     else:  # Кухня
         await message.answer(
@@ -368,6 +395,14 @@ async def process_position(message: Message, state: FSMContext):
         await state.set_state(AuthStates.waiting_kitchen_title)
         return
 
+    if position == "Доп.":
+        await message.answer(
+            "Выбери конкретную должность:",
+            reply_markup=kitchen_dop_keyboard(),
+        )
+        await state.set_state(AuthStates.waiting_dop_position)
+        return
+
     if department == "Кухня":
         await state.update_data(position=position, custom_title="Повар")
     else:
@@ -387,6 +422,26 @@ async def process_kitchen_title(message: Message, state: FSMContext):
     await state.update_data(custom_title=custom_title)
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
+
+
+@auth_router.message(AuthStates.waiting_dop_position)
+async def process_dop_position(message: Message, state: FSMContext):
+    position = (message.text or "").strip()
+    if position not in VALID_DOP_POSITIONS:
+        logger.warning(
+            "Пользователь %s выбрал недопустимую доп. позицию: '%s'",
+            message.from_user.id, position,
+        )
+        await message.answer(
+            "Пожалуйста, выбери позицию из предложенных кнопок:",
+            reply_markup=kitchen_dop_keyboard(),
+        )
+        return
+    logger.info("Пользователь %s выбрал доп. позицию: %s", message.from_user.id, position)
+    await state.update_data(position=position, custom_title="Повар")
+    await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
+    await state.set_state(AuthStates.entering_fio)
+
 
 @auth_router.message(AuthStates.entering_fio)
 async def process_fio(message: Message, state: FSMContext):
@@ -452,10 +507,22 @@ async def process_fio(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Вычисляем отображаемую должность
-    if department == "Кухня":
-        display_title = custom_title if custom_title else "Повар"
+    # Вычисляем отображаемые позицию и должность
+    DOP_POSITIONS = ["Грузчик", "Закупщик"]
+    if position in DOP_POSITIONS:
+        position_display = "Дополнительные сотрудники"
+        display_title = position
+    elif position == "Су-шеф" and custom_title:
+        position_display = "Руководящий состав"
+        display_title = custom_title
+    elif department == "Кухня":
+        position_display = position
+        display_title = "Повар"
+    elif department == "МОП":
+        position_display = position
+        display_title = position
     else:
+        position_display = position
         display_title = position
 
     mention = f'<a href="https://t.me/{nickname}">@{nickname}</a>' if nickname else "не указан"
@@ -465,7 +532,7 @@ async def process_fio(message: Message, state: FSMContext):
         "📝 <b>Новая заявка на доступ к боту:</b>\n\n"
         f"👤 <b>ФИО:</b> {fio}\n"
         f"🏢 <b>Отдел:</b> {department}\n"
-        f"💼 <b>Позиция:</b> {position}\n"
+        f"💼 <b>Позиция:</b> {position_display}\n"
         f"🔧 <b>Должность:</b> {display_title}\n"
         f"🆔 Telegram ID: <code>{tg_id}</code>\n"
         f"📱 Ник: {mention}\n"
@@ -498,6 +565,8 @@ async def process_fio(message: Message, state: FSMContext):
         recipients.extend(ADMIN_BAR_IDS)
     elif department == "Кухня":
         recipients.extend(ADMIN_KITCHEN_IDS)
+    elif department == "МОП":
+        recipients.extend(ADMIN_HALL_IDS)
 
     # Суперадмины получают все заявки
     recipients.extend(SUPERADMIN_IDS)
@@ -526,7 +595,7 @@ async def process_fio(message: Message, state: FSMContext):
     await message.answer(
         "Спасибо! Твои данные сохранены:\n\n"
         f"Отдел: {department}\n"
-        f"Позиция: {position}\n"
+        f"Позиция: {position_display}\n"
         f"Должность: {display_title}\n"
         f"ФИО: {fio}\n\n"
         "Заявка на доступ отправлена администратору.\n"
@@ -558,17 +627,14 @@ async def process_approve_admin(callback: CallbackQuery):
     """Одобрение заявки администратора суперадмином."""
     try:
         parts = callback.data.split(":")
-        if len(parts) < 3:
-            logger.error("Некорректный формат callback_data approve_admin: %s", callback.data)
-            await callback.answer("Некорректный формат данных", show_alert=True)
-            return
         user_tg_id = int(parts[1])
-        dept = parts[2]
-        full_name = parts[3].replace("_", " ") if len(parts) > 3 else ""
+        admin_data = _pending_admins.get(user_tg_id, {})
+        full_name = admin_data.get("full_name", "")
+        dept = admin_data.get("department", "")
 
         role = DEPT_TO_ADMIN_ROLE.get(dept)
         if not role:
-            logger.error("Неизвестный отдел в approve_admin: %s", dept)
+            logger.error("Неизвестный отдел в approve_admin для %s: '%s'", user_tg_id, dept)
             await callback.answer("Неизвестный отдел", show_alert=True)
             return
 
@@ -606,6 +672,7 @@ async def process_approve_admin(callback: CallbackQuery):
         except Exception as e:
             logger.error("Не удалось уведомить администратора %s: %s", user_tg_id, e)
 
+        _pending_admins.pop(user_tg_id, None)
         await callback.message.edit_text(
             text=callback.message.text + "\n\n✅ ОДОБРЕНО",
             reply_markup=None,
@@ -634,6 +701,7 @@ async def process_reject_admin(callback: CallbackQuery):
         except Exception as e:
             logger.error("Не удалось уведомить пользователя %s: %s", user_tg_id, e)
 
+        _pending_admins.pop(user_tg_id, None)
         await callback.message.edit_text(
             text=callback.message.text + "\n\n❌ ОТКЛОНЕНО",
             reply_markup=None,
@@ -962,6 +1030,7 @@ def _dismiss_dept_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Зал", callback_data="dismiss_dept:Зал")],
         [InlineKeyboardButton(text="Бар", callback_data="dismiss_dept:Бар")],
         [InlineKeyboardButton(text="Кухня", callback_data="dismiss_dept:Кухня")],
+        [InlineKeyboardButton(text="МОП", callback_data="dismiss_dept:МОП")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
     ])
 

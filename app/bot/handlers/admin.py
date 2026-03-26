@@ -59,6 +59,15 @@ def _resolve_sender_role(tg_id: int) -> str | None:
     return None
 
 
+def _positions_for_dept(dept: str) -> list[str]:
+    """Возвращает список позиций для управления ставками.
+    admin_hall управляет МОП, поэтому Зал включает позиции МОП."""
+    positions = list(_DEPT_POSITIONS.get(dept, []))
+    if dept == "Зал":
+        positions += _DEPT_POSITIONS.get("МОП", [])
+    return positions
+
+
 def _dept_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=dept, callback_data=f"broadcast_dept:{dept}")]
@@ -75,7 +84,7 @@ def _fmt_money(v: float) -> str:
 def _rates_keyboard_for_dept(dept: str) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=pos, callback_data=f"admin_rate_pos:{pos}")]
-        for pos in _DEPT_POSITIONS.get(dept, [])
+        for pos in _positions_for_dept(dept)
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -95,7 +104,7 @@ async def cmd_rates(message: Message):
         return
 
     dept = _ROLE_TO_DEPT[role]
-    positions = _DEPT_POSITIONS[dept]
+    positions = _positions_for_dept(dept)
     logger.info("/rates: %s запрашивает ставки отдела %s", tg_id, dept)
 
     all_rates = await get_all_rates(DB_PATH)

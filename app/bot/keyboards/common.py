@@ -30,6 +30,7 @@ def department_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Зал")],
             [KeyboardButton(text="Бар")],
             [KeyboardButton(text="Кухня")],
+            [KeyboardButton(text="МОП")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
@@ -81,6 +82,17 @@ def kitchen_dop_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="Грузчик")],
             [KeyboardButton(text="Закупщик")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def mop_positions_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Клининг")],
+            [KeyboardButton(text="Котломой")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,

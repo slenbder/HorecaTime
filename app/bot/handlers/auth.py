@@ -20,6 +20,7 @@ from app.bot.keyboards.common import (
     bar_positions_keyboard,
     kitchen_positions_keyboard,
     kitchen_dop_keyboard,
+    mop_positions_keyboard,
     main_menu_keyboard,
 )
 
@@ -52,6 +53,7 @@ VALID_POSITIONS: dict[str, list[str]] = {
     "Бар":   ["Бармен", "Барбэк"],
     "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
                "Кондитерский цех", "Заготовочный цех", "Коренной цех", "Доп."],
+    "МОП":   ["Клининг", "Котломой"],
 }
 
 VALID_DOP_POSITIONS = ["Грузчик", "Закупщик"]
@@ -68,6 +70,8 @@ POSITION_TO_SECTION: dict[str, str] = {
     "Коренной цех": "Коренной цех",
     "Грузчик": "Дополнительные сотрудники",
     "Закупщик": "Дополнительные сотрудники",
+    "Клининг": "Клининг",
+    "Котломой": "Котломой",
     "Бармен": "Бармены",
     "Барбэк": "Барбэки",
     "Менеджер": "Менеджеры",
@@ -83,6 +87,7 @@ POSITION_KEYBOARDS = {
     "Зал":   hall_positions_keyboard,
     "Бар":   bar_positions_keyboard,
     "Кухня": kitchen_positions_keyboard,
+    "МОП":   mop_positions_keyboard,
 }
 
 logger.debug("Загружены SUPERADMIN_IDS: %s", SUPERADMIN_IDS)
@@ -306,7 +311,7 @@ async def process_admin_dept_invalid(message: Message):
     )
 
 
-@auth_router.message(AuthStates.choosing_department, F.text.in_(["Зал", "Бар", "Кухня"]))
+@auth_router.message(AuthStates.choosing_department, F.text.in_(["Зал", "Бар", "Кухня", "МОП"]))
 async def process_department(message: Message, state: FSMContext):
     department = message.text
     logger.info(f"Пользователь {message.from_user.id} выбрал отдел: {department}")
@@ -321,6 +326,11 @@ async def process_department(message: Message, state: FSMContext):
         await message.answer(
             "Выбери свою позицию:",
             reply_markup=bar_positions_keyboard(),
+        )
+    elif department == "МОП":
+        await message.answer(
+            "Выбери свою позицию:",
+            reply_markup=mop_positions_keyboard(),
         )
     else:  # Кухня
         await message.answer(
@@ -530,6 +540,8 @@ async def process_fio(message: Message, state: FSMContext):
         recipients.extend(ADMIN_BAR_IDS)
     elif department == "Кухня":
         recipients.extend(ADMIN_KITCHEN_IDS)
+    elif department == "МОП":
+        recipients.extend(ADMIN_HALL_IDS)
 
     # Суперадмины получают все заявки
     recipients.extend(SUPERADMIN_IDS)

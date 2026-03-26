@@ -69,9 +69,10 @@ KITCHEN_POSITIONS = {
     "Грузчик", "Закупщик",
 }
 HALL_SIMPLE_POSITIONS = {"Хостесс", "Менеджер"}
+MOP_POSITIONS = {"Клининг", "Котломой"}
 
 # Позиции с механикой «только H, одна ставка, несколько смен одним сообщением»
-SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS
+SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS | MOP_POSITIONS
 
 BAR_POSITIONS = {"Бармен", "Барбэк"}
 

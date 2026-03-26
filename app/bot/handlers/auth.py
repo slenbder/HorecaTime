@@ -1025,14 +1025,14 @@ def _dismiss_type_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def _dismiss_dept_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Зал", callback_data="dismiss_dept:Зал")],
-        [InlineKeyboardButton(text="Бар", callback_data="dismiss_dept:Бар")],
-        [InlineKeyboardButton(text="Кухня", callback_data="dismiss_dept:Кухня")],
-        [InlineKeyboardButton(text="МОП", callback_data="dismiss_dept:МОП")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
-    ])
+def _dismiss_dept_keyboard(dismiss_type: str = "user") -> InlineKeyboardMarkup:
+    # У МОП нет своего администратора — кнопка показывается только для сотрудников
+    depts = ["Зал", "Бар", "Кухня"]
+    if dismiss_type == "user":
+        depts.append("МОП")
+    buttons = [[InlineKeyboardButton(text=d, callback_data=f"dismiss_dept:{d}")] for d in depts]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 @auth_router.message(Command("dismiss"))
@@ -1057,7 +1057,7 @@ async def dismiss_type_selected(callback: CallbackQuery, state: FSMContext):
     type_label = "Сотрудник" if dismiss_type == "user" else "Администратор"
     await callback.message.edit_text(
         f"Тип: {type_label}\nВыберите подразделение:",
-        reply_markup=_dismiss_dept_keyboard(),
+        reply_markup=_dismiss_dept_keyboard(dismiss_type),
     )
     await callback.answer()
 

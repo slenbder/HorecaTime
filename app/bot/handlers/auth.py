@@ -1,4 +1,5 @@
 import logging
+import re
 
 from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
@@ -63,6 +64,11 @@ _pending_custom_titles: dict[int, str] = {}
 
 # Временное хранилище данных заявки администратора (tg_id → {full_name, department, email})
 _pending_admins: dict[int, dict] = {}
+
+
+def _is_valid_gmail(email: str) -> bool:
+    pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
+    return bool(re.match(pattern, email.strip().lower()))
 
 POSITION_TO_SECTION: dict[str, str] = {
     "Су-шеф": "Руководящий состав",
@@ -256,8 +262,12 @@ async def process_admin_dept(message: Message, state: FSMContext):
 async def process_admin_email(message: Message, state: FSMContext):
     email = (message.text or "").strip()
 
-    if "@" not in email or "." not in email.split("@")[-1]:
-        await message.answer("❌ Некорректный формат email. Попробуйте ещё раз:")
+    if not _is_valid_gmail(email):
+        await message.answer(
+            "❌ Принимается только Gmail адрес.\n\n"
+            "Пример: yourname@gmail.com\n\n"
+            "Введите корректный Gmail:"
+        )
         return
 
     data = await state.get_data()

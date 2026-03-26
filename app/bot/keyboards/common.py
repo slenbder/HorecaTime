@@ -69,7 +69,18 @@ def kitchen_positions_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Кондитерский цех")],
             [KeyboardButton(text="Заготовочный цех")],
             [KeyboardButton(text="Коренной цех")],
-            [KeyboardButton(text="МОП")],
+            [KeyboardButton(text="Доп.")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def kitchen_dop_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Грузчик")],
+            [KeyboardButton(text="Закупщик")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,

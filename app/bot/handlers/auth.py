@@ -19,6 +19,7 @@ from app.bot.keyboards.common import (
     hall_positions_keyboard,
     bar_positions_keyboard,
     kitchen_positions_keyboard,
+    kitchen_dop_keyboard,
     main_menu_keyboard,
 )
 
@@ -50,8 +51,10 @@ VALID_POSITIONS: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
     "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
-               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "МОП"],
+               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "Доп."],
 }
+
+VALID_DOP_POSITIONS = ["Грузчик", "Закупщик"]
 
 # Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
 _pending_custom_titles: dict[int, str] = {}
@@ -63,7 +66,8 @@ POSITION_TO_SECTION: dict[str, str] = {
     "Кондитерский цех": "Кондитерский цех",
     "Заготовочный цех": "Заготовочный цех",
     "Коренной цех": "Коренной цех",
-    "МОП": "МОП",
+    "Грузчик": "Дополнительные сотрудники",
+    "Закупщик": "Дополнительные сотрудники",
     "Бармен": "Бармены",
     "Барбэк": "Барбэки",
     "Менеджер": "Менеджеры",
@@ -368,6 +372,14 @@ async def process_position(message: Message, state: FSMContext):
         await state.set_state(AuthStates.waiting_kitchen_title)
         return
 
+    if position == "Доп.":
+        await message.answer(
+            "Выбери конкретную должность:",
+            reply_markup=kitchen_dop_keyboard(),
+        )
+        await state.set_state(AuthStates.waiting_dop_position)
+        return
+
     if department == "Кухня":
         await state.update_data(position=position, custom_title="Повар")
     else:
@@ -387,6 +399,26 @@ async def process_kitchen_title(message: Message, state: FSMContext):
     await state.update_data(custom_title=custom_title)
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
+
+
+@auth_router.message(AuthStates.waiting_dop_position)
+async def process_dop_position(message: Message, state: FSMContext):
+    position = (message.text or "").strip()
+    if position not in VALID_DOP_POSITIONS:
+        logger.warning(
+            "Пользователь %s выбрал недопустимую доп. позицию: '%s'",
+            message.from_user.id, position,
+        )
+        await message.answer(
+            "Пожалуйста, выбери позицию из предложенных кнопок:",
+            reply_markup=kitchen_dop_keyboard(),
+        )
+        return
+    logger.info("Пользователь %s выбрал доп. позицию: %s", message.from_user.id, position)
+    await state.update_data(position=position, custom_title="Повар")
+    await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
+    await state.set_state(AuthStates.entering_fio)
+
 
 @auth_router.message(AuthStates.entering_fio)
 async def process_fio(message: Message, state: FSMContext):

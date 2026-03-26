@@ -61,6 +61,9 @@ VALID_DOP_POSITIONS = ["Грузчик", "Закупщик"]
 # Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
 _pending_custom_titles: dict[int, str] = {}
 
+# Временное хранилище данных заявки администратора (tg_id → {full_name, department, email})
+_pending_admins: dict[int, dict] = {}
+
 POSITION_TO_SECTION: dict[str, str] = {
     "Су-шеф": "Руководящий состав",
     "Горячий цех": "Горячий цех",
@@ -273,12 +276,12 @@ async def process_admin_email(message: Message, state: FSMContext):
         f"📧 Email: {email}\n\n"
         f"ID: {tg_id}"
     )
-    safe_name = fio.replace(":", "_")
+    _pending_admins[tg_id] = {"full_name": fio, "department": department, "email": email}
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
                 text="✅ Одобрить",
-                callback_data=f"approve_admin:{tg_id}:{department}:{safe_name}",
+                callback_data=f"approve_admin:{tg_id}",
             ),
             InlineKeyboardButton(
                 text="❌ Отклонить",
@@ -614,17 +617,14 @@ async def process_approve_admin(callback: CallbackQuery):
     """Одобрение заявки администратора суперадмином."""
     try:
         parts = callback.data.split(":")
-        if len(parts) < 3:
-            logger.error("Некорректный формат callback_data approve_admin: %s", callback.data)
-            await callback.answer("Некорректный формат данных", show_alert=True)
-            return
         user_tg_id = int(parts[1])
-        dept = parts[2]
-        full_name = parts[3].replace("_", " ") if len(parts) > 3 else ""
+        admin_data = _pending_admins.get(user_tg_id, {})
+        full_name = admin_data.get("full_name", "")
+        dept = admin_data.get("department", "")
 
         role = DEPT_TO_ADMIN_ROLE.get(dept)
         if not role:
-            logger.error("Неизвестный отдел в approve_admin: %s", dept)
+            logger.error("Неизвестный отдел в approve_admin для %s: '%s'", user_tg_id, dept)
             await callback.answer("Неизвестный отдел", show_alert=True)
             return
 
@@ -662,6 +662,7 @@ async def process_approve_admin(callback: CallbackQuery):
         except Exception as e:
             logger.error("Не удалось уведомить администратора %s: %s", user_tg_id, e)
 
+        _pending_admins.pop(user_tg_id, None)
         await callback.message.edit_text(
             text=callback.message.text + "\n\n✅ ОДОБРЕНО",
             reply_markup=None,
@@ -690,6 +691,7 @@ async def process_reject_admin(callback: CallbackQuery):
         except Exception as e:
             logger.error("Не удалось уведомить пользователя %s: %s", user_tg_id, e)
 
+        _pending_admins.pop(user_tg_id, None)
         await callback.message.edit_text(
             text=callback.message.text + "\n\n❌ ОТКЛОНЕНО",
             reply_markup=None,

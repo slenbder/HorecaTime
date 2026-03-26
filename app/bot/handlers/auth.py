@@ -1018,6 +1018,7 @@ def _dismiss_dept_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Зал", callback_data="dismiss_dept:Зал")],
         [InlineKeyboardButton(text="Бар", callback_data="dismiss_dept:Бар")],
         [InlineKeyboardButton(text="Кухня", callback_data="dismiss_dept:Кухня")],
+        [InlineKeyboardButton(text="МОП", callback_data="dismiss_dept:МОП")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
     ])
 

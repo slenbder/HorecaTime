@@ -9,7 +9,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    BotCommandScopeChat, ReplyKeyboardRemove,
+    BotCommandScopeChat, ReplyKeyboardRemove, LinkPreviewOptions,
 )
 
 from app.bot.fsm.auth_states import AuthStates
@@ -447,7 +447,8 @@ async def process_fio(message: Message, state: FSMContext):
                     chat_id=admin_id,
                     text=text,
                     parse_mode="HTML",
-                    reply_markup=keyboard
+                    reply_markup=keyboard,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True)
                 )
                 logger.info(f"Заявка отправлена админу {admin_id}")
             except Exception as e:
@@ -548,7 +549,7 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
     original_text = callback.message.text or ""
     new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
     try:
-        await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None)
+        await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None, link_preview_options=LinkPreviewOptions(is_disabled=True))
     except Exception as e:
         logging.getLogger("errors").error(
             "approve_ah_callback: не удалось отредактировать сообщение: %s", e,
@@ -682,7 +683,8 @@ async def process_approve(callback: CallbackQuery):
             text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
             f"\n✅ Одобрено администратором {callback.from_user.full_name}",
             parse_mode="HTML",
-            reply_markup=None
+            reply_markup=None,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
 
         await callback.answer("Пользователь одобрен!")
@@ -731,7 +733,8 @@ async def process_reject(callback: CallbackQuery):
         await callback.message.edit_text(
             text=original_text + f"\n\n❌ Отклонено администратором {callback.from_user.full_name}",
             parse_mode="HTML",
-            reply_markup=None
+            reply_markup=None,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
         await callback.answer("Заявка отклонена")
 
@@ -778,7 +781,7 @@ async def contact_dev_send(message: Message, state: FSMContext):
     )
 
     try:
-        await message.bot.send_message(chat_id=DEVELOPER_ID, text=dev_text, parse_mode="HTML")
+        await message.bot.send_message(chat_id=DEVELOPER_ID, text=dev_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
         await message.answer("✅ Сообщение отправлено разработчику")
     except Exception:
         error_logger = logging.getLogger("errors")
@@ -819,7 +822,7 @@ async def process_promote_email(message: Message, state: FSMContext):
     )
     for sa_id in SUPERADMIN_IDS:
         try:
-            await message.bot.send_message(chat_id=sa_id, text=notify_text, parse_mode="HTML")
+            await message.bot.send_message(chat_id=sa_id, text=notify_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
         except Exception:
             logger.exception("process_promote_email: не удалось уведомить суперадмина %s", sa_id)
 

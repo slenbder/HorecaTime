@@ -579,6 +579,11 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
 async def process_approve(callback: CallbackQuery):
     """Обработка нажатия кнопки 'Одобрить'"""
     try:
+        original_text = callback.message.text or ""
+        if "✅" in original_text or "❌" in original_text:
+            await callback.answer("Уже обработано другим администратором.")
+            return
+
         # Парсим callback_data: approve_TELEGRAM_ID_ROW_INDEX
         parts = callback.data.split("_")
         if len(parts) < 3:
@@ -674,7 +679,8 @@ async def process_approve(callback: CallbackQuery):
 
         # Обновляем сообщение админа
         await callback.message.edit_text(
-            text=callback.message.text + f"\n\n✅ {mention} одобрен. Роль: user",
+            text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
+            f"\n✅ Одобрено администратором {callback.from_user.full_name}",
             parse_mode="HTML",
             reply_markup=None
         )
@@ -691,6 +697,11 @@ async def process_approve(callback: CallbackQuery):
 async def process_reject(callback: CallbackQuery):
     """Обработка нажатия кнопки 'Отклонить'"""
     try:
+        original_text = callback.message.text or ""
+        if "✅" in original_text or "❌" in original_text:
+            await callback.answer("Уже обработано другим администратором.")
+            return
+
         # Парсим callback_data: reject_TELEGRAM_ID_ROW_INDEX
         parts = callback.data.split("_")
         if len(parts) < 3:
@@ -718,7 +729,8 @@ async def process_reject(callback: CallbackQuery):
 
         # Обновляем сообщение админа
         await callback.message.edit_text(
-            text=callback.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>",
+            text=original_text + f"\n\n❌ Отклонено администратором {callback.from_user.full_name}",
+            parse_mode="HTML",
             reply_markup=None
         )
         await callback.answer("Заявка отклонена")

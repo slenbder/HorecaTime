@@ -11,6 +11,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
+    LinkPreviewOptions,
     Message,
 )
 
@@ -376,7 +377,7 @@ async def _write_waiter_no_photo(
     )
     for admin_id in recipients:
         try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
+            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             logger.info("_write_waiter_no_photo: уведомлен %s", admin_id)
         except Exception as e:
             error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
@@ -472,7 +473,8 @@ async def _send_waiter_report(
             media = [InputMediaPhoto(media=fid) for fid in photo_ids]
             await message.bot.send_media_group(chat_id=admin_id, media=media)
             await message.bot.send_message(
-                chat_id=admin_id, text=approval_text, parse_mode="HTML", reply_markup=keyboard
+                chat_id=admin_id, text=approval_text, parse_mode="HTML", reply_markup=keyboard,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
             )
             logger.info("_send_waiter_report: уведомлен %s", admin_id)
         except Exception as e:
@@ -638,7 +640,7 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
     recipients = list(set(ADMIN_BAR_IDS + SUPERADMIN_IDS))
     for admin_id in recipients:
         try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
+            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
@@ -717,7 +719,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
         )
         for admin_id in recipients:
             try:
-                await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
+                await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
                 logger.info("Notified admin %s", admin_id)
             except Exception as e:
                 error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
@@ -806,7 +808,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
     for admin_id in recipients:
         try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML")
+            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)

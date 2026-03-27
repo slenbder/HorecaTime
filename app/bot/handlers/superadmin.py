@@ -8,6 +8,7 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
+    LinkPreviewOptions,
 )
 
 from app.bot.commands import set_commands_for_role
@@ -681,7 +682,7 @@ async def cb_demote_confirm(callback: CallbackQuery, state: FSMContext):
         if sa_id == callback.from_user.id:
             continue
         try:
-            await callback.bot.send_message(chat_id=sa_id, text=sa_notify, parse_mode="HTML")
+            await callback.bot.send_message(chat_id=sa_id, text=sa_notify, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
         except Exception:
             logger.exception("demote_confirm: не удалось уведомить суперадмина %s", sa_id)
 

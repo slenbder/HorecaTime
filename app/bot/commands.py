@@ -31,17 +31,21 @@ _SUPERADMIN_COMMANDS = [
     BotCommand(command="demote",       description="Понизить администратора до сотрудника"),
 ]
 
+_SHEET_COMMAND = [
+    BotCommand(command="sheet",        description="Ссылка на график"),
+]
+
 _CONTACT_DEV = [
     BotCommand(command="contact_dev",  description="Написать разработчику"),
 ]
 
 _ROLE_COMMANDS: dict[str, list[BotCommand]] = {
-    "user":           _USER_COMMANDS + _CONTACT_DEV,
-    "admin_hall":     _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _CONTACT_DEV,
-    "admin_bar":      _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _CONTACT_DEV,
-    "admin_kitchen":  _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _CONTACT_DEV,
-    "superadmin":     _SUPERADMIN_COMMANDS + _CONTACT_DEV,
-    "developer":      _SUPERADMIN_COMMANDS,
+    "user":           _USER_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
+    "admin_hall":     _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
+    "admin_bar":      _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
+    "admin_kitchen":  _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
+    "superadmin":     _SUPERADMIN_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
+    "developer":      _SUPERADMIN_COMMANDS + _SHEET_COMMAND,
 }
 
 

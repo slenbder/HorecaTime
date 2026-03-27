@@ -9,7 +9,7 @@ from aiogram.types import Message, BufferedInputFile
 from app.db.models import get_user, get_rate, get_rate_for_period
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
-from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID
+from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL
 
 reports_router = Router()
 logger = logging.getLogger(__name__)
@@ -332,3 +332,15 @@ async def cmd_schedule(message: Message):
         error_logger.exception("schedule: ошибка генерации PDF для %s: %s", tg_id, e)
         await wait_msg.delete()
         await message.answer("❌ Не удалось сгенерировать график. Попробуйте позже.")
+
+
+@reports_router.message(Command("sheet"))
+async def cmd_sheet(message: Message):
+    tg_id = message.from_user.id
+    if not SHEET_URL:
+        await message.answer("❌ Ссылка на таблицу не настроена.")
+        return
+    await message.answer(
+        f"📊 Ссылка на график:\n{SHEET_URL}"
+    )
+    logger.info("sheet: ссылка отправлена пользователю %s", tg_id)

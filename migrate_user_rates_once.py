@@ -30,7 +30,7 @@ FALLBACK_RATE = (250.0, None)
 async def migrate() -> None:
     logger.info("Migration started")
     try:
-        users = get_all_users(DB_PATH)
+        users = await get_all_users(DB_PATH)
     except Exception:
         logger.error("Failed to fetch users", exc_info=True)
         return

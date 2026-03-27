@@ -1,4 +1,5 @@
 import logging
+import re
 
 from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
@@ -55,6 +56,11 @@ VALID_POSITIONS: dict[str, list[str]] = {
 }
 
 VALID_DOP_POSITIONS = ["Грузчик", "Закупщик"]
+
+def _is_valid_gmail(email: str) -> bool:
+    pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
+    return bool(re.match(pattern, email.strip().lower()))
+
 
 # Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
 _pending_custom_titles: dict[int, str] = {}
@@ -767,6 +773,48 @@ async def contact_dev_send(message: Message, state: FSMContext):
         error_logger.exception("Не удалось переслать сообщение разработчику от %s", tg_id)
         await message.answer("❌ Не удалось отправить сообщение, попробуйте позже")
 
+    await state.clear()
+
+
+# --- Ввод email после повышения (/promote → waiting_promote_email) ---
+
+@auth_router.message(AuthStates.waiting_promote_email)
+async def process_promote_email(message: Message, state: FSMContext):
+    email = (message.text or "").strip()
+    tg_id = message.from_user.id
+
+    if not _is_valid_gmail(email):
+        await message.answer(
+            "❌ Принимается только Gmail адрес.\n\n"
+            "Пример: yourname@gmail.com\n\n"
+            "Введите корректный Gmail:"
+        )
+        return
+
+    data = await state.get_data()
+    dept = data.get("promote_dept", "")
+    full_name = data.get("promote_full_name", str(tg_id))
+
+    username = message.from_user.username
+    mention = make_mention(username, full_name)
+
+    logger.info("process_promote_email: пользователь %s ввёл email %s, отдел %s", tg_id, email, dept)
+
+    notify_text = (
+        f"📧 Новый администратор {mention} ввёл email для доступа к таблице:\n"
+        f"{email}\n\n"
+        f"Добавьте его как редактора в Google Sheets."
+    )
+    for sa_id in SUPERADMIN_IDS:
+        try:
+            await message.bot.send_message(chat_id=sa_id, text=notify_text, parse_mode="HTML")
+        except Exception:
+            logger.exception("process_promote_email: не удалось уведомить суперадмина %s", sa_id)
+
+    await message.answer(
+        "✅ Email отправлен администратору.\n"
+        "После получения доступа к таблице вы сможете приступить к обязанностям."
+    )
     await state.clear()
 
 

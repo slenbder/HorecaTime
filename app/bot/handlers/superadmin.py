@@ -1,17 +1,22 @@
 import logging
 
+import aiosqlite
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
+from app.bot.commands import set_commands_for_role
 from app.bot.fsm.auth_states import AuthStates, SetRateStates
-from app.db.models import get_all_rates, update_rate
+from app.db.fsm_storage import SQLiteStorage
+from app.db.models import get_all_rates, update_rate, get_user
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
+from app.services.roles_cache import RolesCacheService
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
 
 _sheets_client = GoogleSheetsClient()
@@ -246,4 +251,249 @@ async def cb_switch_month_confirm(callback: CallbackQuery):
 async def cb_switch_month_cancel(callback: CallbackQuery):
     logger.info("switch_month_cancel: от %s", callback.from_user.id)
     await callback.message.edit_text("❌ Переключение месяца отменено.")
+    await callback.answer()
+
+
+# --- /promote ---
+
+_PROMOTE_VALID_POSITIONS: dict[str, list[str]] = {
+    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
+    "Бар":   ["Бармен", "Барбэк"],
+    "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
+               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "Доп."],
+    "МОП":   ["Клининг", "Котломой"],
+}
+
+_DEPT_TO_ADMIN_ROLE: dict[str, str] = {
+    "Зал":   "admin_hall",
+    "Бар":   "admin_bar",
+    "Кухня": "admin_kitchen",
+    "МОП":   "admin_hall",
+}
+
+
+def _promote_dept_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=dept, callback_data=f"promote_dept:{dept}")]
+        for dept in ("Зал", "Бар", "Кухня", "МОП")
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="promote_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _promote_positions_keyboard(dept: str) -> InlineKeyboardMarkup:
+    positions = _PROMOTE_VALID_POSITIONS.get(dept, [])
+    buttons = [
+        [InlineKeyboardButton(text=pos, callback_data=f"promote_pos:{dept}:{pos}")]
+        for pos in positions
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="promote_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+async def _get_users_for_promote(dept: str, position: str) -> list[dict]:
+    """Возвращает сотрудников (role=user) в заданном отделе и на заданной позиции."""
+    if position == "Шеф/Су-шеф":
+        query = (
+            "SELECT telegram_id, full_name FROM users "
+            "WHERE role = 'user' AND department = ? AND position = ?"
+        )
+        params: tuple = (dept, "Су-шеф")
+    elif position == "Доп.":
+        query = (
+            "SELECT telegram_id, full_name FROM users "
+            "WHERE role = 'user' AND department = ? "
+            "AND position IN ('Грузчик', 'Закупщик')"
+        )
+        params = (dept,)
+    else:
+        query = (
+            "SELECT telegram_id, full_name FROM users "
+            "WHERE role = 'user' AND department = ? AND position = ?"
+        )
+        params = (dept, position)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+
+    return [{"telegram_id": r[0], "full_name": r[1]} for r in rows]
+
+
+async def _set_employee_promote_state(
+    bot_id: int, employee_id: int, dept: str, full_name: str
+) -> None:
+    """Устанавливает состояние waiting_promote_email для сотрудника в его FSM-контексте."""
+    storage = SQLiteStorage(DB_PATH)
+    key = StorageKey(bot_id=bot_id, chat_id=employee_id, user_id=employee_id)
+    ctx = FSMContext(storage=storage, key=key)
+    await ctx.set_state(AuthStates.waiting_promote_email)
+    await ctx.update_data(promote_dept=dept, promote_full_name=full_name)
+
+
+@superadmin_router.message(Command("promote"))
+async def cmd_promote(message: Message, state: FSMContext):
+    tg_id = message.from_user.id
+    logger.info("/promote: запрос от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("/promote: доступ запрещён для %s", tg_id)
+        await message.answer("⛔️ Недостаточно прав.")
+        return
+    await state.set_state(AuthStates.waiting_promote_dept)
+    await message.answer(
+        "⬆️ Повышение сотрудника\n\nВыберите подразделение:",
+        reply_markup=_promote_dept_keyboard(),
+    )
+
+
+@superadmin_router.callback_query(AuthStates.waiting_promote_dept, F.data.startswith("promote_dept:"))
+async def cb_promote_dept(callback: CallbackQuery, state: FSMContext):
+    dept = callback.data.split(":", 1)[1]
+    logger.info("promote_dept: суперадмин %s выбрал отдел %s", callback.from_user.id, dept)
+    await state.update_data(promote_dept=dept)
+    await state.set_state(AuthStates.waiting_promote_position)
+    await callback.message.edit_text(
+        f"Отдел: <b>{dept}</b>\n\nВыберите позицию:",
+        reply_markup=_promote_positions_keyboard(dept),
+    )
+    await callback.answer()
+
+
+@superadmin_router.callback_query(AuthStates.waiting_promote_position, F.data.startswith("promote_pos:"))
+async def cb_promote_pos(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":", 2)
+    dept = parts[1]
+    position = parts[2]
+    logger.info(
+        "promote_pos: суперадмин %s выбрал позицию %s в %s",
+        callback.from_user.id, position, dept,
+    )
+
+    users = await _get_users_for_promote(dept, position)
+    if not users:
+        await callback.message.edit_text(
+            f"В позиции «{position}» отдела «{dept}» нет сотрудников для повышения."
+        )
+        await callback.answer()
+        await state.clear()
+        return
+
+    buttons = [
+        [InlineKeyboardButton(
+            text=u["full_name"],
+            callback_data=f"promote_select:{u['telegram_id']}",
+        )]
+        for u in users
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="promote_cancel")])
+
+    await state.update_data(promote_position=position)
+    await state.set_state(AuthStates.waiting_promote_user)
+    await callback.message.edit_text(
+        f"Отдел: <b>{dept}</b> | Позиция: <b>{position}</b>\n\nВыберите сотрудника:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@superadmin_router.callback_query(AuthStates.waiting_promote_user, F.data.startswith("promote_select:"))
+async def cb_promote_select(callback: CallbackQuery, state: FSMContext):
+    employee_id = int(callback.data.split(":", 1)[1])
+
+    employee = get_user(employee_id)
+    if not employee:
+        await callback.answer("Сотрудник не найден.", show_alert=True)
+        await state.clear()
+        return
+
+    full_name = employee["full_name"]
+    position = employee["position"] or ""
+    dept = employee["department"] or ""
+
+    logger.info(
+        "promote_select: суперадмин %s выбрал сотрудника %s (%s)",
+        callback.from_user.id, employee_id, full_name,
+    )
+
+    await state.update_data(promote_target_id=employee_id)
+    await state.set_state(AuthStates.waiting_promote_confirm)
+
+    confirm_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Повысить", callback_data=f"promote_confirm:{employee_id}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="promote_cancel"),
+        ]
+    ])
+    await callback.message.edit_text(
+        f"⬆️ Повысить <b>{full_name}</b> ({position}, {dept}) до администратора отдела?\n\n"
+        f"После повышения сотрудник получит расширенные права управления отделом.\n\n"
+        f"Это действие можно отменить командой /demote.",
+        reply_markup=confirm_keyboard,
+    )
+    await callback.answer()
+
+
+@superadmin_router.callback_query(AuthStates.waiting_promote_confirm, F.data.startswith("promote_confirm:"))
+async def cb_promote_confirm(callback: CallbackQuery, state: FSMContext):
+    employee_id = int(callback.data.split(":", 1)[1])
+
+    employee = get_user(employee_id)
+    if not employee:
+        await callback.answer("Сотрудник не найден.", show_alert=True)
+        await state.clear()
+        return
+
+    full_name = employee["full_name"]
+    dept = employee["department"] or ""
+    position = employee["position"]
+
+    new_role = _DEPT_TO_ADMIN_ROLE.get(dept)
+    if not new_role:
+        logger.error("promote_confirm: неизвестный отдел '%s' для %s", dept, employee_id)
+        await callback.answer("Неизвестный отдел.", show_alert=True)
+        await state.clear()
+        return
+
+    RolesCacheService.update_user_role(
+        telegram_id=employee_id,
+        full_name=full_name,
+        role=new_role,
+        department=dept,
+        position=position,
+    )
+    logger.info(
+        "promote_confirm: %s (id=%s) повышен до %s суперадмином %s",
+        full_name, employee_id, new_role, callback.from_user.id,
+    )
+
+    await set_commands_for_role(callback.bot, employee_id, new_role)
+
+    await _set_employee_promote_state(callback.bot.id, employee_id, dept, full_name)
+
+    try:
+        await callback.bot.send_message(
+            chat_id=employee_id,
+            text=(
+                f"🎉 Поздравляем! Вы повышены до администратора отдела {dept}.\n\n"
+                f"Теперь вам доступны расширенные функции управления отделом.\n\n"
+                f"Для активации полного доступа введите вашу почту Gmail:"
+            ),
+        )
+    except Exception:
+        logger.exception("promote_confirm: не удалось уведомить сотрудника %s", employee_id)
+
+    await callback.message.edit_text(
+        f"✅ {full_name} повышен до администратора {dept}.\n"
+        f"Ожидаем ввода email для предоставления доступа к таблице.",
+        reply_markup=None,
+    )
+    await callback.answer()
+    await state.clear()
+
+
+@superadmin_router.callback_query(F.data == "promote_cancel")
+async def cb_promote_cancel(callback: CallbackQuery, state: FSMContext):
+    logger.info("promote_cancel: суперадмин %s отменил повышение", callback.from_user.id)
+    await state.clear()
+    await callback.message.edit_text("Отменено.")
     await callback.answer()

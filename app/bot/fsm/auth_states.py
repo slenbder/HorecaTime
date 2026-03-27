@@ -13,6 +13,11 @@ class AuthStates(StatesGroup):
     waiting_broadcast_dept = State()     # выбор отдела для рассылки (admin_*)
     waiting_kitchen_title = State()      # ввод должности для Шеф/Су-шеф
     waiting_dop_position = State()       # выбор Грузчик/Закупщик
+    waiting_promote_dept = State()       # /promote: выбор подразделения
+    waiting_promote_position = State()   # /promote: выбор позиции
+    waiting_promote_user = State()       # /promote: выбор конкретного сотрудника
+    waiting_promote_confirm = State()    # /promote: подтверждение
+    waiting_promote_email = State()      # /promote: ввод email новым админом
 
 
 class SetRateStates(StatesGroup):

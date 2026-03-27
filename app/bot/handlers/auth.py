@@ -923,12 +923,16 @@ async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+_ADMIN_ROLES = {"admin_hall", "admin_bar", "admin_kitchen"}
+
+
 @auth_router.callback_query(AuthStates.waiting_dismiss_confirm, F.data.startswith("dismiss_select:"))
 async def dismiss_select(callback: CallbackQuery, state: FSMContext):
     target_id = int(callback.data.split(":")[1])
 
     user_data = get_user(target_id)
     full_name = user_data["full_name"] if user_data else str(target_id)
+    role = user_data.get("role", "user") if user_data else "user"
 
     if sheets_client is not None:
         tech_info = sheets_client.get_user_from_techlist(target_id)
@@ -944,15 +948,80 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
         dismiss_target_dept=dept,
     )
 
-    position_display = POSITION_TO_SECTION.get(position, position)
+    if role in _ADMIN_ROLES:
+        logger.info(
+            "dismiss_select: %s (id=%s) является администратором (%s), показываем развилку",
+            full_name, target_id, role,
+        )
+        await callback.message.edit_text(
+            f"⚠️ {full_name} является администратором отдела {dept}.\n\n"
+            f"Что вы хотите сделать?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📉 Только понизить до сотрудника",
+                    callback_data=f"dismiss_demote_only:{target_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔥 Уволить из системы",
+                    callback_data=f"dismiss_confirm:{target_id}",
+                )],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
+            ]),
+        )
+    else:
+        position_display = POSITION_TO_SECTION.get(position, position)
+        await callback.message.edit_text(
+            f"⚠️ Уволить {full_name} ({position_display}, {dept})?\n\nЭто действие нельзя отменить.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Да, уволить", callback_data=f"dismiss_confirm:{target_id}")],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
+            ]),
+        )
+    await callback.answer()
+
+
+@auth_router.callback_query(AuthStates.waiting_dismiss_confirm, F.data.startswith("dismiss_demote_only:"))
+async def dismiss_demote_only_handler(callback: CallbackQuery, state: FSMContext):
+    target_id = int(callback.data.split(":")[1])
+
+    fsm_data = await state.get_data()
+    full_name = fsm_data.get("dismiss_target_name", str(target_id))
+    dept = fsm_data.get("dismiss_target_dept", "")
+
+    user_data = get_user(target_id)
+    position = user_data.get("position") if user_data else None
+
+    RolesCacheService.update_user_role(
+        telegram_id=target_id,
+        full_name=full_name,
+        role="user",
+        department=dept,
+        position=position,
+    )
+    logger.info(
+        "dismiss_demote_only: %s (id=%s) понижен до user суперадмином %s",
+        full_name, target_id, callback.from_user.id,
+    )
+
+    await set_commands_for_role(callback.bot, target_id, "user")
+
+    try:
+        await callback.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "📉 Ваши права администратора были отозваны.\n"
+                "Вы возвращаетесь к стандартным функциям сотрудника."
+            ),
+        )
+    except Exception:
+        logger.exception("dismiss_demote_only: не удалось уведомить сотрудника %s", target_id)
+
     await callback.message.edit_text(
-        f"⚠️ Уволить {full_name} ({position_display}, {dept})?\n\nЭто действие нельзя отменить.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, уволить", callback_data=f"dismiss_confirm:{target_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="dismiss_cancel")],
-        ]),
+        f"✅ {full_name} понижен до сотрудника. Увольнения не произошло.",
+        reply_markup=None,
     )
     await callback.answer()
+    await state.clear()
 
 
 @auth_router.callback_query(AuthStates.waiting_dismiss_confirm, F.data.startswith("dismiss_confirm:"))
@@ -964,6 +1033,29 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
     full_name = fsm_data.get("dismiss_target_name", str(target_id))
 
     error_logger = logging.getLogger("errors")
+
+    # Guard: если сотрудник является администратором — сначала понизить
+    current_data = get_user(target_id)
+    if current_data and current_data.get("role") in _ADMIN_ROLES:
+        dept_guard = current_data.get("department") or ""
+        position_guard = current_data.get("position")
+        RolesCacheService.update_user_role(
+            telegram_id=target_id,
+            full_name=full_name,
+            role="user",
+            department=dept_guard,
+            position=position_guard,
+        )
+        try:
+            await set_commands_for_role(callback.bot, target_id, "user")
+        except Exception:
+            error_logger.exception(
+                "dismiss_confirm: не удалось сбросить команды после понижения для %s", target_id
+            )
+        logger.info(
+            "dismiss_confirm: %s (id=%s) сначала понижен до user перед увольнением (guard)",
+            full_name, target_id,
+        )
 
     # a) Уведомить сотрудника
     try:

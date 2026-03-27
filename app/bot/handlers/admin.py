@@ -9,8 +9,9 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
-from app.bot.fsm.auth_states import AuthStates, SetRateStates
-from app.db.models import get_users_by_department, get_all_users, get_all_rates, update_rate, get_user, get_users_rates_by_department
+from app.bot.fsm.auth_states import AuthStates
+from app.bot.fsm.admin_states import SetRateStates
+from app.db.models import get_users_by_department, get_all_users, get_user, get_users_rates_by_department, set_user_rate
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS
 
 admin_router = Router()
@@ -79,14 +80,6 @@ def _dept_keyboard() -> InlineKeyboardMarkup:
 
 def _fmt_money(v: float) -> str:
     return str(int(v)) if v == int(v) else f"{v:.2f}"
-
-
-def _rates_keyboard_for_dept(dept: str) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=pos, callback_data=f"admin_rate_pos:{pos}")]
-        for pos in _positions_for_dept(dept)
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 # --- /rates ---
@@ -162,6 +155,14 @@ async def cmd_rates(message: Message):
 
 # --- /set_rate ---
 
+async def _setrate_get_employees(dept: str) -> list[dict]:
+    """Возвращает сотрудников отдела с персональными ставками. Зал включает МОП."""
+    employees = await get_users_rates_by_department(DB_PATH, dept)
+    if dept == "Зал":
+        employees += await get_users_rates_by_department(DB_PATH, "МОП")
+    return employees
+
+
 @admin_router.message(Command("set_rate"))
 async def cmd_set_rate(message: Message, state: FSMContext):
     tg_id = message.from_user.id
@@ -175,93 +176,150 @@ async def cmd_set_rate(message: Message, state: FSMContext):
         return
 
     dept = _ROLE_TO_DEPT[role]
-    logger.info("/set_rate: %s (отдел %s) запускает FSM", tg_id, dept)
-    await state.update_data(admin_rate_dept=dept)
-    await state.set_state(SetRateStates.waiting_set_rate_position)
+    logger.info("/set_rate: шаг 1 — выбор позиции, %s, отдел %s", tg_id, dept)
+
+    employees = await _setrate_get_employees(dept)
+    if not employees:
+        await message.answer("Нет сотрудников в отделе.")
+        return
+
+    positions: list[str] = []
+    seen: set[str] = set()
+    for emp in employees:
+        pos = emp.get("position") or "—"
+        if pos not in seen:
+            positions.append(pos)
+            seen.add(pos)
+
+    await state.update_data(set_rate_dept=dept)
+    await state.set_state(SetRateStates.waiting_position)
+
+    buttons = [
+        [InlineKeyboardButton(text=pos, callback_data=f"setrate_pos:{pos}")]
+        for pos in positions
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")])
     await message.answer(
-        f"Выберите позицию для изменения ставки ({dept}):",
-        reply_markup=_rates_keyboard_for_dept(dept),
+        f"Выберите позицию ({dept}):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 
 
-@admin_router.callback_query(
-    SetRateStates.waiting_set_rate_position,
-    F.data.startswith("admin_rate_pos:"),
-)
-async def cb_admin_rate_position(callback: CallbackQuery, state: FSMContext):
+@admin_router.callback_query(SetRateStates.waiting_position, F.data.startswith("setrate_pos:"))
+async def cb_setrate_position(callback: CallbackQuery, state: FSMContext):
     position = callback.data.split(":", 1)[1]
-    await state.update_data(position=position)
-    await state.set_state(SetRateStates.waiting_set_rate_base)
+    data = await state.get_data()
+    dept = data["set_rate_dept"]
+    logger.info("/set_rate: шаг 2 — выбор сотрудника, позиция=%s", position)
+
+    employees = await _setrate_get_employees(dept)
+    group = [emp for emp in employees if (emp.get("position") or "—") == position]
+    if not group:
+        await callback.answer("Сотрудников нет.", show_alert=True)
+        return
+
+    await state.update_data(set_rate_position=position)
+    await state.set_state(SetRateStates.waiting_employee)
+
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"{emp['full_name']} ({_fmt_emp_rate(emp)})",
+            callback_data=f"setrate_emp:{emp['telegram_id']}",
+        )]
+        for emp in group
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")])
     await callback.message.edit_text(
-        f"Позиция: <b>{position}</b>\n\nВведите базовую ставку (р/час):"
+        f"Позиция: {position}\nВыберите сотрудника:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
 
 
-@admin_router.message(SetRateStates.waiting_set_rate_base)
-async def msg_admin_rate_base(message: Message, state: FSMContext):
-    # Обрабатываем только если запущено через /set_rate (admin), не /set_rate_all (superadmin)
+@admin_router.callback_query(SetRateStates.waiting_employee, F.data.startswith("setrate_emp:"))
+async def cb_setrate_employee(callback: CallbackQuery, state: FSMContext):
+    target_id = int(callback.data.split(":", 1)[1])
     data = await state.get_data()
-    if "admin_rate_dept" not in data:
-        return  # передаём superadmin_router
+    dept = data["set_rate_dept"]
+    position = data["set_rate_position"]
+    logger.info("/set_rate: шаг 3 — ввод ставки, сотрудник=%s позиция=%s", target_id, position)
 
-    text = message.text.strip().replace(",", ".")
-    try:
-        base_rate = float(text)
-        if base_rate <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Введите корректное число больше 0:")
-        return
+    employees = await _setrate_get_employees(dept)
+    emp = next((e for e in employees if e["telegram_id"] == target_id), None)
+    full_name = emp["full_name"] if emp else str(target_id)
+    current_rate = _fmt_emp_rate(emp) if emp else "не установлена"
 
-    position = data["position"]
-    await state.update_data(base_rate=base_rate)
+    await state.update_data(set_rate_target_id=target_id, set_rate_full_name=full_name)
+    await state.set_state(SetRateStates.waiting_new_rate)
 
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")]
+    ])
     if position in _POSITIONS_WITH_EXTRA:
-        await state.set_state(SetRateStates.waiting_set_rate_extra)
-        extra_label = _EXTRA_LABEL.get(position, "повышенную")
-        await message.answer(f"Введите {extra_label} ставку (р/час):")
+        prompt = (
+            f"Сотрудник: {full_name}\n"
+            f"Текущая ставка: {current_rate}\n\n"
+            f"Введите две ставки через пробел: базовая повышенная\n"
+            f"Пример: 200 300"
+        )
     else:
-        await _admin_save_rate(message, state, position, base_rate, extra_rate=None)
+        prompt = (
+            f"Сотрудник: {full_name}\n"
+            f"Текущая ставка: {current_rate}\n\n"
+            f"Введите новую ставку (р/ч):"
+        )
+    await callback.message.edit_text(prompt, reply_markup=cancel_kb)
+    await callback.answer()
 
 
-@admin_router.message(SetRateStates.waiting_set_rate_extra)
-async def msg_admin_rate_extra(message: Message, state: FSMContext):
+@admin_router.message(SetRateStates.waiting_new_rate)
+async def msg_setrate_new_rate(message: Message, state: FSMContext):
     data = await state.get_data()
-    if "admin_rate_dept" not in data:
-        return  # передаём superadmin_router
+    position = data["set_rate_position"]
+    target_id = data["set_rate_target_id"]
+    full_name = data["set_rate_full_name"]
 
-    text = message.text.strip().replace(",", ".")
+    parts = message.text.strip().replace(",", ".").split()
     try:
-        extra_rate = float(text)
-        if extra_rate <= 0:
+        if len(parts) == 2:
+            base_rate = float(parts[0])
+            extra_rate = float(parts[1])
+            if base_rate <= 0 or extra_rate <= 0:
+                raise ValueError
+        elif len(parts) == 1:
+            base_rate = float(parts[0])
+            extra_rate = None
+            if base_rate <= 0:
+                raise ValueError
+        else:
             raise ValueError
     except ValueError:
-        await message.answer("Введите корректное число больше 0:")
+        if position in _POSITIONS_WITH_EXTRA:
+            await message.answer("Введите два числа через пробел (например: 200 300):")
+        else:
+            await message.answer("Введите корректное число больше 0:")
         return
 
-    position = data["position"]
-    base_rate = data["base_rate"]
-    await _admin_save_rate(message, state, position, base_rate, extra_rate)
-
-
-async def _admin_save_rate(message: Message, state: FSMContext,
-                           position: str, base_rate: float, extra_rate: float | None):
-    await update_rate(DB_PATH, position, base_rate, extra_rate)
+    await set_user_rate(DB_PATH, target_id, base_rate, extra_rate)
     await state.clear()
 
-    extra_str = ""
+    rate_str = _fmt_money(base_rate)
     if extra_rate is not None:
-        label = _EXTRA_LABEL.get(position, "повышенная")
-        extra_str = f", {label}: {_fmt_money(extra_rate)} р/ч"
+        rate_str += f"/{_fmt_money(extra_rate)}"
+    rate_str += " р/ч"
 
     logger.info(
-        "set_rate: позиция=%s base=%s extra=%s (от %s)",
-        position, base_rate, extra_rate, message.from_user.id,
+        "/set_rate: сохранено для %s (%s): base=%s extra=%s",
+        full_name, target_id, base_rate, extra_rate,
     )
-    await message.answer(
-        f"✅ Ставка обновлена: {position} — {_fmt_money(base_rate)} р/ч{extra_str}"
-    )
+    await message.answer(f"✅ Ставка обновлена: {full_name} — {rate_str}")
+
+
+@admin_router.callback_query(F.data == "setrate_cancel")
+async def cb_setrate_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Отменено.")
+    await callback.answer()
 
 
 # --- /message_dept ---

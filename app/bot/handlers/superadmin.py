@@ -674,7 +674,8 @@ async def cb_demote_confirm(callback: CallbackQuery, state: FSMContext):
 
     sa_notify = (
         f"📉 {employee_mention} понижен с должности администратора {dept} "
-        f"до сотрудника. Действие выполнил: {admin_mention}"
+        f"до сотрудника. Действие выполнил: {admin_mention}\n\n"
+        f"📋 Не забудьте удалить его email из редакторов Google Sheets."
     )
     for sa_id in SUPERADMIN_IDS:
         if sa_id == callback.from_user.id:

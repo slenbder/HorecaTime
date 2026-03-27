@@ -30,9 +30,9 @@ project/
 │   │   │   ├── userhours.py       ✅ FSM внесения смены (все позиции)
 │   │   │   ├── userreports.py     ✅ /hours_first, /hours_second, /hours_last
 │   │   │   ├── admin.py           ✅ /message_dept, /rates, /set_rate
-│   │   │   └── superadmin.py      ✅ /rates_all, /set_rate_all
+│   │   │   └── superadmin.py      ✅ /rates_all, /set_rate_all, /promote, /demote
 │   │   ├── fsm/
-│   │   │   ├── auth_states.py     ✅ AuthStates + waiting_role_type, waiting_admin_dept, waiting_dismiss_*, waiting_kitchen_title, waiting_dop_position, waiting_admin_email
+│   │   │   ├── auth_states.py     ✅ AuthStates + waiting_role_type, waiting_admin_dept, waiting_dismiss_*, waiting_kitchen_title, waiting_dop_position, waiting_admin_email, waiting_promote_*, waiting_demote_*
 │   │   │   ├── shift_states.py    ✅ ShiftStates (waiting_shift_input, waiting_ah_input, waiting_ah_comment)
 │   │   │   └── ...остальные       ❌
 │   │   ├── keyboards/
@@ -195,9 +195,9 @@ rates_history (
 | Роль | Доступ |
 |---|---|
 | `user` | Внесение часов, свои данные |
-| `admin_hall` | + ставки и сообщения зала |
-| `admin_bar` | + ставки и сообщения бара |
-| `admin_kitchen` | + ставки кухни |
+| `admin_hall` | Расширение прав обычного user — назначается суперадмином через `/promote`, снимается через `/demote`. Сотрудник остаётся в своей позиции и продолжает вносить смены. + ставки и сообщения зала |
+| `admin_bar` | Расширение прав обычного user — назначается суперадмином через `/promote`, снимается через `/demote`. Сотрудник остаётся в своей позиции и продолжает вносить смены. + ставки и сообщения бара |
+| `admin_kitchen` | Расширение прав обычного user — назначается суперадмином через `/promote`, снимается через `/demote`. Сотрудник остаётся в своей позиции и продолжает вносить смены. + ставки кухни |
 | `superadmin` | Всё + переключение месяца + PDF + рассылка всем |
 | `developer` | Все права superadmin + алерты об ошибках + получает сообщения через команду /contact_dev (есть у всех ролей кроме developer) |
 
@@ -325,7 +325,7 @@ VALID_POSITIONS = {
 - admin_hall дополнительно: апрув фото карт/чеков от официантов (inline-кнопки)
 
 **superadmin:**
-`/schedule`, `/rates_all`, `/set_rate_all`, `/message_dept`, `/message_all`, `/switch_month`, `/dismiss`, `/contact_dev`
+`/schedule`, `/rates_all`, `/set_rate_all`, `/message_dept`, `/message_all`, `/switch_month`, `/dismiss`, `/promote`, `/demote`, `/contact_dev`
 
 **developer:** всё как superadmin (без `/contact_dev`) + алерты об ошибках
 
@@ -423,8 +423,10 @@ VALID_POSITIONS = {
 - Проверка прав superadmin/developer через config.py (не через SQLite)
 
 **Вне этапов ✅ завершено:**
-- Регистрация администраторов через бота (выбор "Сотрудник / Администратор" на первом шаге)
-- Заявка администратора летит только SUPERADMIN_IDS, апрув суперадмином
+- Рефакторинг регистрации: убран отдельный флоу admin, `/start` сразу ведёт к выбору отдела
+- `/promote` — повышение user до admin своего подразделения (с запросом email после повышения)
+- `/demote` — понижение admin обратно в user с уведомлениями
+- `/dismiss` для admin — развилка "понизить/уволить"
 - Суперадмины и developer пропускают регистрацию — сразу главное меню
 - Функция увольнения /dismiss (superadmin + developer): inline-флоу, подтверждение, красит ячейку A в #FFCCCC, удаляет из Техлиста и SQLite, сбрасывает FSM/кеш/команды, уведомляет сотрудника
 - Новые позиции: Грузчик/Закупщик (отдел «Доп.» / Кухня), Клининг/Котломой (отдел МОП / подчинение Залу)
@@ -479,8 +481,9 @@ VALID_POSITIONS = {
 - **approve_ah_callback** должен быть зарегистрирован ДО generic `approve_`/`reject_` хендлеров в `auth.py`
 - **Формат ячеек месячного листа**: колонки D:AN должны иметь формат "Обычный текст" (настраивается вручную в таблице) — иначе числа интерпретируются как даты
 - **Проверка прав superadmin/developer** — через `SUPERADMIN_IDS`/`DEVELOPER_ID` из `config.py`, не через SQLite (суперадмины не регистрируются в таблице `users`)
-- **Администраторы отделов** не записываются в Техлист — авторизация только через SQLite
-- **Регистрация администратора**: запрашивается email Google для выдачи доступа к таблице; ссылка на таблицу отправляется при апруве
+- **Администраторы отделов** регистрируются как обычные сотрудники, повышаются суперадмином через `/promote`. После повышения сотрудник вводит Gmail — суперадмин вручную добавляет его в редакторы таблицы.
+- **При `/demote`** суперадмину напоминают удалить email из редакторов таблицы.
+- **`/dismiss` для действующего admin** показывает развилку: "Только понизить / Уволить / Отмена"
 - **Ставки** хранятся в SQLite (таблица `rates`), не в Google Sheets
 - **При `switch_month()`** делается снимок ставок в `rates_history` до копирования листа
 - **Шеф/Су-шеф** вводят должность вручную (`custom_title`) → пишется в колонку C месячного листа

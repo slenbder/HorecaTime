@@ -18,6 +18,9 @@ class AuthStates(StatesGroup):
     waiting_promote_user = State()       # /promote: выбор конкретного сотрудника
     waiting_promote_confirm = State()    # /promote: подтверждение
     waiting_promote_email = State()      # /promote: ввод email новым админом
+    waiting_demote_dept = State()        # /demote: выбор подразделения
+    waiting_demote_user = State()        # /demote: выбор конкретного админа
+    waiting_demote_confirm = State()     # /demote: подтверждение
 
 
 class SetRateStates(StatesGroup):

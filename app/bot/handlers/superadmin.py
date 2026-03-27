@@ -497,3 +497,204 @@ async def cb_promote_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("Отменено.")
     await callback.answer()
+
+
+# --- /demote ---
+
+_ADMIN_ROLES = {"admin_hall", "admin_bar", "admin_kitchen"}
+_DEPT_TO_ADMIN_ROLES: dict[str, set[str]] = {
+    "Зал":   {"admin_hall"},
+    "Бар":   {"admin_bar"},
+    "Кухня": {"admin_kitchen"},
+    "МОП":   {"admin_hall"},
+}
+
+
+async def _get_admins_for_demote(dept: str) -> list[dict]:
+    """Возвращает администраторов (admin_hall/bar/kitchen) из заданного подразделения."""
+    roles = _DEPT_TO_ADMIN_ROLES.get(dept, set())
+    if not roles:
+        return []
+    placeholders = ",".join("?" * len(roles))
+    query = (
+        f"SELECT telegram_id, full_name, position FROM users "
+        f"WHERE role IN ({placeholders}) AND department = ?"
+    )
+    params = (*roles, dept)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+    return [{"telegram_id": r[0], "full_name": r[1], "position": r[2] or ""} for r in rows]
+
+
+def _demote_dept_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text=dept, callback_data=f"demote_dept:{dept}")]
+        for dept in ("Зал", "Бар", "Кухня", "МОП")
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="demote_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+@superadmin_router.message(Command("demote"))
+async def cmd_demote(message: Message, state: FSMContext):
+    tg_id = message.from_user.id
+    logger.info("/demote: запрос от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("/demote: доступ запрещён для %s", tg_id)
+        await message.answer("⛔️ Недостаточно прав.")
+        return
+    await state.set_state(AuthStates.waiting_demote_dept)
+    await message.answer(
+        "📉 Понижение администратора\n\nВыберите подразделение:",
+        reply_markup=_demote_dept_keyboard(),
+    )
+
+
+@superadmin_router.callback_query(AuthStates.waiting_demote_dept, F.data.startswith("demote_dept:"))
+async def cb_demote_dept(callback: CallbackQuery, state: FSMContext):
+    dept = callback.data.split(":", 1)[1]
+    logger.info("demote_dept: суперадмин %s выбрал отдел %s", callback.from_user.id, dept)
+
+    admins = await _get_admins_for_demote(dept)
+    if not admins:
+        await callback.message.edit_text(f"В отделе {dept} нет администраторов.")
+        await callback.answer()
+        await state.clear()
+        return
+
+    buttons = [
+        [InlineKeyboardButton(
+            text=a["full_name"],
+            callback_data=f"demote_select:{a['telegram_id']}",
+        )]
+        for a in admins
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="demote_cancel")])
+
+    await state.update_data(demote_dept=dept)
+    await state.set_state(AuthStates.waiting_demote_user)
+    await callback.message.edit_text(
+        f"Отдел: <b>{dept}</b>\n\nВыберите администратора:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@superadmin_router.callback_query(AuthStates.waiting_demote_user, F.data.startswith("demote_select:"))
+async def cb_demote_select(callback: CallbackQuery, state: FSMContext):
+    employee_id = int(callback.data.split(":", 1)[1])
+
+    employee = get_user(employee_id)
+    if not employee:
+        await callback.answer("Администратор не найден.", show_alert=True)
+        await state.clear()
+        return
+
+    full_name = employee["full_name"]
+    position = employee["position"] or ""
+    dept = employee["department"] or ""
+
+    logger.info(
+        "demote_select: суперадмин %s выбрал администратора %s (%s)",
+        callback.from_user.id, employee_id, full_name,
+    )
+
+    await state.update_data(demote_target_id=employee_id)
+    await state.set_state(AuthStates.waiting_demote_confirm)
+
+    confirm_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, понизить", callback_data=f"demote_confirm:{employee_id}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="demote_cancel"),
+        ]
+    ])
+    await callback.message.edit_text(
+        f"📉 Понизить <b>{full_name}</b> ({position}, {dept})?\n\n"
+        f"Сотрудник потеряет права администратора и вернётся "
+        f"к обычным функциям сотрудника своей позиции.\n\n"
+        f"Это действие можно отменить командой /promote.",
+        reply_markup=confirm_keyboard,
+    )
+    await callback.answer()
+
+
+@superadmin_router.callback_query(AuthStates.waiting_demote_confirm, F.data.startswith("demote_confirm:"))
+async def cb_demote_confirm(callback: CallbackQuery, state: FSMContext):
+    employee_id = int(callback.data.split(":", 1)[1])
+
+    employee = get_user(employee_id)
+    if not employee:
+        await callback.answer("Администратор не найден.", show_alert=True)
+        await state.clear()
+        return
+
+    full_name = employee["full_name"]
+    dept = employee["department"] or ""
+    position = employee["position"]
+
+    RolesCacheService.update_user_role(
+        telegram_id=employee_id,
+        full_name=full_name,
+        role="user",
+        department=dept,
+        position=position,
+    )
+    logger.info(
+        "demote_confirm: %s (id=%s) понижен до user суперадмином %s",
+        full_name, employee_id, callback.from_user.id,
+    )
+
+    await set_commands_for_role(callback.bot, employee_id, "user")
+
+    # Уведомить понижаемого сотрудника
+    try:
+        await callback.bot.send_message(
+            chat_id=employee_id,
+            text=(
+                f"📉 Ваши права администратора отдела {dept} были отозваны.\n\n"
+                f"Вы возвращаетесь к стандартным функциям сотрудника.\n"
+                f"По вопросам обращайтесь к управляющему."
+            ),
+        )
+    except Exception:
+        logger.exception("demote_confirm: не удалось уведомить сотрудника %s", employee_id)
+
+    # Формируем упоминания для уведомления суперадминов
+    admin_username = callback.from_user.username
+    admin_name = (
+        f"{callback.from_user.first_name or ''} {callback.from_user.last_name or ''}".strip()
+        or str(callback.from_user.id)
+    )
+    admin_mention = (
+        f'<a href="https://t.me/{admin_username}">{admin_name}</a>'
+        if admin_username else admin_name
+    )
+    employee_mention = full_name  # username сотрудника не хранится в SQLite
+
+    sa_notify = (
+        f"📉 {employee_mention} понижен с должности администратора {dept} "
+        f"до сотрудника. Действие выполнил: {admin_mention}"
+    )
+    for sa_id in SUPERADMIN_IDS:
+        if sa_id == callback.from_user.id:
+            continue
+        try:
+            await callback.bot.send_message(chat_id=sa_id, text=sa_notify, parse_mode="HTML")
+        except Exception:
+            logger.exception("demote_confirm: не удалось уведомить суперадмина %s", sa_id)
+
+    await callback.message.edit_text(
+        f"✅ {full_name} понижен до сотрудника отдела {dept}.",
+        reply_markup=None,
+    )
+    await callback.answer()
+    await state.clear()
+
+
+@superadmin_router.callback_query(F.data == "demote_cancel")
+async def cb_demote_cancel(callback: CallbackQuery, state: FSMContext):
+    logger.info("demote_cancel: суперадмин %s отменил понижение", callback.from_user.id)
+    await state.clear()
+    await callback.message.edit_text("Отменено.")
+    await callback.answer()

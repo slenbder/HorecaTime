@@ -28,6 +28,7 @@ _SUPERADMIN_COMMANDS = [
     BotCommand(command="switch_month", description="Переход на новый месяц"),
     BotCommand(command="dismiss",      description="Уволить сотрудника"),
     BotCommand(command="promote",      description="Повысить сотрудника до администратора"),
+    BotCommand(command="demote",       description="Понизить администратора до сотрудника"),
 ]
 
 _CONTACT_DEV = [

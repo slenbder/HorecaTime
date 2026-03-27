@@ -10,7 +10,7 @@ from aiogram.types import (
 )
 
 from app.bot.fsm.auth_states import AuthStates, SetRateStates
-from app.db.models import get_users_by_department, get_all_users, get_all_rates, update_rate, get_user
+from app.db.models import get_users_by_department, get_all_users, get_all_rates, update_rate, get_user, get_users_rates_by_department
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS
 
 admin_router = Router()
@@ -91,6 +91,17 @@ def _rates_keyboard_for_dept(dept: str) -> InlineKeyboardMarkup:
 
 # --- /rates ---
 
+def _fmt_emp_rate(emp: dict) -> str:
+    """Форматирует ставку сотрудника: 'base р/ч' или 'base/extra р/ч' или 'не установлена'."""
+    base = emp.get("base_rate")
+    if base is None:
+        return "не установлена"
+    extra = emp.get("extra_rate")
+    if extra is not None:
+        return f"{_fmt_money(base)}/{_fmt_money(extra)} р/ч"
+    return f"{_fmt_money(base)} р/ч"
+
+
 @admin_router.message(Command("rates"))
 async def cmd_rates(message: Message):
     tg_id = message.from_user.id
@@ -104,23 +115,47 @@ async def cmd_rates(message: Message):
         return
 
     dept = _ROLE_TO_DEPT[role]
-    positions = _positions_for_dept(dept)
-    logger.info("/rates: %s запрашивает ставки отдела %s", tg_id, dept)
+    logger.info("/rates: %s запрашивает персональные ставки отдела %s", tg_id, dept)
 
-    all_rates = await get_all_rates(DB_PATH)
-    rate_map = {r["position"]: r for r in all_rates}
+    employees = await get_users_rates_by_department(DB_PATH, dept)
+    if dept == "Зал":
+        mop_employees = await get_users_rates_by_department(DB_PATH, "МОП")
+        employees = employees + mop_employees
 
-    lines = [f"💰 Ставки отдела {dept}:\n"]
-    for pos in positions:
-        r = rate_map.get(pos)
-        if r is None:
+    if not employees:
+        await message.answer("Нет сотрудников в отделе")
+        return
+
+    # Группируем по позиции, порядок — из _positions_for_dept
+    by_position: dict[str, list] = {}
+    for emp in employees:
+        pos = emp.get("position") or "—"
+        by_position.setdefault(pos, []).append(emp)
+
+    ordered = _positions_for_dept(dept)
+    for pos in by_position:
+        if pos not in ordered:
+            ordered.append(pos)
+
+    lines = [f"📊 Ставки отдела «{dept}»"]
+    for pos in ordered:
+        group = by_position.get(pos)
+        if not group:
             continue
-        base_str = f"{_fmt_money(r['base_rate'])} р/ч"
-        if r["extra_rate"] is not None:
-            label = _EXTRA_LABEL.get(pos, "повышенная")
-            lines.append(f"{pos}: {base_str} ({label}: {_fmt_money(r['extra_rate'])} р/ч)")
+        n = len(group)
+        rates_unique = {(emp.get("base_rate"), emp.get("extra_rate")) for emp in group}
+        if len(rates_unique) == 1:
+            # Все одинаковые — схлопываем
+            rate_str = _fmt_emp_rate(group[0])
+            if n > 1:
+                lines.append(f"{pos} ({n} чел.): {rate_str}")
+            else:
+                lines.append(f"{pos}: {rate_str}")
         else:
-            lines.append(f"{pos}: {base_str}")
+            # Разные — раскрываем список
+            lines.append(f"{pos}:")
+            for emp in group:
+                lines.append(f"— {emp['full_name']}: {_fmt_emp_rate(emp)}")
 
     await message.answer("\n".join(lines))
 

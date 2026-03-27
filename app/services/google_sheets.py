@@ -460,14 +460,15 @@ class GoogleSheetsClient:
         )
 
         # Задать текстовый формат для строки данных, чтобы Google Sheets
-        # не интерпретировал "1.5" или "10/1.5" как даты
+        # не интерпретировал "1.5" или "10/1.5" как даты.
+        # AL/AM/AN — служебные числовые колонки Раннера, TEXT им не нужен.
         try:
             month_ws.format(
-                f"D{new_row}:AN{new_row}",
+                f"D{new_row}:AK{new_row}",
                 {"numberFormat": {"type": "TEXT"}},
             )
             logger.info(
-                "ensure_user: TEXT-формат задан для D%s:AN%s листа '%s'",
+                "ensure_user: TEXT-формат задан для D%s:AK%s листа '%s'",
                 new_row, new_row, month_ws.title,
             )
         except Exception as e:
@@ -508,14 +509,24 @@ class GoogleSheetsClient:
                     f'&"/"&'
                     f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
                 )
-            month_ws.batch_update([
+            updates = [
                 {"range": f"S{r}", "values": [[formula_s]]},
                 {"range": f"AJ{r}", "values": [[formula_aj]]},
                 {"range": f"AK{r}", "values": [[formula_ak]]},
-            ], value_input_option="USER_ENTERED")
+            ]
+            if position == "Раннер":
+                # AL = AM + AN (итог выходных H за месяц, формула)
+                # AM = накопленный выходной H первой половины (бот пишет напрямую)
+                # AN = накопленный выходной H второй половины (бот пишет напрямую)
+                updates += [
+                    {"range": f"AL{r}", "values": [[f"=AM{r}+AN{r}"]]},
+                    {"range": f"AM{r}", "values": [[0]]},
+                    {"range": f"AN{r}", "values": [[0]]},
+                ]
+            month_ws.batch_update(updates, value_input_option="USER_ENTERED")
             logger.info(
-                "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s)",
-                r, month_ws.title, position in _SIMPLE_H_POSITIONS,
+                "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s, runner=%s)",
+                r, month_ws.title, position in _SIMPLE_H_POSITIONS, position == "Раннер",
             )
         except Exception as e:
             logger.warning(
@@ -536,12 +547,15 @@ class GoogleSheetsClient:
         year: int,
         h: float,
         ah: float,
+        is_weekend: bool = False,
     ) -> None:
         """
         Записывает смену в месячный лист.
         Ищет строку пользователя по telegram_id (колонка B),
         находит столбец дня в строке 3, пишет значение ячейки.
         Формат: "{h}/{ah}" если ah > 0, иначе str(h).
+        Для Раннера в выходной день (is_weekend=True) дополнительно
+        накапливает H в AM (первая половина) или AN (вторая половина).
         """
         sheet_name = f"{MONTH_NAMES_RU[month]} {year}"
         logger.info(
@@ -608,6 +622,33 @@ class GoogleSheetsClient:
             cell_value, user_row, day_col, sheet_name,
         )
 
+        # Для Раннера в выходной день накапливаем H в AM (дни 1-15) или AN (дни 16-31)
+        if is_weekend:
+            user_position = (
+                all_values[user_row - 1][2].strip()
+                if len(all_values[user_row - 1]) > 2
+                else ""
+            )
+            if user_position == "Раннер":
+                # AM = col 39 (первая половина), AN = col 40 (вторая половина)
+                weekend_col = 39 if day <= 15 else 40
+                col_letter = "AM" if day <= 15 else "AN"
+                raw = (
+                    all_values[user_row - 1][weekend_col - 1]
+                    if len(all_values[user_row - 1]) >= weekend_col
+                    else ""
+                )
+                try:
+                    cur_val = float(raw) if raw else 0.0
+                except (ValueError, TypeError):
+                    cur_val = 0.0
+                new_val = round(cur_val + h, 1)
+                ws.update_cell(user_row, weekend_col, new_val)
+                logger.info(
+                    "write_shift: Раннер выходной — %s%d = %s (лист='%s')",
+                    col_letter, user_row, new_val, sheet_name,
+                )
+
         self._auto_resize_columns(ws)
 
     # --- Отчёты ---
@@ -667,13 +708,30 @@ class GoogleSheetsClient:
             except ValueError:
                 return 0.0, 0.0
 
+        def _parse_simple(col_idx: int) -> float:
+            """Читает одиночное числовое значение (не H/AH формат)."""
+            val = row[col_idx - 1].strip() if len(row) >= col_idx else ""
+            if not val:
+                return 0.0
+            try:
+                return float(val)
+            except ValueError:
+                return 0.0
+
         h_first, ah_first = _parse_cell(19)   # S
         h_second, ah_second = _parse_cell(36)  # AJ
         h_total, ah_total = _parse_cell(37)    # AK
 
+        # Служебные колонки Раннера: AL(38)=итог, AM(39)=первая, AN(40)=вторая
+        h_weekend_first = _parse_simple(39)   # AM
+        h_weekend_second = _parse_simple(40)  # AN
+        h_weekend_total = _parse_simple(38)   # AL = AM + AN (формула в таблице)
+
         logger.info(
-            "get_summary_hours: %s → h_first=%s ah_first=%s h_second=%s ah_second=%s h_total=%s ah_total=%s",
-            telegram_id, h_first, ah_first, h_second, ah_second, h_total, ah_total,
+            "get_summary_hours: %s → h_first=%s ah_first=%s h_second=%s ah_second=%s "
+            "h_total=%s ah_total=%s h_wknd_first=%s h_wknd_second=%s",
+            telegram_id, h_first, ah_first, h_second, ah_second,
+            h_total, ah_total, h_weekend_first, h_weekend_second,
         )
         return {
             "h_first": h_first,
@@ -682,6 +740,9 @@ class GoogleSheetsClient:
             "ah_second": ah_second,
             "h_total": h_total,
             "ah_total": ah_total,
+            "h_weekend_first": h_weekend_first,
+            "h_weekend_second": h_weekend_second,
+            "h_weekend_total": h_weekend_total,
         }
 
     # --- Увольнение ---

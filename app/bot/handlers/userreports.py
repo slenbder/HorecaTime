@@ -55,6 +55,39 @@ def _fmt_money(v: float) -> str:
     return str(int(v)) if v == int(v) else f"{v:.2f}"
 
 
+def _build_runner_earnings_lines(
+    h: float,
+    ah: float,
+    h_weekend: float,
+    base: float,
+    extra: float,
+) -> list[str]:
+    """Строки заработка для Раннера с разбивкой обычные/выходные."""
+    h_regular = h - h_weekend
+    earnings_regular = h_regular * base
+    earnings_weekend = h_weekend * (extra or base)
+    earnings_ah = ah * base
+    total = earnings_regular + earnings_weekend + earnings_ah
+    lines = []
+    if h_weekend > 0:
+        lines.append(
+            f"• {_fmt(h_regular)} ч × {_fmt_money(base)} р = {_fmt_money(earnings_regular)} р (обычные дни)"
+        )
+        lines.append(
+            f"• {_fmt(h_weekend)} ч × {_fmt_money(extra or base)} р = {_fmt_money(earnings_weekend)} р (выходные дни)"
+        )
+        if ah > 0:
+            lines.append(
+                f"• {_fmt(ah)} ч × {_fmt_money(base)} р = {_fmt_money(earnings_ah)} р (доп. часы)"
+            )
+        lines.append(f"💰 Итого: {_fmt_money(total)} р")
+    else:
+        if ah > 0:
+            lines.append(f"Доп. часы: {_fmt(ah)} ч")
+        lines.append(f"💰 Заработок: {_fmt_money(total)} р")
+    return lines
+
+
 def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None) -> list[str]:
     h = data["h_first"]
     ah = data["ah_first"]
@@ -74,7 +107,10 @@ def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None
     base = rate["base_rate"]
     extra = rate["extra_rate"]
 
-    if position in _BAR_POSITIONS:
+    if position == "Раннер":
+        h_weekend = data.get("h_weekend_first", 0.0)
+        lines += _build_runner_earnings_lines(h, ah, h_weekend, base, extra or base)
+    elif position in _BAR_POSITIONS:
         earnings_h = h * base
         earnings_ah = ah * (extra or base)
         total = earnings_h + earnings_ah
@@ -116,19 +152,31 @@ def _build_hours_second_lines(data: dict, position: str | None, rate: dict | Non
     base = rate["base_rate"]
     extra = rate["extra_rate"]
 
-    if position in _BAR_POSITIONS:
+    if position == "Раннер":
+        h_weekend_second = data.get("h_weekend_second", 0.0)
+        h_weekend_total = data.get("h_weekend_total", 0.0)
+        lines += _build_runner_earnings_lines(h2, ah2, h_weekend_second, base, extra or base)
+        lines.append("")
+        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+        if ah_tot > 0:
+            lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+        lines += _build_runner_earnings_lines(h_tot, ah_tot, h_weekend_total, base, extra or base)
+    elif position in _BAR_POSITIONS:
         earnings_second = h2 * base + ah2 * (extra or base)
         earnings_total = h_tot * base + ah_tot * (extra or base)
+        lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
+        lines.append("")
+        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
     else:
         earnings_second = h2 * base
         earnings_total = h_tot * base
-
-    lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
-    lines.append("")
-    lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
-    if ah_tot > 0 and position not in _BAR_POSITIONS:
-        lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
-    lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
+        lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
+        lines.append("")
+        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+        if ah_tot > 0:
+            lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
 
     return lines
 

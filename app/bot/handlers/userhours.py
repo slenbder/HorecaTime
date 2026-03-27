@@ -758,7 +758,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
         return
 
     try:
-        sheets_client.write_shift(tg_id, day, month, year, h, ah)
+        sheets_client.write_shift(tg_id, day, month, year, h, ah, is_weekend=is_weekend)
     except Exception:
         error_logger.exception("_write_and_finish: ошибка записи смены для %s", tg_id)
         await message.answer("❌ Ошибка записи. Попробуйте позже.")

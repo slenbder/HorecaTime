@@ -28,7 +28,7 @@ project/
 │   │   ├── handlers/
 │   │   │   ├── auth.py            ✅ approve-flow, admin registration, /dismiss (superadmin)
 │   │   │   ├── userhours.py       ✅ FSM внесения смены (все позиции)
-│   │   │   ├── userreports.py     ✅ /hours_first, /hours_second, /hours_last
+│   │   │   ├── userreports.py     ✅ /hours_first, /hours_second, /hours_last, /sheet
 │   │   │   ├── admin.py           ✅ /message_dept, /rates, /set_rate
 │   │   │   └── superadmin.py      ✅ /rates_all, /set_rate_all, /promote, /demote
 │   │   ├── fsm/
@@ -318,14 +318,14 @@ VALID_POSITIONS = {
 ## Команды по ролям
 
 **user** (все позиции включая Менеджера):
-`/shift`, `/hours_first`, `/hours_second`, `/hours_last`, `/schedule`, `/contact_dev`
+`/shift`, `/hours_first`, `/hours_second`, `/hours_last`, `/schedule`, `/sheet`, `/contact_dev`
 
 **admin_hall / admin_bar / admin_kitchen** (+ к командам user):
 `/rates`, `/set_rate`, `/message_dept`
 - admin_hall дополнительно: апрув фото карт/чеков от официантов (inline-кнопки)
 
 **superadmin:**
-`/schedule`, `/rates_all`, `/set_rate_all`, `/message_dept`, `/message_all`, `/switch_month`, `/dismiss`, `/promote`, `/demote`, `/contact_dev`
+`/schedule`, `/rates_all`, `/set_rate_all`, `/message_dept`, `/message_all`, `/switch_month`, `/dismiss`, `/promote`, `/demote`, `/sheet`, `/contact_dev`
 
 **developer:** всё как superadmin (без `/contact_dev`) + алерты об ошибках
 
@@ -432,6 +432,9 @@ VALID_POSITIONS = {
 - Новые позиции: Грузчик/Закупщик (отдел «Доп.» / Кухня), Клининг/Котломой (отдел МОП / подчинение Залу)
 - `custom_title` для Шеф/Су-шеф (вводится вручную) и для Доп. позиций (Грузчик/Закупщик)
 - Кликабельные ники во всех уведомлениях (`make_mention` → HTML-ссылка на профиль)
+- `LinkPreviewOptions(is_disabled=True)` во всех HTML-сообщениях с упоминаниями (userhours, auth, superadmin)
+- Защита от двойного нажатия «Одобрить»/«Отклонить»: проверка ✅/❌ в тексте + имя обработавшего администратора
+- `/sheet` — команда для всех ролей, отправляет ссылку на Google Sheets график
 - Динамический пример тусовочных часов для Бармена/Барбэка в подсказке `/shift`
 - Валидация email только `@gmail.com` при регистрации администратора (`_is_valid_gmail()`)
 - Удаление сообщения «⏳ Генерирую график» после отправки PDF (`wait_msg.delete()`)

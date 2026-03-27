@@ -82,8 +82,6 @@ def _build_runner_earnings_lines(
             )
         lines.append(f"💰 Итого: {_fmt_money(total)} р")
     else:
-        if ah > 0:
-            lines.append(f"Доп. часы: {_fmt(ah)} ч")
         lines.append(f"💰 Заработок: {_fmt_money(total)} р")
     return lines
 

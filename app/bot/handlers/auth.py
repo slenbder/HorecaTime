@@ -24,7 +24,7 @@ from app.bot.keyboards.common import (
 )
 
 from app.bot.commands import set_commands_for_role
-from app.db.models import get_user, delete_user, get_users_by_role
+from app.db.models import get_user, delete_user, get_users_by_role, get_rate, set_user_rate
 from app.services.google_sheets import GoogleSheetsClient
 from config import (
     SUPERADMIN_IDS,
@@ -648,6 +648,22 @@ async def process_approve(callback: CallbackQuery):
                 show_alert=True,
             )
             return
+
+        # Устанавливаем персональную ставку из шаблона
+        _KNOWN_POSITIONS = {
+            "Официант", "Раннер", "Хостесс", "Менеджер", "Бармен", "Барбэк",
+            "Горячий цех", "Холодный цех", "Кондитерский цех", "Заготовочный цех",
+            "Коренной цех", "Грузчик", "Закупщик", "Клининг", "Котломой",
+        }
+        normalized_position = position if position in _KNOWN_POSITIONS else "Су-шеф"
+        try:
+            rate = await get_rate(DB_PATH, normalized_position)
+            base_rate = rate["base_rate"] if rate else 250.0
+            extra_rate = rate["extra_rate"] if rate else None
+            await set_user_rate(DB_PATH, user_tg_id, base_rate, extra_rate)
+            logger.info("Установлена ставка для %s: %s/%s р/ч", fio, base_rate, extra_rate)
+        except Exception:
+            logger.error("Не удалось установить ставку для %s (%s)", fio, user_tg_id, exc_info=True)
 
         # Записываем в кеш ролей
         RolesCacheService.update_user_role(

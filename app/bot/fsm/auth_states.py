@@ -27,4 +27,5 @@ class SetRateStates(StatesGroup):
     waiting_set_rate_dept = State()      # /set_rate_all: выбор отдела
     waiting_set_rate_position = State()  # /set_rate_all: выбор позиции
     waiting_set_rate_employee = State()  # /set_rate_all: выбор сотрудника
-    waiting_set_rate_base = State()      # /set_rate_all: ввод ставки (базовая или база+повышенная)
+    waiting_set_rate_base = State()      # /set_rate_all: ввод базовой ставки
+    waiting_set_rate_extra = State()     # /set_rate_all: ввод повышенной ставки (Раннер/Бармен/Барбэк)

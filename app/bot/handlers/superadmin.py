@@ -250,8 +250,7 @@ async def cb_setrate_all_employee(callback: CallbackQuery, state: FSMContext):
         prompt = (
             f"Сотрудник: {full_name}\n"
             f"Текущая ставка: {current_rate}\n\n"
-            f"Введите две ставки через пробел: базовая повышенная\n"
-            f"Пример: 200 300"
+            f"Введите базовую ставку (р/ч):"
         )
     else:
         prompt = (
@@ -270,40 +269,56 @@ async def msg_set_rate_base(message: Message, state: FSMContext):
     target_id = data["sra_target_id"]
     full_name = data["sra_full_name"]
 
-    parts = message.text.strip().replace(",", ".").split()
+    text = message.text.strip().replace(",", ".")
     try:
-        if len(parts) == 2:
-            base_rate = float(parts[0])
-            extra_rate = float(parts[1])
-            if base_rate <= 0 or extra_rate <= 0:
-                raise ValueError
-        elif len(parts) == 1:
-            base_rate = float(parts[0])
-            extra_rate = None
-            if base_rate <= 0:
-                raise ValueError
-        else:
+        base_rate = float(text)
+        if base_rate <= 0:
             raise ValueError
     except ValueError:
-        if position in _POSITIONS_WITH_EXTRA:
-            await message.answer("Введите два числа через пробел (например: 200 300):")
-        else:
-            await message.answer("Введите корректное число больше 0:")
+        await message.answer("Введите корректное число больше 0:")
+        return
+
+    if position in _POSITIONS_WITH_EXTRA:
+        await state.update_data(sra_base_rate=base_rate)
+        await state.set_state(SetRateStates.waiting_set_rate_extra)
+        logger.info("/set_rate_all: base=%s для %s, запрашиваю повышенную ставку", base_rate, full_name)
+        await message.answer("Введите повышенную ставку (выходные дни, р/ч):")
+    else:
+        await set_user_rate(DB_PATH, target_id, base_rate, extra_rate=None)
+        await state.clear()
+        logger.info(
+            "/set_rate_all: сохранено для %s (%s): base=%s (от %s)",
+            full_name, target_id, base_rate, message.from_user.id,
+        )
+        await message.answer(f"✅ Ставка обновлена: {full_name} — {_fmt_money(base_rate)} р/ч")
+
+
+@superadmin_router.message(SetRateStates.waiting_set_rate_extra)
+async def msg_set_rate_extra(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_id = data["sra_target_id"]
+    full_name = data["sra_full_name"]
+    base_rate = data["sra_base_rate"]
+
+    text = message.text.strip().replace(",", ".")
+    try:
+        extra_rate = float(text)
+        if extra_rate <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Введите корректное число больше 0:")
         return
 
     await set_user_rate(DB_PATH, target_id, base_rate, extra_rate)
     await state.clear()
 
-    rate_str = _fmt_money(base_rate)
-    if extra_rate is not None:
-        rate_str += f"/{_fmt_money(extra_rate)}"
-    rate_str += " р/ч"
-
     logger.info(
         "/set_rate_all: сохранено для %s (%s): base=%s extra=%s (от %s)",
         full_name, target_id, base_rate, extra_rate, message.from_user.id,
     )
-    await message.answer(f"✅ Ставка обновлена: {full_name} — {rate_str}")
+    await message.answer(
+        f"✅ Ставка обновлена: {full_name} — {_fmt_money(base_rate)}/{_fmt_money(extra_rate)} р/ч"
+    )
 
 
 @superadmin_router.message(Command("switch_month"))

@@ -62,7 +62,7 @@ def _format_position_group(pos: str, group: list[dict]) -> list[str]:
     if len(rates_unique) == 1:
         rate_str = _fmt_emp_rate(group[0])
         return [f"{pos} ({n} чел.): {rate_str}" if n > 1 else f"{pos}: {rate_str}"]
-    return [f"{pos}:"] + [f"— {emp['full_name']}: {_fmt_emp_rate(emp)}" for emp in group]
+    return [f"{emp['full_name']} ({pos}): {_fmt_emp_rate(emp)}" for emp in group]
 
 
 def _format_rates_grouped(employees: list[dict]) -> list[str]:

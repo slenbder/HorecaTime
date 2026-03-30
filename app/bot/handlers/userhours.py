@@ -405,18 +405,30 @@ async def _delayed_process_waiter(mgid: str) -> None:
     message = ctx["message"]
     state = ctx["state"]
     caption = (ctx["caption"] or "").strip()
+    tg_id = message.from_user.id
 
-    logger.info(
-        "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
-        mgid, len(photo_ids), caption,
-    )
+    try:
+        logger.info(
+            "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
+            mgid, len(photo_ids), caption,
+        )
 
-    result = parse_shift(caption, "Официант")
-    if result is None:
-        await message.answer("❌ Не удалось распознать формат смены.")
-        return
+        result = parse_shift(caption, "Официант")
+        if result is None:
+            await message.answer("❌ Не удалось распознать формат смены.")
+            return
 
-    await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)
+        await _send_waiter_report(message, state, tg_id, result, photo_ids)
+    except Exception:
+        logger.exception("Ошибка обработки медиагруппы для user %s", tg_id)
+        await state.clear()
+        try:
+            await message.bot.send_message(
+                tg_id,
+                "Произошла ошибка при обработке фотографий. Попробуйте отправить заново.",
+            )
+        except Exception:
+            pass  # если не удалось отправить сообщение, хотя бы FSM очистили
 
 
 async def _send_waiter_report(

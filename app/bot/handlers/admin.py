@@ -12,7 +12,7 @@ from aiogram.types import (
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.fsm.admin_states import SetRateStates
 from app.db.models import get_users_by_department, get_all_users, get_user, get_users_rates_by_department, set_user_rate
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS, DEPT_POSITIONS, POSITIONS_WITH_EXTRA
 
 admin_router = Router()
 logger = logging.getLogger(__name__)
@@ -28,15 +28,7 @@ _ROLE_TO_DEPT = {
 
 _DEPT_BUTTONS = ["Зал", "Бар", "Кухня", "МОП"]
 
-_DEPT_POSITIONS = {
-    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
-    "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
-               "Заготовочный цех", "Коренной цех", "Грузчик", "Закупщик"],
-    "МОП":   ["Клининг", "Котломой"],
-}
-
-_POSITIONS_WITH_EXTRA = {"Бармен", "Барбэк", "Раннер"}
+_POSITIONS_WITH_EXTRA = POSITIONS_WITH_EXTRA
 _EXTRA_LABEL = {"Бармен": "тусовочные", "Барбэк": "тусовочные", "Раннер": "выходные"}
 
 ROLE_TO_SENDER = {
@@ -63,9 +55,9 @@ def _resolve_sender_role(tg_id: int) -> str | None:
 def _positions_for_dept(dept: str) -> list[str]:
     """Возвращает список позиций для управления ставками.
     admin_hall управляет МОП, поэтому Зал включает позиции МОП."""
-    positions = list(_DEPT_POSITIONS.get(dept, []))
+    positions = list(DEPT_POSITIONS.get(dept, []))
     if dept == "Зал":
-        positions += _DEPT_POSITIONS.get("МОП", [])
+        positions += DEPT_POSITIONS.get("МОП", [])
     return positions
 
 

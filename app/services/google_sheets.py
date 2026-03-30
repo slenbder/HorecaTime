@@ -8,7 +8,10 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
-from config import GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, TECH_SHEET_NAME
+from config import (
+    GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, TECH_SHEET_NAME,
+    POSITION_TO_SECTION, DEPARTMENT_TO_HEADER, SIMPLE_H_POSITIONS,
+)
 
 logger = logging.getLogger("google_api")
 
@@ -34,32 +37,6 @@ MONTH_NAMES_RU = {
     10: "Октябрь",
     11: "Ноябрь",
     12: "Декабрь",
-}
-
-POSITION_TO_SECTION = {
-    "Су-шеф": "Руководящий состав",
-    "Горячий цех": "Горячий цех",
-    "Холодный цех": "Холодный цех",
-    "Кондитерский цех": "Кондитерский цех",
-    "Заготовочный цех": "Заготовочный цех",
-    "Коренной цех": "Коренной цех",
-    "Грузчик": "Дополнительные сотрудники",
-    "Закупщик": "Дополнительные сотрудники",
-    "Клининг": "Клининг",
-    "Котломой": "Котломой",
-    "Бармен": "Бармены",
-    "Барбэк": "Барбэки",
-    "Официант": "Официанты",
-    "Раннер": "Раннеры",
-    "Хостесс": "Хостесс",
-    "Менеджер": "Менеджеры",
-}
-
-DEPARTMENT_TO_HEADER = {
-    "Кухня": "КУХНЯ",
-    "Бар": "БАР",
-    "Зал": "ЗАЛ",
-    "МОП": "Моп",
 }
 
 class GoogleSheetsClient:
@@ -478,14 +455,9 @@ class GoogleSheetsClient:
             )
 
         # Вставить итоговые формулы в S, AJ, AK новой строки
-        _SIMPLE_H_POSITIONS = {
-            "Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
-            "Заготовочный цех", "Коренной цех", "Хостесс", "Менеджер",
-            "Грузчик", "Закупщик", "Клининг", "Котломой",
-        }
         try:
             r = new_row
-            if position in _SIMPLE_H_POSITIONS:
+            if position in SIMPLE_H_POSITIONS:
                 formula_s = f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IFERROR(VALUE(D{r}:R{r});0)))'
                 formula_aj = f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IFERROR(VALUE(T{r}:AI{r});0)))'
                 formula_ak = f'=S{r}+AJ{r}'

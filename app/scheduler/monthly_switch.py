@@ -5,18 +5,12 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 
-from config import SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
+from config import SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH, SIMPLE_H_POSITIONS
 from app.services.google_sheets import MONTH_NAMES_RU
 from app.db.models import get_all_users, snapshot_rates, snapshot_user_rates_history
 
 logger = logging.getLogger("app")
 error_logger = logging.getLogger("errors")
-
-_SIMPLE_H_POSITIONS = {
-    "Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
-    "Заготовочный цех", "Коренной цех", "Хостесс", "Менеджер",
-    "Грузчик", "Закупщик", "Клининг", "Котломой",
-}
 
 
 def get_next_sheet_name() -> tuple[str, int, int]:
@@ -70,7 +64,7 @@ def _find_last_month_sheet(spreadsheet) -> tuple[str, int, int]:
 
 def _make_formulas(r: int, position: str) -> tuple[str, str, str]:
     """Returns (formula_s, formula_aj, formula_ak) for the given row number."""
-    if position in _SIMPLE_H_POSITIONS:
+    if position in SIMPLE_H_POSITIONS:
         formula_s = f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IFERROR(VALUE(D{r}:R{r});0)))'
         formula_aj = f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IFERROR(VALUE(T{r}:AI{r});0)))'
         formula_ak = f'=S{r}+AJ{r}'

@@ -35,6 +35,10 @@ from config import (
     DEVELOPER_ID,
     DB_PATH,
     SHEET_URL,
+    VALID_POSITIONS,
+    VALID_DOP_POSITIONS,
+    POSITION_TO_SECTION,
+    DEPT_POSITIONS,
 )
 
 from app.utils.text_utils import make_mention
@@ -42,16 +46,6 @@ from app.utils.text_utils import make_mention
 auth_router = Router()
 logger = logging.getLogger(__name__)
 
-
-VALID_POSITIONS: dict[str, list[str]] = {
-    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
-    "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
-               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "Доп."],
-    "МОП":   ["Клининг", "Котломой"],
-}
-
-VALID_DOP_POSITIONS = ["Грузчик", "Закупщик"]
 
 def mask_email(email: str) -> str:
     if "@" not in email:
@@ -65,28 +59,6 @@ def _is_valid_gmail(email: str) -> bool:
     pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
     return bool(re.match(pattern, email.strip().lower()))
 
-
-POSITION_TO_SECTION: dict[str, str] = {
-    "Су-шеф": "Руководящий состав",
-    "Горячий цех": "Горячий цех",
-    "Холодный цех": "Холодный цех",
-    "Кондитерский цех": "Кондитерский цех",
-    "Заготовочный цех": "Заготовочный цех",
-    "Коренной цех": "Коренной цех",
-    "Грузчик": "Дополнительные сотрудники",
-    "Закупщик": "Дополнительные сотрудники",
-    "Клининг": "Клининг",
-    "Котломой": "Котломой",
-    "Бармен": "Бармены",
-    "Барбэк": "Барбэки",
-    "Менеджер": "Менеджеры",
-    "Официант": "Официанты",
-    "Раннер": "Раннеры",
-    "Хостесс": "Хостесс",
-    "Администратор зала": "Зал",
-    "Администратор бара": "Бар",
-    "Администратор кухни": "Кухня",
-}
 
 POSITION_KEYBOARDS = {
     "Зал":   hall_positions_keyboard,
@@ -263,8 +235,7 @@ async def process_position(message: Message, state: FSMContext):
 
     logger.info(f"Пользователь {message.from_user.id} выбрал позицию: {position}")
 
-    if position == "Шеф/Су-шеф":
-        await state.update_data(position="Су-шеф")
+    if position == "Руководящий состав":
         await message.answer(
             "Введите вашу должность (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):",
             reply_markup=ReplyKeyboardRemove(),
@@ -305,7 +276,7 @@ async def process_custom_title_input(message: Message, state: FSMContext):
     if approved_tg_id is not None:
         full_name = data.get("approved_full_name")
         department = data.get("approved_dept")
-        position = data.get("approved_position", "Су-шеф")
+        position = data.get("approved_position", "Руководящий состав")
         telegram_id = int(approved_tg_id)
 
         if not full_name or not department:
@@ -338,12 +309,7 @@ async def process_custom_title_input(message: Message, state: FSMContext):
             await state.clear()
             return
 
-        _KNOWN_POSITIONS = {
-            "Официант", "Раннер", "Хостесс", "Менеджер", "Бармен", "Барбэк",
-            "Горячий цех", "Холодный цех", "Кондитерский цех", "Заготовочный цех",
-            "Коренной цех", "Грузчик", "Закупщик", "Клининг", "Котломой",
-        }
-        normalized_position = position if position in _KNOWN_POSITIONS else "Су-шеф"
+        normalized_position = position if position in POSITION_TO_SECTION else "Руководящий состав"
         try:
             rate = await get_rate(DB_PATH, normalized_position)
             base_rate = rate["base_rate"] if rate else 250.0
@@ -392,7 +358,7 @@ async def process_custom_title_input(message: Message, state: FSMContext):
 
     # --- Поток регистрации пользователя ---
     logger.info(
-        "Пользователь %s ввёл должность для Шеф/Су-шеф: '%s'",
+        "Пользователь %s ввёл должность для Руководящий состав: '%s'",
         message.from_user.id, custom_title,
     )
     await state.update_data(custom_title=custom_title)
@@ -476,7 +442,7 @@ async def process_fio(message: Message, state: FSMContext):
     if position in DOP_POSITIONS:
         position_display = "Дополнительные сотрудники"
         display_title = position
-    elif position == "Су-шеф" and custom_title:
+    elif position == "Руководящий состав" and custom_title:
         position_display = "Руководящий состав"
         display_title = custom_title
     elif department == "Кухня":
@@ -731,8 +697,8 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
         )
 
-        # Шеф/Су-шеф: запрашиваем должность у администратора через FSM
-        if position == "Су-шеф":
+        # Руководящий состав: запрашиваем должность у администратора через FSM
+        if position == "Руководящий состав":
             await state.update_data(
                 pending_custom_title=True,
                 approved_tg_id=user_tg_id,
@@ -747,7 +713,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
                 reply_markup=None,
             )
             await callback.message.answer(
-                f"Сотрудник {fio} — Шеф/Су-шеф.\n"
+                f"Сотрудник {fio} — Руководящий состав.\n"
                 "Введите должность сотрудника (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):"
             )
             await callback.answer()
@@ -781,12 +747,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             return
 
         # Устанавливаем персональную ставку из шаблона
-        _KNOWN_POSITIONS = {
-            "Официант", "Раннер", "Хостесс", "Менеджер", "Бармен", "Барбэк",
-            "Горячий цех", "Холодный цех", "Кондитерский цех", "Заготовочный цех",
-            "Коренной цех", "Грузчик", "Закупщик", "Клининг", "Котломой",
-        }
-        normalized_position = position if position in _KNOWN_POSITIONS else "Су-шеф"
+        normalized_position = position if position in POSITION_TO_SECTION else "Руководящий состав"
         try:
             rate = await get_rate(DB_PATH, normalized_position)
             base_rate = rate["base_rate"] if rate else 250.0

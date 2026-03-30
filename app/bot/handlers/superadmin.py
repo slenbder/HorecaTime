@@ -18,7 +18,7 @@ from app.db.models import get_all_users_rates, set_user_rate, get_all_users, get
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.roles_cache import RolesCacheService
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, DEPT_POSITIONS, POSITIONS_WITH_EXTRA
 
 _sheets_client = GoogleSheetsClient()
 
@@ -29,17 +29,11 @@ logger = logging.getLogger(__name__)
 def _is_allowed(tg_id: int) -> bool:
     return tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID
 
-_POSITIONS_WITH_EXTRA = {"Бармен", "Барбэк", "Раннер"}
+_POSITIONS_WITH_EXTRA = POSITIONS_WITH_EXTRA
 
 _DEPT_EMOJIS = {"Зал": "🍽", "Бар": "🍺", "Кухня": "🔪", "МОП": "🧹"}
 
-_DEPT_POSITIONS_ORDER: dict[str, list[str]] = {
-    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
-    "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
-               "Заготовочный цех", "Коренной цех", "Грузчик", "Закупщик"],
-    "МОП":   ["Клининг", "Котломой"],
-}
+_DEPT_POSITIONS_ORDER = DEPT_POSITIONS
 
 
 def _fmt_money(v: float) -> str:
@@ -390,13 +384,7 @@ async def cb_switch_month_cancel(callback: CallbackQuery):
 
 # --- /promote ---
 
-_PROMOTE_VALID_POSITIONS: dict[str, list[str]] = {
-    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
-    "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
-               "Кондитерский цех", "Заготовочный цех", "Коренной цех", "Доп."],
-    "МОП":   ["Клининг", "Котломой"],
-}
+_PROMOTE_VALID_POSITIONS = DEPT_POSITIONS
 
 _DEPT_TO_ADMIN_ROLE: dict[str, str] = {
     "Зал":   "admin_hall",
@@ -427,25 +415,11 @@ def _promote_positions_keyboard(dept: str) -> InlineKeyboardMarkup:
 
 async def _get_users_for_promote(dept: str, position: str) -> list[dict]:
     """Возвращает сотрудников (role=user) в заданном отделе и на заданной позиции."""
-    if position == "Шеф/Су-шеф":
-        query = (
-            "SELECT telegram_id, full_name FROM users "
-            "WHERE role = 'user' AND department = ? AND position = ?"
-        )
-        params: tuple = (dept, "Су-шеф")
-    elif position == "Доп.":
-        query = (
-            "SELECT telegram_id, full_name FROM users "
-            "WHERE role = 'user' AND department = ? "
-            "AND position IN ('Грузчик', 'Закупщик')"
-        )
-        params = (dept,)
-    else:
-        query = (
-            "SELECT telegram_id, full_name FROM users "
-            "WHERE role = 'user' AND department = ? AND position = ?"
-        )
-        params = (dept, position)
+    query = (
+        "SELECT telegram_id, full_name FROM users "
+        "WHERE role = 'user' AND department = ? AND position = ?"
+    )
+    params: tuple = (dept, position)
 
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(query, params) as cursor:

@@ -20,7 +20,7 @@ from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift, check_overlap, _parse_time, round_to_half
-from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
+from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS, SIMPLE_H_POSITIONS, BAR_POSITIONS
 from app.utils.text_utils import make_mention
 
 userhours_router = Router()
@@ -57,22 +57,6 @@ def _date_str(day: int, month: int, year: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Константы позиций
-# ---------------------------------------------------------------------------
-
-KITCHEN_POSITIONS = {
-    "Су-шеф", "Горячий цех", "Холодный цех",
-    "Кондитерский цех", "Заготовочный цех", "Коренной цех",
-    "Грузчик", "Закупщик",
-}
-HALL_SIMPLE_POSITIONS = {"Хостесс", "Менеджер"}
-MOP_POSITIONS = {"Клининг", "Котломой"}
-
-# Позиции с механикой «только H, одна ставка, несколько смен одним сообщением»
-SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS | MOP_POSITIONS
-
-BAR_POSITIONS = {"Бармен", "Барбэк"}
-
 
 def _shift_example() -> str:
     """Возвращает актуальный пример смены на основе текущего времени МСК."""

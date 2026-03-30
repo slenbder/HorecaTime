@@ -9,7 +9,7 @@ from aiogram.types import Message, BufferedInputFile
 from app.db.models import get_user, get_rate_for_period, get_user_rate, get_user_rate_history
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
-from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL
+from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL, BAR_POSITIONS
 
 reports_router = Router()
 logger = logging.getLogger(__name__)
@@ -30,9 +30,6 @@ except Exception:
     pdf_service = None
 
 _ALLOWED_ROLES = {"user", "admin_hall", "admin_bar", "admin_kitchen", "superadmin", "developer"}
-
-# Позиции, у которых AH = тусовочные часы с повышенной ставкой
-_BAR_POSITIONS = {"Бармен", "Барбэк"}
 
 
 def _get_current_sheet_name() -> str:
@@ -93,11 +90,11 @@ def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None
         "📊 Первая половина месяца (1–15)",
         f"Отработано: {_fmt(h)} ч",
     ]
-    if position in _BAR_POSITIONS and ah > 0:
+    if position in BAR_POSITIONS and ah > 0:
         lines.append(f"Доп. часы: {_fmt(ah)} ч")
 
     if rate is None:
-        if ah > 0 and position not in _BAR_POSITIONS:
+        if ah > 0 and position not in BAR_POSITIONS:
             lines.append(f"Доп. часы: {_fmt(ah)} ч")
         lines.append("(ставка не установлена — обратитесь к администратору)")
         return lines
@@ -108,7 +105,7 @@ def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None
     if position == "Раннер":
         h_weekend = data.get("h_weekend_first", 0.0)
         lines += _build_runner_earnings_lines(h, ah, h_weekend, base, extra or base)
-    elif position in _BAR_POSITIONS:
+    elif position in BAR_POSITIONS:
         earnings_h = h * base
         earnings_ah = ah * (extra or base)
         total = earnings_h + earnings_ah
@@ -143,7 +140,7 @@ def _build_hours_second_lines(data: dict, position: str | None, rate: dict | Non
         lines.append("(ставка не установлена — обратитесь к администратору)")
         lines.append("")
         lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
-        if ah_tot > 0 and position not in _BAR_POSITIONS:
+        if ah_tot > 0 and position not in BAR_POSITIONS:
             lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
         return lines
 
@@ -159,7 +156,7 @@ def _build_hours_second_lines(data: dict, position: str | None, rate: dict | Non
         if ah_tot > 0:
             lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
         lines += _build_runner_earnings_lines(h_tot, ah_tot, h_weekend_total, base, extra or base)
-    elif position in _BAR_POSITIONS:
+    elif position in BAR_POSITIONS:
         earnings_second = h2 * base + ah2 * (extra or base)
         earnings_total = h_tot * base + ah_tot * (extra or base)
         lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")

@@ -59,6 +59,14 @@ VALID_POSITIONS: dict[str, list[str]] = {
 
 VALID_DOP_POSITIONS = ["Грузчик", "Закупщик"]
 
+def mask_email(email: str) -> str:
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    visible = local[:2] if len(local) >= 2 else local[:1]
+    return f"{visible}***@{domain}"
+
+
 def _is_valid_gmail(email: str) -> bool:
     pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
     return bool(re.match(pattern, email.strip().lower()))
@@ -963,7 +971,7 @@ async def process_promote_email(message: Message, state: FSMContext):
     username = message.from_user.username
     mention = make_mention(username, full_name)
 
-    logger.info("process_promote_email: пользователь %s ввёл email %s, отдел %s", tg_id, email, dept)
+    logger.info("process_promote_email: пользователь %s ввёл email %s, отдел %s", tg_id, mask_email(email), dept)
 
     notify_text = (
         f"📧 Новый администратор {mention} ввёл email для доступа к таблице:\n"

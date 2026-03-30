@@ -682,6 +682,11 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
+    caller_id = callback.from_user.id
+    if caller_id not in ADMIN_HALL_IDS and caller_id not in SUPERADMIN_IDS and caller_id != DEVELOPER_ID:
+        logger.warning("Unauthorized process_approve attempt from user_id=%s", caller_id)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     try:
         original_text = callback.message.text or ""
         if "✅" in original_text or "❌" in original_text:
@@ -838,6 +843,11 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
 @auth_router.callback_query(F.data.startswith("reject_"))
 async def process_reject(callback: CallbackQuery):
     """Обработка нажатия кнопки 'Отклонить'"""
+    caller_id = callback.from_user.id
+    if caller_id not in ADMIN_HALL_IDS and caller_id not in SUPERADMIN_IDS and caller_id != DEVELOPER_ID:
+        logger.warning("Unauthorized process_reject attempt from user_id=%s", caller_id)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     try:
         original_text = callback.message.text or ""
         if "✅" in original_text or "❌" in original_text:

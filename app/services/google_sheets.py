@@ -414,7 +414,7 @@ class GoogleSheetsClient:
         month_ws.insert_row(
             [full_name, str(telegram_id), display_position],
             index=new_row,
-            value_input_option="USER_ENTERED",
+            value_input_option="RAW",
         )
 
         # Явно применяем границы для новой строки
@@ -523,7 +523,7 @@ class GoogleSheetsClient:
                     {"range": f"AM{r}", "values": [[0]]},
                     {"range": f"AN{r}", "values": [[0]]},
                 ]
-            month_ws.batch_update(updates, value_input_option="USER_ENTERED")
+            month_ws.batch_update(updates, value_input_option="RAW")
             logger.info(
                 "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s, runner=%s)",
                 r, month_ws.title, position in _SIMPLE_H_POSITIONS, position == "Раннер",

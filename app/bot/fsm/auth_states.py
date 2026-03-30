@@ -24,6 +24,8 @@ class AuthStates(StatesGroup):
 
 
 class SetRateStates(StatesGroup):
-    waiting_set_rate_position = State()  # выбор позиции через inline-кнопки
-    waiting_set_rate_base = State()      # ввод базовой ставки
-    waiting_set_rate_extra = State()     # ввод повышенной ставки (только для позиций с extra_rate)
+    waiting_set_rate_dept = State()      # /set_rate_all: выбор отдела
+    waiting_set_rate_position = State()  # /set_rate_all: выбор позиции
+    waiting_set_rate_employee = State()  # /set_rate_all: выбор сотрудника
+    waiting_set_rate_base = State()      # /set_rate_all: ввод базовой ставки
+    waiting_set_rate_extra = State()     # /set_rate_all: ввод повышенной ставки (Раннер/Бармен/Барбэк)

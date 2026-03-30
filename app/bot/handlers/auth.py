@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 
@@ -24,7 +25,7 @@ from app.bot.keyboards.common import (
 )
 
 from app.bot.commands import set_commands_for_role
-from app.db.models import get_user, delete_user, get_users_by_role
+from app.db.models import get_user, delete_user, get_users_by_role, get_rate, set_user_rate
 from app.services.google_sheets import GoogleSheetsClient
 from config import (
     SUPERADMIN_IDS,
@@ -42,9 +43,10 @@ logger = logging.getLogger(__name__)
 
 def make_mention(username: str | None, full_name: str) -> str:
     """Возвращает кликабельный ник или ФИО если ника нет."""
+    escaped = html.escape(full_name)
     if username:
-        return f'<a href="https://t.me/{username}">{full_name}</a>'
-    return full_name
+        return f'<a href="https://t.me/{username}">{escaped}</a>'
+    return escaped
 
 
 VALID_POSITIONS: dict[str, list[str]] = {
@@ -61,9 +63,6 @@ def _is_valid_gmail(email: str) -> bool:
     pattern = r'^[a-zA-Z0-9._%+-]+@gmail\.com$'
     return bool(re.match(pattern, email.strip().lower()))
 
-
-# Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
-_pending_custom_titles: dict[int, str] = {}
 
 POSITION_TO_SECTION: dict[str, str] = {
     "Су-шеф": "Руководящий состав",
@@ -289,8 +288,107 @@ async def process_position(message: Message, state: FSMContext):
 
 
 @auth_router.message(AuthStates.waiting_kitchen_title)
-async def process_kitchen_title(message: Message, state: FSMContext):
+async def process_custom_title_input(message: Message, state: FSMContext):
     custom_title = (message.text or "").strip()
+
+    # Валидация длины
+    if not custom_title or len(custom_title) < 2 or len(custom_title) > 50:
+        await message.answer("Должность должна быть от 2 до 50 символов. Попробуйте снова.")
+        return
+
+    data = await state.get_data()
+    approved_tg_id = data.get("approved_tg_id")
+
+    # --- Поток апрува администратором (FSM данные содержат approved_tg_id) ---
+    if approved_tg_id is not None:
+        full_name = data.get("approved_full_name")
+        department = data.get("approved_dept")
+        position = data.get("approved_position", "Су-шеф")
+        telegram_id = int(approved_tg_id)
+
+        if not full_name or not department:
+            logger.warning(
+                "process_custom_title_input: FSM данные для апрува неполны (tg_id=%s)", telegram_id
+            )
+            await message.answer("Произошла ошибка, обратитесь к администратору")
+            await state.clear()
+            return
+
+        logger.info(
+            "custom_title '%s' введён в FSM для %s", custom_title, telegram_id
+        )
+
+        if sheets_client is None:
+            await message.answer("Ошибка подключения к таблице.")
+            await state.clear()
+            return
+
+        try:
+            inserted = sheets_client.ensure_user_in_current_month_hours(
+                telegram_id, custom_title=custom_title
+            )
+            logger.info(
+                "Синхронизация в график завершена для %s, inserted=%s", telegram_id, inserted
+            )
+        except Exception:
+            logger.exception("Не удалось добавить %s в график", telegram_id)
+            await message.answer("⚠️ ОДОБРЕНО, НО НЕ ДОБАВЛЕН В ГРАФИК. Проверь лист месяца.")
+            await state.clear()
+            return
+
+        _KNOWN_POSITIONS = {
+            "Официант", "Раннер", "Хостесс", "Менеджер", "Бармен", "Барбэк",
+            "Горячий цех", "Холодный цех", "Кондитерский цех", "Заготовочный цех",
+            "Коренной цех", "Грузчик", "Закупщик", "Клининг", "Котломой",
+        }
+        normalized_position = position if position in _KNOWN_POSITIONS else "Су-шеф"
+        try:
+            rate = await get_rate(DB_PATH, normalized_position)
+            base_rate = rate["base_rate"] if rate else 250.0
+            extra_rate = rate["extra_rate"] if rate else None
+            await set_user_rate(DB_PATH, telegram_id, base_rate, extra_rate)
+            logger.info(
+                "Установлена ставка для %s: %s/%s р/ч", full_name, base_rate, extra_rate
+            )
+        except Exception:
+            logger.error(
+                "Не удалось установить ставку для %s (%s)", full_name, telegram_id, exc_info=True
+            )
+
+        RolesCacheService.update_user_role(
+            telegram_id=telegram_id,
+            full_name=full_name,
+            role="user",
+            department=department,
+            position=position,
+        )
+        logger.info(
+            "Пользователь %s добавлен в кеш ролей: %s, %s", telegram_id, department, position
+        )
+
+        try:
+            await message.bot.send_message(
+                chat_id=telegram_id,
+                text="✅ Твоя заявка одобрена!\n\nТеперь ты можешь вносить рабочие часы и смотреть отчёты.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            if SHEET_URL:
+                await message.bot.send_message(
+                    chat_id=telegram_id,
+                    text=f"📊 Ссылка на график:\n{SHEET_URL}",
+                )
+        except Exception as e:
+            logger.error("Не удалось уведомить пользователя %s: %s", telegram_id, e)
+
+        cached = RolesCacheService.get_user_role(telegram_id)
+        if cached and cached.get("role") and cached["role"] != "guest":
+            await set_commands_for_role(message.bot, telegram_id, cached["role"])
+
+        await message.answer(f"✅ Пользователь {full_name} одобрен! Должность: {custom_title}")
+        await state.clear()
+        return
+
+    # --- Поток регистрации пользователя ---
     logger.info(
         "Пользователь %s ввёл должность для Шеф/Су-шеф: '%s'",
         message.from_user.id, custom_title,
@@ -394,10 +492,10 @@ async def process_fio(message: Message, state: FSMContext):
     # 2. Формируем текст заявки с inline-кнопками
     text = (
         "📝 <b>Новая заявка на доступ к боту:</b>\n\n"
-        f"👤 <b>ФИО:</b> {fio}\n"
+        f"👤 <b>ФИО:</b> {html.escape(fio)}\n"
         f"🏢 <b>Отдел:</b> {department}\n"
         f"💼 <b>Позиция:</b> {position_display}\n"
-        f"🔧 <b>Должность:</b> {display_title}\n"
+        f"🔧 <b>Должность:</b> {html.escape(display_title)}\n"
         f"🆔 Telegram ID: <code>{tg_id}</code>\n"
         f"📱 Ник: {mention}\n"
         f"📋 Строка в Техлисте: {row_index}\n\n"
@@ -467,8 +565,6 @@ async def process_fio(message: Message, state: FSMContext):
         "После одобрения ты сможешь вносить рабочие часы и смотреть отчёты."
     )
     logger.info(f"Регистрация пользователя {tg_id} завершена успешно")
-    if custom_title:
-        _pending_custom_titles[tg_id] = custom_title
     await state.clear()
 
 
@@ -577,7 +673,7 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
 
 
 @auth_router.callback_query(F.data.startswith("approve_"))
-async def process_approve(callback: CallbackQuery):
+async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
     try:
         original_text = callback.message.text or ""
@@ -621,11 +717,32 @@ async def process_approve(callback: CallbackQuery):
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
         )
 
+        # Шеф/Су-шеф: запрашиваем должность у администратора через FSM
+        if position == "Су-шеф":
+            await state.update_data(
+                pending_custom_title=True,
+                approved_tg_id=user_tg_id,
+                approved_full_name=fio,
+                approved_dept=department,
+                approved_position=position,
+            )
+            await state.set_state(AuthStates.waiting_kitchen_title)
+            logger.info("custom_title сохранён в FSM для %s", user_tg_id)
+            await callback.message.edit_text(
+                text=original_text + f"\n\n⏳ Одобрено. Ожидаю ввод должности от администратора {callback.from_user.full_name}...",
+                reply_markup=None,
+            )
+            await callback.message.answer(
+                f"Сотрудник {fio} — Шеф/Су-шеф.\n"
+                "Введите должность сотрудника (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):"
+            )
+            await callback.answer()
+            return
+
         # Сразу добавляем пользователя в график текущего месяца
-        pending_custom_title = _pending_custom_titles.pop(user_tg_id, None)
         try:
             inserted = sheets_client.ensure_user_in_current_month_hours(
-                user_tg_id, custom_title=pending_custom_title
+                user_tg_id, custom_title=None
             )
             logger.info(
                 "Синхронизация в график завершена для %s, inserted=%s",
@@ -648,6 +765,22 @@ async def process_approve(callback: CallbackQuery):
                 show_alert=True,
             )
             return
+
+        # Устанавливаем персональную ставку из шаблона
+        _KNOWN_POSITIONS = {
+            "Официант", "Раннер", "Хостесс", "Менеджер", "Бармен", "Барбэк",
+            "Горячий цех", "Холодный цех", "Кондитерский цех", "Заготовочный цех",
+            "Коренной цех", "Грузчик", "Закупщик", "Клининг", "Котломой",
+        }
+        normalized_position = position if position in _KNOWN_POSITIONS else "Су-шеф"
+        try:
+            rate = await get_rate(DB_PATH, normalized_position)
+            base_rate = rate["base_rate"] if rate else 250.0
+            extra_rate = rate["extra_rate"] if rate else None
+            await set_user_rate(DB_PATH, user_tg_id, base_rate, extra_rate)
+            logger.info("Установлена ставка для %s: %s/%s р/ч", fio, base_rate, extra_rate)
+        except Exception:
+            logger.error("Не удалось установить ставку для %s (%s)", fio, user_tg_id, exc_info=True)
 
         # Записываем в кеш ролей
         RolesCacheService.update_user_role(
@@ -681,7 +814,7 @@ async def process_approve(callback: CallbackQuery):
         # Обновляем сообщение админа
         await callback.message.edit_text(
             text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
-            f"\n✅ Одобрено администратором {callback.from_user.full_name}",
+            f"\n✅ Одобрено администратором {html.escape(callback.from_user.full_name)}",
             parse_mode="HTML",
             reply_markup=None,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -718,7 +851,6 @@ async def process_reject(callback: CallbackQuery):
             return
 
         logger.info(f"Админ {callback.from_user.id} отклонил пользователя {user_tg_id}")
-        _pending_custom_titles.pop(user_tg_id, None)
 
         # Уведомляем пользователя
         try:
@@ -731,7 +863,7 @@ async def process_reject(callback: CallbackQuery):
 
         # Обновляем сообщение админа
         await callback.message.edit_text(
-            text=original_text + f"\n\n❌ Отклонено администратором {callback.from_user.full_name}",
+            text=original_text + f"\n\n❌ Отклонено администратором {html.escape(callback.from_user.full_name)}",
             parse_mode="HTML",
             reply_markup=None,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -767,17 +899,18 @@ async def contact_dev_send(message: Message, state: FSMContext):
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     username = message.from_user.username
+    escaped_full_name = html.escape(full_name)
     if username:
         user_mention = f'<a href="https://t.me/{username}">@{username}</a>'
     else:
-        user_mention = full_name
+        user_mention = escaped_full_name
 
     logger.info("Пользователь %s (%s) отправляет сообщение разработчику", tg_id, full_name)
 
     dev_text = (
         f"📨 Сообщение от пользователя\n\n"
-        f"👤 {user_mention} — {full_name}\n\n"
-        f"{text}"
+        f"👤 {user_mention} — {escaped_full_name}\n\n"
+        f"{html.escape(text)}"
     )
 
     try:
@@ -817,7 +950,7 @@ async def process_promote_email(message: Message, state: FSMContext):
 
     notify_text = (
         f"📧 Новый администратор {mention} ввёл email для доступа к таблице:\n"
-        f"{email}\n\n"
+        f"{html.escape(email)}\n\n"
         f"Добавьте его как редактора в Google Sheets."
     )
     for sa_id in SUPERADMIN_IDS:

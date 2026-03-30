@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -39,9 +40,10 @@ except Exception:
 
 def make_mention(username: str | None, full_name: str) -> str:
     """Возвращает кликабельный ник или ФИО если ника нет."""
+    escaped = html.escape(full_name)
     if username:
-        return f'<a href="https://t.me/{username}">{full_name}</a>'
-    return full_name
+        return f'<a href="https://t.me/{username}">{escaped}</a>'
+    return escaped
 
 
 def _fmt_h(v: float) -> str:
@@ -403,18 +405,30 @@ async def _delayed_process_waiter(mgid: str) -> None:
     message = ctx["message"]
     state = ctx["state"]
     caption = (ctx["caption"] or "").strip()
+    tg_id = message.from_user.id
 
-    logger.info(
-        "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
-        mgid, len(photo_ids), caption,
-    )
+    try:
+        logger.info(
+            "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
+            mgid, len(photo_ids), caption,
+        )
 
-    result = parse_shift(caption, "Официант")
-    if result is None:
-        await message.answer("❌ Не удалось распознать формат смены.")
-        return
+        result = parse_shift(caption, "Официант")
+        if result is None:
+            await message.answer("❌ Не удалось распознать формат смены.")
+            return
 
-    await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)
+        await _send_waiter_report(message, state, tg_id, result, photo_ids)
+    except Exception:
+        logger.exception("Ошибка обработки медиагруппы для user %s", tg_id)
+        await state.clear()
+        try:
+            await message.bot.send_message(
+                tg_id,
+                "Произошла ошибка при обработке фотографий. Попробуйте отправить заново.",
+            )
+        except Exception:
+            pass  # если не удалось отправить сообщение, хотя бы FSM очистили
 
 
 async def _send_waiter_report(
@@ -795,7 +809,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}\n"
             f"🔢 Доп. часы = {_fmt_h(ah)} ч\n"
-            f"💬 {comment}"
+            f"💬 {html.escape(comment)}"
         )
     else:
         admin_text = (

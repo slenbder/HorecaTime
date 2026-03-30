@@ -6,7 +6,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, BufferedInputFile
 
-from app.db.models import get_user, get_rate, get_rate_for_period
+from app.db.models import get_user, get_rate_for_period, get_user_rate, get_user_rate_history
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
 from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL
@@ -198,9 +198,9 @@ async def cmd_hours_first(message: Message):
         return
 
     position = user_data.get("position") or None
-    if not position:
-        logger.warning("hours_first: у пользователя %s не установлена позиция", tg_id)
-    rate = await get_rate(DB_PATH, position) if position else None
+    rate = await get_user_rate(DB_PATH, tg_id)
+    if rate is None:
+        logger.warning("hours_first: ставка не найдена для %s", tg_id)
 
     lines = _build_hours_first_lines(data, position, rate)
     await message.answer("\n".join(lines))
@@ -225,9 +225,9 @@ async def cmd_hours_second(message: Message):
         return
 
     position = user_data.get("position") or None
-    if not position:
-        logger.warning("hours_second: у пользователя %s не установлена позиция", tg_id)
-    rate = await get_rate(DB_PATH, position) if position else None
+    rate = await get_user_rate(DB_PATH, tg_id)
+    if rate is None:
+        logger.warning("hours_second: ставка не найдена для %s", tg_id)
 
     lines = _build_hours_second_lines(data, position, rate)
     await message.answer("\n".join(lines))
@@ -253,12 +253,24 @@ async def cmd_hours_last(message: Message):
         return
 
     position = user_data.get("position") or None
-    if not position:
-        logger.warning("hours_last: у пользователя %s не установлена позиция", tg_id)
     now = datetime.now(ZoneInfo("Europe/Moscow"))
     prev_month = now.month - 1 if now.month > 1 else 12
     prev_year = now.year if now.month > 1 else now.year - 1
-    rate = await get_rate_for_period(DB_PATH, position, prev_month, prev_year) if position else None
+
+    rate = await get_user_rate_history(DB_PATH, tg_id, prev_month, prev_year)
+    if rate is not None:
+        logger.info("hours_last: ставка из user_rates_history для %s", tg_id)
+    else:
+        logger.info("hours_last: user_rates_history не найдена для %s, пробуем rates_history", tg_id)
+        rate = await get_rate_for_period(DB_PATH, position, prev_month, prev_year) if position else None
+        if rate is not None:
+            logger.info("hours_last: ставка из rates_history (legacy) для %s", tg_id)
+        else:
+            rate = await get_user_rate(DB_PATH, tg_id)
+            if rate is not None:
+                logger.info("hours_last: ставка из текущей user_rates для %s", tg_id)
+            else:
+                logger.warning("hours_last: ставка не найдена для %s", tg_id)
 
     lines = _build_hours_second_lines(data, position, rate, sheet_label=sheet_name)
     await message.answer("\n".join(lines))

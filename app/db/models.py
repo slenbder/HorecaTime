@@ -82,6 +82,24 @@ def init_database():
                 PRIMARY KEY (position, month, year)
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_rates (
+                telegram_id INTEGER PRIMARY KEY REFERENCES users(telegram_id),
+                base_rate   REAL NOT NULL,
+                extra_rate  REAL,
+                updated_at  TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_rates_history (
+                telegram_id INTEGER NOT NULL,
+                base_rate   REAL NOT NULL,
+                extra_rate  REAL,
+                month       INTEGER NOT NULL,
+                year        INTEGER NOT NULL,
+                PRIMARY KEY (telegram_id, month, year)
+            )
+        ''')
         # Вставить дефолтные ставки, если таблица пустая
         cursor.execute('SELECT COUNT(*) FROM rates')
         if cursor.fetchone()[0] == 0:
@@ -308,3 +326,128 @@ async def update_rate(db_path: str, position: str, base_rate: float,
             (position, base_rate, extra_rate, now_str),
         )
         await db.commit()
+
+
+# --- Персональные ставки (async, aiosqlite) ---
+
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+
+
+async def get_user_rate(db_path: str, telegram_id: int) -> Optional[Dict]:
+    """
+    Возвращает персональную ставку сотрудника: {"telegram_id", "base_rate", "extra_rate"} или None.
+    """
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            'SELECT telegram_id, base_rate, extra_rate FROM user_rates WHERE telegram_id = ?',
+            (telegram_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {"telegram_id": row["telegram_id"], "base_rate": row["base_rate"], "extra_rate": row["extra_rate"]}
+
+
+async def set_user_rate(db_path: str, telegram_id: int, base_rate: float,
+                        extra_rate: Optional[float] = None) -> None:
+    """
+    Устанавливает персональную ставку сотрудника (INSERT или UPDATE при конфликте).
+    """
+    now_str = datetime.now(MOSCOW_TZ).isoformat()
+    logger.info("set_user_rate: telegram_id=%s base_rate=%s extra_rate=%s", telegram_id, base_rate, extra_rate)
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            'INSERT INTO user_rates (telegram_id, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?) '
+            'ON CONFLICT(telegram_id) DO UPDATE SET base_rate=excluded.base_rate, '
+            'extra_rate=excluded.extra_rate, updated_at=excluded.updated_at',
+            (telegram_id, base_rate, extra_rate, now_str),
+        )
+        await db.commit()
+
+
+async def get_user_rate_history(db_path: str, telegram_id: int, month: int, year: int) -> Optional[Dict]:
+    """
+    Читает персональную ставку из user_rates_history для указанного периода.
+    Возвращает {"telegram_id", "base_rate", "extra_rate"} или None.
+    """
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            'SELECT telegram_id, base_rate, extra_rate FROM user_rates_history '
+            'WHERE telegram_id = ? AND month = ? AND year = ?',
+            (telegram_id, month, year),
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {"telegram_id": row["telegram_id"], "base_rate": row["base_rate"], "extra_rate": row["extra_rate"]}
+
+
+async def snapshot_user_rates_history(db_path: str, month: int, year: int) -> None:
+    """
+    Копирует все записи из user_rates в user_rates_history для указанного месяца/года.
+    Существующие записи не перезаписываются (INSERT OR IGNORE).
+    """
+    logger.info("snapshot_user_rates_history: сохранение снимка персональных ставок для %d/%d", month, year)
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute('SELECT telegram_id, base_rate, extra_rate FROM user_rates') as cursor:
+            rows = await cursor.fetchall()
+        await db.executemany(
+            'INSERT OR IGNORE INTO user_rates_history (telegram_id, base_rate, extra_rate, month, year) '
+            'VALUES (?, ?, ?, ?, ?)',
+            [(r[0], r[1], r[2], month, year) for r in rows],
+        )
+        await db.commit()
+    logger.info("snapshot_user_rates_history: сохранено %d записей для %d/%d", len(rows), month, year)
+
+
+async def get_users_rates_by_department(db_path: str, department: str) -> list[dict]:
+    """
+    Возвращает всех сотрудников отдела с их персональными ставками (JOIN users + user_rates).
+    """
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            'SELECT u.telegram_id, u.full_name, u.position, ur.base_rate, ur.extra_rate '
+            'FROM users u JOIN user_rates ur ON u.telegram_id = ur.telegram_id '
+            'WHERE u.department = ? AND u.role NOT IN ("superadmin", "developer")',
+            (department,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {
+            "telegram_id": r["telegram_id"],
+            "full_name": r["full_name"],
+            "position": r["position"],
+            "base_rate": r["base_rate"],
+            "extra_rate": r["extra_rate"],
+        }
+        for r in rows
+    ]
+
+
+async def get_all_users_rates(db_path: str) -> list[dict]:
+    """
+    Возвращает всех сотрудников с персональными ставками (JOIN users + user_rates).
+    Исключает superadmin и developer.
+    """
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            'SELECT u.telegram_id, u.full_name, u.department, u.position, ur.base_rate, ur.extra_rate '
+            'FROM users u JOIN user_rates ur ON u.telegram_id = ur.telegram_id '
+            'WHERE u.role NOT IN ("superadmin", "developer")',
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {
+            "telegram_id": r["telegram_id"],
+            "full_name": r["full_name"],
+            "department": r["department"],
+            "position": r["position"],
+            "base_rate": r["base_rate"],
+            "extra_rate": r["extra_rate"],
+        }
+        for r in rows
+    ]

@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 
@@ -42,9 +43,10 @@ logger = logging.getLogger(__name__)
 
 def make_mention(username: str | None, full_name: str) -> str:
     """Возвращает кликабельный ник или ФИО если ника нет."""
+    escaped = html.escape(full_name)
     if username:
-        return f'<a href="https://t.me/{username}">{full_name}</a>'
-    return full_name
+        return f'<a href="https://t.me/{username}">{escaped}</a>'
+    return escaped
 
 
 VALID_POSITIONS: dict[str, list[str]] = {
@@ -490,10 +492,10 @@ async def process_fio(message: Message, state: FSMContext):
     # 2. Формируем текст заявки с inline-кнопками
     text = (
         "📝 <b>Новая заявка на доступ к боту:</b>\n\n"
-        f"👤 <b>ФИО:</b> {fio}\n"
+        f"👤 <b>ФИО:</b> {html.escape(fio)}\n"
         f"🏢 <b>Отдел:</b> {department}\n"
         f"💼 <b>Позиция:</b> {position_display}\n"
-        f"🔧 <b>Должность:</b> {display_title}\n"
+        f"🔧 <b>Должность:</b> {html.escape(display_title)}\n"
         f"🆔 Telegram ID: <code>{tg_id}</code>\n"
         f"📱 Ник: {mention}\n"
         f"📋 Строка в Техлисте: {row_index}\n\n"
@@ -812,7 +814,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         # Обновляем сообщение админа
         await callback.message.edit_text(
             text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
-            f"\n✅ Одобрено администратором {callback.from_user.full_name}",
+            f"\n✅ Одобрено администратором {html.escape(callback.from_user.full_name)}",
             parse_mode="HTML",
             reply_markup=None,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -861,7 +863,7 @@ async def process_reject(callback: CallbackQuery):
 
         # Обновляем сообщение админа
         await callback.message.edit_text(
-            text=original_text + f"\n\n❌ Отклонено администратором {callback.from_user.full_name}",
+            text=original_text + f"\n\n❌ Отклонено администратором {html.escape(callback.from_user.full_name)}",
             parse_mode="HTML",
             reply_markup=None,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -897,17 +899,18 @@ async def contact_dev_send(message: Message, state: FSMContext):
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     username = message.from_user.username
+    escaped_full_name = html.escape(full_name)
     if username:
         user_mention = f'<a href="https://t.me/{username}">@{username}</a>'
     else:
-        user_mention = full_name
+        user_mention = escaped_full_name
 
     logger.info("Пользователь %s (%s) отправляет сообщение разработчику", tg_id, full_name)
 
     dev_text = (
         f"📨 Сообщение от пользователя\n\n"
-        f"👤 {user_mention} — {full_name}\n\n"
-        f"{text}"
+        f"👤 {user_mention} — {escaped_full_name}\n\n"
+        f"{html.escape(text)}"
     )
 
     try:
@@ -947,7 +950,7 @@ async def process_promote_email(message: Message, state: FSMContext):
 
     notify_text = (
         f"📧 Новый администратор {mention} ввёл email для доступа к таблице:\n"
-        f"{email}\n\n"
+        f"{html.escape(email)}\n\n"
         f"Добавьте его как редактора в Google Sheets."
     )
     for sa_id in SUPERADMIN_IDS:

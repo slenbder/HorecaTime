@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -39,9 +40,10 @@ except Exception:
 
 def make_mention(username: str | None, full_name: str) -> str:
     """Возвращает кликабельный ник или ФИО если ника нет."""
+    escaped = html.escape(full_name)
     if username:
-        return f'<a href="https://t.me/{username}">{full_name}</a>'
-    return full_name
+        return f'<a href="https://t.me/{username}">{escaped}</a>'
+    return escaped
 
 
 def _fmt_h(v: float) -> str:
@@ -795,7 +797,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}\n"
             f"🔢 Доп. часы = {_fmt_h(ah)} ч\n"
-            f"💬 {comment}"
+            f"💬 {html.escape(comment)}"
         )
     else:
         admin_text = (

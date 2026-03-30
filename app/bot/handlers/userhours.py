@@ -21,6 +21,7 @@ from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift, check_overlap, _parse_time, round_to_half
 from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
+from app.utils.text_utils import make_mention
 
 userhours_router = Router()
 logger = logging.getLogger(__name__)
@@ -37,13 +38,6 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
-
-def make_mention(username: str | None, full_name: str) -> str:
-    """Возвращает кликабельный ник или ФИО если ника нет."""
-    escaped = html.escape(full_name)
-    if username:
-        return f'<a href="https://t.me/{username}">{escaped}</a>'
-    return escaped
 
 
 def _fmt_h(v: float) -> str:

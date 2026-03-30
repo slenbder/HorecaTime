@@ -37,16 +37,10 @@ from config import (
     SHEET_URL,
 )
 
+from app.utils.text_utils import make_mention
+
 auth_router = Router()
 logger = logging.getLogger(__name__)
-
-
-def make_mention(username: str | None, full_name: str) -> str:
-    """Возвращает кликабельный ник или ФИО если ника нет."""
-    escaped = html.escape(full_name)
-    if username:
-        return f'<a href="https://t.me/{username}">{escaped}</a>'
-    return escaped
 
 
 VALID_POSITIONS: dict[str, list[str]] = {

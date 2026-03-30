@@ -578,6 +578,13 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
     Формат callback_data: approve_ah:{telegram_id}:{date_str}:{h}:{N}:{value}
     Пример:               approve_ah:6073294261:03.03.26:10.0:3:2
     """
+    # Проверка прав: только admin_hall, superadmin и developer
+    caller_id = callback.from_user.id
+    if caller_id not in ADMIN_HALL_IDS and caller_id not in SUPERADMIN_IDS and caller_id != DEVELOPER_ID:
+        logger.warning("Unauthorized approve_ah_callback attempt from user_id=%s", caller_id)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
     # Защита от двойного нажатия: если уже одобрено — игнорируем
     if "✅ Одобрено" in (callback.message.text or ""):
         await callback.answer("Уже обработано другим администратором.")

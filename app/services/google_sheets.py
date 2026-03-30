@@ -896,7 +896,12 @@ class GoogleSheetsClient:
 
     def get_sheet_id_by_name(self, sheet_name: str) -> int | None:
         """Возвращает числовой gid листа по его названию."""
-        worksheets = self._spreadsheet.worksheets()
+        try:
+            worksheets = self._spreadsheet.worksheets()
+        except Exception as e:
+            logger.error("Ошибка в get_sheet_id_by_name: %s", e, exc_info=True)
+            self._reconnect()
+            worksheets = self._spreadsheet.worksheets()
         for ws in worksheets:
             if ws.title == sheet_name:
                 return ws.id
@@ -910,8 +915,14 @@ class GoogleSheetsClient:
         возвращает диапазон от заголовка до последней строки блока.
         Если не найдено — возвращает None (весь лист).
         """
-        ws = self._spreadsheet.worksheet(sheet_name)
-        all_values = ws.get_all_values()
+        try:
+            ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
+        except Exception as e:
+            logger.error("Ошибка в get_section_range: %s", e, exc_info=True)
+            self._reconnect()
+            ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
 
         ALL_DEPTS = ["кухня", "бар", "зал"]
         dept_lower = department.lower()

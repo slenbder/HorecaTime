@@ -145,19 +145,22 @@ async def cmd_shift(message: Message, state: FSMContext):
     if position == "Раннер":
         await message.answer(
             "Введите смену в формате:\n\n"
-            f"<code>{example}</code>"
+            f"<code>{example}</code>\n\n"
+            "Для отмены используйте /cancel"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position in SIMPLE_H_POSITIONS:
         await message.answer(
             "Введите смену или несколько смен:\n\n"
-            f"<code>{example}</code>"
+            f"<code>{example}</code>\n\n"
+            "Для отмены используйте /cancel"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position in BAR_POSITIONS:
         await message.answer(
             "Введите смену:\n\n"
-            f"<code>{example}</code>"
+            f"<code>{example}</code>\n\n"
+            "Для отмены используйте /cancel"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     elif position == "Официант":
@@ -165,7 +168,8 @@ async def cmd_shift(message: Message, state: FSMContext):
         await message.answer(
             "Введите смену:\n\n"
             f"<code>{example}</code>\n\n"
-            "📎 Прикрепите фото чеков/карт (если есть)"
+            "📎 Прикрепите фото чеков/карт (если есть)\n\n"
+            "Для отмены используйте /cancel"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     else:
@@ -176,6 +180,12 @@ async def cmd_shift(message: Message, state: FSMContext):
 # ---------------------------------------------------------------------------
 # Шаг 2 — ввод даты и времени
 # ---------------------------------------------------------------------------
+
+@userhours_router.message(ShiftStates.waiting_shift_input, Command("cancel"))
+async def cancel_shift_input(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Ввод часов отменён. Используйте /shift для повторной попытки.")
+
 
 @userhours_router.message(ShiftStates.waiting_shift_input)
 async def process_shift_input(message: Message, state: FSMContext):

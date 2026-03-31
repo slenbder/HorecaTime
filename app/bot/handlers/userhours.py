@@ -19,7 +19,7 @@ from aiogram.types import (
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
-from app.services.timeparsing import parse_shift, check_overlap, _parse_time, round_to_half
+from app.services.timeparsing import parse_shift, check_overlap, parse_time, round_to_half
 from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS, SIMPLE_H_POSITIONS, BAR_POSITIONS
 from app.utils.text_utils import make_mention
 
@@ -542,7 +542,7 @@ async def _process_bar_ah_input(message: Message, state: FSMContext, position: s
 
     # Нормализуем разделитель (en/em dash и пробелы вокруг тире)
     normalized = _re.sub(r'\s*[–—\-]\s*', '-', text)
-    time_result = _parse_time(normalized)
+    time_result = parse_time(normalized)
 
     if time_result is None:
         await message.answer(

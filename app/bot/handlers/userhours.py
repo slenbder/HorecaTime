@@ -88,6 +88,8 @@ _mg_photos: dict[str, list[str]] = {}
 _mg_context: dict[str, dict] = {}
 # mgids уже запланированных для обработки
 _mg_scheduled: set[str] = set()
+# Защита от race condition при одновременной обработке медиагрупп
+_mg_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -283,26 +285,27 @@ async def _process_waiter_shift_input(message: Message, state: FSMContext) -> No
 
     if mgid:
         # Медиагруппа: накапливаем фото, caption читаем из любого фото группы
-        if mgid not in _mg_photos:
-            _mg_photos[mgid] = []
-            _mg_context[mgid] = {"caption": None, "message": message, "state": state}
+        async with _mg_lock:
+            if mgid not in _mg_photos:
+                _mg_photos[mgid] = []
+                _mg_context[mgid] = {"caption": None, "message": message, "state": state}
 
-        if _mg_photos[mgid] is None:
-            # Группа уже помечена как ошибочная — игнорируем последующие фото
-            return
+            if _mg_photos[mgid] is None:
+                # Группа уже помечена как ошибочная — игнорируем последующие фото
+                return
 
-        if message.caption and _mg_context[mgid]["caption"] is None:
-            _mg_context[mgid]["caption"] = message.caption
-            logger.info(
-                "_process_waiter_shift_input: caption получен от фото в группе %s, user=%s",
-                mgid, tg_id,
-            )
+            if message.caption and _mg_context[mgid]["caption"] is None:
+                _mg_context[mgid]["caption"] = message.caption
+                logger.info(
+                    "_process_waiter_shift_input: caption получен от фото в группе %s, user=%s",
+                    mgid, tg_id,
+                )
 
-        _mg_photos[mgid].append(photo_file_id)
+            _mg_photos[mgid].append(photo_file_id)
 
-        if mgid not in _mg_scheduled:
-            _mg_scheduled.add(mgid)
-            asyncio.create_task(_delayed_process_waiter(mgid))
+            if mgid not in _mg_scheduled:
+                _mg_scheduled.add(mgid)
+                asyncio.create_task(_delayed_process_waiter(mgid))
     else:
         # Одиночное фото
         text = (message.caption or message.text or "").strip()
@@ -377,18 +380,19 @@ async def _delayed_process_waiter(mgid: str) -> None:
     """Ждёт 1 сек, чтобы все фото группы успели накопиться, затем обрабатывает."""
     await asyncio.sleep(1.0)
 
-    photo_ids = _mg_photos.get(mgid)
-    if photo_ids is None:
-        _mg_photos.pop(mgid, None)
-        _mg_context.pop(mgid, None)
-        _mg_scheduled.discard(mgid)
-        return
-    if not photo_ids:
-        return
+    async with _mg_lock:
+        photo_ids = _mg_photos.get(mgid)
+        if photo_ids is None:
+            _mg_photos.pop(mgid, None)
+            _mg_context.pop(mgid, None)
+            _mg_scheduled.discard(mgid)
+            return
+        if not photo_ids:
+            return
 
-    ctx = _mg_context.pop(mgid)
-    _mg_photos.pop(mgid)
-    _mg_scheduled.discard(mgid)
+        ctx = _mg_context.pop(mgid)
+        _mg_photos.pop(mgid)
+        _mg_scheduled.discard(mgid)
 
     message = ctx["message"]
     state = ctx["state"]

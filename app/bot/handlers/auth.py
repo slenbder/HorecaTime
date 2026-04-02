@@ -353,6 +353,15 @@ async def process_fio(message: Message, state: FSMContext):
         await state.clear()
         return
 
+    # Для "Руководящий состав" в колонку E Техлиста идёт custom_title, иначе position
+    position_for_sheet = (
+        custom_title if position == "Руководящий состав" and custom_title else position
+    )
+    logger.info(
+        "Колонка E Техлиста для пользователя %s: %r (position=%r, custom_title=%r)",
+        tg_id, position_for_sheet, position, custom_title,
+    )
+
     # 1. Записываем/обновляем заявку в Техлисте
     try:
         logger.info(f"Запись заявки в Техлист для пользователя {tg_id}")
@@ -361,7 +370,7 @@ async def process_fio(message: Message, state: FSMContext):
             nickname=nickname,
             fio_from_user=fio,
             department=department,
-            position=position,
+            position=position_for_sheet,
         )
 
         logger.info(f"Заявка успешно записана в строку {row_index}")

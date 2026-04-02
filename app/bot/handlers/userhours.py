@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -789,7 +790,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"📅 {date}\n"
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}\n"
             f"🔢 Доп. часы = {_fmt_h(ah)} ч\n"
-            f"💬 {comment}"
+            f"💬 {html.escape(comment)}"
         )
     else:
         admin_text = (

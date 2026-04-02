@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 
@@ -706,7 +707,7 @@ async def process_approve(callback: CallbackQuery):
         # Обновляем сообщение админа
         await callback.message.edit_text(
             text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
-            f"\n✅ Одобрено администратором {callback.from_user.full_name}",
+            f"\n✅ Одобрено администратором {html.escape(callback.from_user.full_name)}",
             parse_mode="HTML",
             reply_markup=None,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -755,7 +756,7 @@ async def process_reject(callback: CallbackQuery):
 
         # Обновляем сообщение админа
         await callback.message.edit_text(
-            text=original_text + f"\n\n❌ Отклонено администратором {callback.from_user.full_name}",
+            text=original_text + f"\n\n❌ Отклонено администратором {html.escape(callback.from_user.full_name)}",
             parse_mode="HTML",
             reply_markup=None,
             link_preview_options=LinkPreviewOptions(is_disabled=True)
@@ -801,7 +802,7 @@ async def contact_dev_send(message: Message, state: FSMContext):
     dev_text = (
         f"📨 Сообщение от пользователя\n\n"
         f"👤 {user_mention} — {full_name}\n\n"
-        f"{text}"
+        f"{html.escape(text)}"
     )
 
     try:

@@ -197,9 +197,11 @@
    - Ветка: `fix/post-audit-clean` (2026-04-02)
 
 3. **Инъекция формул Google Sheets**
-   - `value_input_option="USER_ENTERED"` → `"RAW"`
-   - Защита от `=HYPERLINK()`, `=IMPORTXML()` и других формул
-   - Файлы: `google_sheets.py:414`, `auth.py:293`
+   - `value_input_option="USER_ENTERED"` → `"RAW"` для пользовательских данных
+   - Защита от `=HYPERLINK()`, `=IMPORTXML()` и других формул через `custom_title`/ФИО
+   - Файлы: `google_sheets.py:417` (`insert_row` с `[full_name, telegram_id, display_position]`), `auth.py:293`
+   - Строка `google_sheets.py:526` (`batch_update` с `=SUMPRODUCT`, `=S+AJ` и др.) намеренно оставлена с `USER_ENTERED` — там записываются hardcoded формулы из кода
+   - Ветка: `fix/post-audit-clean` (2026-04-02)
 
 4. **HTML-инъекция через комментарий Раннера**
    - `html.escape()` применён к user inputs в HTML-сообщениях

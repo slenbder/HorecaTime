@@ -203,10 +203,14 @@
    - Строка `google_sheets.py:526` (`batch_update` с `=SUMPRODUCT`, `=S+AJ` и др.) намеренно оставлена с `USER_ENTERED` — там записываются hardcoded формулы из кода
    - Ветка: `fix/post-audit-clean` (2026-04-02)
 
-4. **HTML-инъекция через комментарий Раннера**
+4. **HTML-инъекция через комментарий Раннера + make_mention()**
    - `html.escape()` применён к user inputs в HTML-сообщениях
    - Защита от `<a href="tg://...">` инъекций
-   - Файлы: `userhours.py:798`, `make_mention()` в обоих местах
+   - `make_mention()` дублировалась в `userhours.py` и `auth.py` без экранирования `full_name`
+   - Создан `app/utils/text_utils.py`: `make_mention()` с `html.escape(full_name)` + `mask_email()`
+   - Локальные копии `make_mention()` удалены из обоих файлов, добавлен импорт из `text_utils`
+   - Файлы: `userhours.py`, `auth.py`, `app/utils/text_utils.py` (новый)
+   - Ветка: `fix/post-audit-clean` (2026-04-02)
 
 5. **_delayed_process_waiter без try/except**
    - Обработка исключений + `await state.clear()` при ошибке

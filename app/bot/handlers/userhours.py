@@ -19,6 +19,7 @@ from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift, check_overlap, _parse_time, round_to_half
+from app.utils.text_utils import make_mention
 from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
 
 userhours_router = Router()
@@ -36,13 +37,6 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
-
-def make_mention(username: str | None, full_name: str) -> str:
-    """Возвращает кликабельный ник или ФИО если ника нет."""
-    if username:
-        return f'<a href="https://t.me/{username}">{full_name}</a>'
-    return full_name
-
 
 def _fmt_h(v: float) -> str:
     """8.0 → '8', 8.5 → '8.5'"""

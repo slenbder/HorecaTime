@@ -26,6 +26,7 @@ from app.bot.keyboards.common import (
 from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role, get_rate, set_user_rate
 from app.services.google_sheets import GoogleSheetsClient
+from app.utils.text_utils import make_mention
 from config import (
     SUPERADMIN_IDS,
     ADMIN_HALL_IDS,
@@ -38,13 +39,6 @@ from config import (
 
 auth_router = Router()
 logger = logging.getLogger(__name__)
-
-
-def make_mention(username: str | None, full_name: str) -> str:
-    """Возвращает кликабельный ник или ФИО если ника нет."""
-    if username:
-        return f'<a href="https://t.me/{username}">{full_name}</a>'
-    return full_name
 
 
 VALID_POSITIONS: dict[str, list[str]] = {

@@ -380,36 +380,53 @@ async def _write_waiter_no_photo(
 
 async def _delayed_process_waiter(mgid: str) -> None:
     """Ждёт 1 сек, чтобы все фото группы успели накопиться, затем обрабатывает."""
-    await asyncio.sleep(1.0)
+    try:
+        await asyncio.sleep(1.0)
 
-    photo_ids = _mg_photos.get(mgid)
-    if photo_ids is None:
+        photo_ids = _mg_photos.get(mgid)
+        if photo_ids is None:
+            _mg_photos.pop(mgid, None)
+            _mg_context.pop(mgid, None)
+            _mg_scheduled.discard(mgid)
+            return
+        if not photo_ids:
+            return
+
+        ctx = _mg_context.pop(mgid)
+        _mg_photos.pop(mgid)
+        _mg_scheduled.discard(mgid)
+
+        message = ctx["message"]
+        state = ctx["state"]
+        caption = (ctx["caption"] or "").strip()
+
+        logger.info(
+            "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
+            mgid, len(photo_ids), caption,
+        )
+
+        result = parse_shift(caption, "Официант")
+        if result is None:
+            await message.answer("❌ Не удалось распознать формат смены.")
+            await state.clear()
+            return
+
+        await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)
+
+    except Exception as e:
+        error_logger.exception("_delayed_process_waiter: необработанная ошибка mgid=%s: %s", mgid, e)
+
+        ctx = _mg_context.get(mgid)
+        if ctx:
+            try:
+                await ctx["message"].answer("❌ Произошла ошибка при обработке фото. Попробуйте ещё раз.")
+                await ctx["state"].clear()
+            except Exception:
+                error_logger.exception("_delayed_process_waiter: не удалось уведомить пользователя mgid=%s", mgid)
+
         _mg_photos.pop(mgid, None)
         _mg_context.pop(mgid, None)
         _mg_scheduled.discard(mgid)
-        return
-    if not photo_ids:
-        return
-
-    ctx = _mg_context.pop(mgid)
-    _mg_photos.pop(mgid)
-    _mg_scheduled.discard(mgid)
-
-    message = ctx["message"]
-    state = ctx["state"]
-    caption = (ctx["caption"] or "").strip()
-
-    logger.info(
-        "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
-        mgid, len(photo_ids), caption,
-    )
-
-    result = parse_shift(caption, "Официант")
-    if result is None:
-        await message.answer("❌ Не удалось распознать формат смены.")
-        return
-
-    await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)
 
 
 async def _send_waiter_report(

@@ -217,9 +217,14 @@
    - Ветка: `fix/post-audit-clean` (2026-04-02)
 
 5. **_delayed_process_waiter без try/except**
-   - Обработка исключений + `await state.clear()` при ошибке
-   - Уведомление пользователю "Произошла ошибка, попробуйте снова"
-   - Файл: `userhours.py:315, 413`
+   - Всё тело функции обёрнуто в `try/except Exception`
+   - `await state.clear()` при ошибке парсинга caption (`result is None`) — официант больше не застревает в FSM
+   - В `except`: уведомление пользователю + `state.clear()` + очистка `_mg_photos`/`_mg_context`/`_mg_scheduled` (предотвращение утечки памяти)
+   - Логирование через `error_logger.exception()` (включает traceback)
+   - Файл: `userhours.py`
+   - Ветка: `fix/post-audit-clean` (2026-04-02)
+
+**Audit Phase 1 полностью завершена — все 5 критичных багов закрыты.**
 
 ---
 

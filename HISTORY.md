@@ -179,11 +179,14 @@
 **Дата:** 2026-03-28  
 **Ветка:** `fix/post-audit-bugs`
 
-1. **_pending_custom_titles → FSM data**
-   - Глобальный dict заменён на FSM хранилище
-   - Валидация custom_title: 2-50 символов
-   - Защита от потери данных при рестарте бота
+1. **_pending_custom_titles → _pending_admins**
+   - Глобальный `_pending_custom_titles: dict[int, str]` удалён
+   - Валидация custom_title: 2-50 символов в `process_kitchen_title` (FSM)
+   - `custom_title` сохраняется в `_pending_admins[callback_key]` вместе с tg_id/row_index/full_name
+   - `process_approve` читает `custom_title` из `_pending_admins` по callback_key
+   - Очистка `_pending_custom_titles` в `process_reject` удалена
    - Файл: `auth.py`
+   - Ветка: `fix/post-audit-clean` (2026-04-02)
 
 2. **/message_dept + МОП**
    - admin_hall теперь отправляет рассылку в Зал + МОП

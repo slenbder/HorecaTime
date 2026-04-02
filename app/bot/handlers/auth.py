@@ -62,8 +62,8 @@ def _is_valid_gmail(email: str) -> bool:
     return bool(re.match(pattern, email.strip().lower()))
 
 
-# Временное хранилище custom_title между регистрацией и апрувом (tg_id → custom_title)
-_pending_custom_titles: dict[int, str] = {}
+# Временное хранилище данных заявки между регистрацией и апрувом (callback_key → данные)
+_pending_admins: dict[str, dict] = {}
 
 POSITION_TO_SECTION: dict[str, str] = {
     "Су-шеф": "Руководящий состав",
@@ -291,6 +291,13 @@ async def process_position(message: Message, state: FSMContext):
 @auth_router.message(AuthStates.waiting_kitchen_title)
 async def process_kitchen_title(message: Message, state: FSMContext):
     custom_title = (message.text or "").strip()
+    if len(custom_title) < 2 or len(custom_title) > 50:
+        logger.warning(
+            "Пользователь %s ввёл некорректную должность (длина %d): '%s'",
+            message.from_user.id, len(custom_title), custom_title[:50],
+        )
+        await message.answer("Название должности должно быть от 2 до 50 символов. Введите заново:")
+        return
     logger.info(
         "Пользователь %s ввёл должность для Шеф/Су-шеф: '%s'",
         message.from_user.id, custom_title,
@@ -468,7 +475,13 @@ async def process_fio(message: Message, state: FSMContext):
     )
     logger.info(f"Регистрация пользователя {tg_id} завершена успешно")
     if custom_title:
-        _pending_custom_titles[tg_id] = custom_title
+        callback_key = f"{tg_id}_{row_index}"
+        _pending_admins[callback_key] = {
+            'tg_id': tg_id,
+            'row_index': row_index,
+            'full_name': fio,
+            'custom_title': custom_title,
+        }
     await state.clear()
 
 
@@ -622,7 +635,9 @@ async def process_approve(callback: CallbackQuery):
         )
 
         # Сразу добавляем пользователя в график текущего месяца
-        pending_custom_title = _pending_custom_titles.pop(user_tg_id, None)
+        callback_key = f"{user_tg_id}_{row_index}"
+        pending_data = _pending_admins.pop(callback_key, {})
+        pending_custom_title = pending_data.get('custom_title')
         try:
             inserted = sheets_client.ensure_user_in_current_month_hours(
                 user_tg_id, custom_title=pending_custom_title
@@ -734,7 +749,6 @@ async def process_reject(callback: CallbackQuery):
             return
 
         logger.info(f"Админ {callback.from_user.id} отклонил пользователя {user_tg_id}")
-        _pending_custom_titles.pop(user_tg_id, None)
 
         # Уведомляем пользователя
         try:

@@ -78,6 +78,15 @@ def _dept_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _hall_dept_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="Зал", callback_data="broadcast_dept:Зал")],
+        [InlineKeyboardButton(text="МОП", callback_data="broadcast_dept:МОП")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def _fmt_money(v: float) -> str:
     return str(int(v)) if v == int(v) else f"{v:.2f}"
 
@@ -346,7 +355,11 @@ async def cmd_message_dept(message: Message, state: FSMContext, user_role: str =
         await message.answer("⛔️ Недостаточно прав.")
         return
 
-    if user_role in _ROLE_TO_DEPT:
+    if user_role == "admin_hall":
+        await state.set_state(AuthStates.waiting_broadcast_dept)
+        logger.info("/message_dept: %s (role=admin_hall) → показываю выбор Зал/МОП", tg_id)
+        await message.answer("Выберите отдел для рассылки:", reply_markup=_hall_dept_keyboard())
+    elif user_role in _ROLE_TO_DEPT:
         dept = _ROLE_TO_DEPT[user_role]
         await state.update_data(broadcast_type="dept", broadcast_dept=dept)
         await state.set_state(AuthStates.waiting_broadcast_text)

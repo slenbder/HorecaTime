@@ -189,9 +189,12 @@
    - Ветка: `fix/post-audit-clean` (2026-04-02)
 
 2. **/message_dept + МОП**
-   - admin_hall теперь отправляет рассылку в Зал + МОП
-   - Логика аналогична `/rates` и `/set_rate`
-   - Файл: `admin.py:349-354`
+   - admin_hall теперь выбирает отдел (Зал или МОП) перед вводом текста рассылки
+   - Добавлена `_hall_dept_keyboard()` с кнопками Зал/МОП/Отмена
+   - `cmd_message_dept`: проверка `admin_hall` до `_ROLE_TO_DEPT`, переходит в `waiting_broadcast_dept`
+   - Существующий `cb_broadcast_dept` обрабатывает выбор без изменений
+   - Файл: `admin.py`
+   - Ветка: `fix/post-audit-clean` (2026-04-02)
 
 3. **Инъекция формул Google Sheets**
    - `value_input_option="USER_ENTERED"` → `"RAW"`

@@ -11,7 +11,7 @@ class AuthStates(StatesGroup):
     waiting_dismiss_confirm = State()    # подтверждение увольнения
     waiting_broadcast_text = State()     # ожидание текста рассылки
     waiting_broadcast_dept = State()     # выбор отдела для рассылки (admin_*)
-    waiting_kitchen_title = State()      # ввод должности для Шеф/Су-шеф
+    waiting_kitchen_title = State()      # ввод должности для Руководящий состав
     waiting_dop_position = State()       # выбор Грузчик/Закупщик
     waiting_promote_dept = State()       # /promote: выбор подразделения
     waiting_promote_position = State()   # /promote: выбор позиции

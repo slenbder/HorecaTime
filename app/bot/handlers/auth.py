@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 VALID_POSITIONS: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Шеф/Су-шеф", "Горячий цех", "Холодный цех",
+    "Кухня": ["Руководящий состав", "Горячий цех", "Холодный цех",
                "Кондитерский цех", "Заготовочный цех", "Коренной цех", "Доп."],
     "МОП":   ["Клининг", "Котломой"],
 }
@@ -61,7 +61,7 @@ def _is_valid_gmail(email: str) -> bool:
 _pending_admins: dict[str, dict] = {}
 
 POSITION_TO_SECTION: dict[str, str] = {
-    "Су-шеф": "Руководящий состав",
+    "Руководящий состав": "Руководящий состав",
     "Горячий цех": "Горячий цех",
     "Холодный цех": "Холодный цех",
     "Кондитерский цех": "Кондитерский цех",
@@ -257,8 +257,8 @@ async def process_position(message: Message, state: FSMContext):
 
     logger.info(f"Пользователь {message.from_user.id} выбрал позицию: {position}")
 
-    if position == "Шеф/Су-шеф":
-        await state.update_data(position="Су-шеф")
+    if position == "Руководящий состав":
+        await state.update_data(position="Руководящий состав")
         await message.answer(
             "Введите вашу должность (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):",
             reply_markup=ReplyKeyboardRemove(),
@@ -294,7 +294,7 @@ async def process_kitchen_title(message: Message, state: FSMContext):
         await message.answer("Название должности должно быть от 2 до 50 символов. Введите заново:")
         return
     logger.info(
-        "Пользователь %s ввёл должность для Шеф/Су-шеф: '%s'",
+        "Пользователь %s ввёл должность для Руководящий состав: '%s'",
         message.from_user.id, custom_title,
     )
     await state.update_data(custom_title=custom_title)
@@ -378,7 +378,7 @@ async def process_fio(message: Message, state: FSMContext):
     if position in DOP_POSITIONS:
         position_display = "Дополнительные сотрудники"
         display_title = position
-    elif position == "Су-шеф" and custom_title:
+    elif position == "Руководящий состав" and custom_title:
         position_display = "Руководящий состав"
         display_title = custom_title
     elif department == "Кухня":
@@ -665,7 +665,7 @@ async def process_approve(callback: CallbackQuery):
             "Горячий цех", "Холодный цех", "Кондитерский цех", "Заготовочный цех",
             "Коренной цех", "Грузчик", "Закупщик", "Клининг", "Котломой",
         }
-        normalized_position = position if position in _KNOWN_POSITIONS else "Су-шеф"
+        normalized_position = position if position in _KNOWN_POSITIONS else "Руководящий состав"
         try:
             rate = await get_rate(DB_PATH, normalized_position)
             base_rate = rate["base_rate"] if rate else 250.0

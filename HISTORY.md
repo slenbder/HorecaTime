@@ -4,6 +4,16 @@
 
 ---
 
+## Audit Phase 2 — Переименование позиции (2026-04-02)
+
+- Legacy-название `"Шеф/Су-шеф"` (UI) и `"Су-шеф"` (внутреннее имя позиции) переименованы в `"Руководящий состав"` во всех местах кода.
+- Затронуто 7 файлов: `auth.py`, `admin.py`, `superadmin.py`, `userhours.py`, `google_sheets.py`, `monthly_switch.py`, `common.py` + комментарии в `auth_states.py`.
+- SQLite: `UPDATE rates SET position = 'Руководящий состав' WHERE position = 'Су-шеф'` — обновлена 1 строка (ставка 500.0 р/ч).
+- `migrate_user_rates_once.py` не тронут — одноразовый скрипт, уже выполнен.
+- Тесты: 37/37 зелёных.
+
+---
+
 ## Этап 0 ✅ завершён
 
 - Полный approve-flow авторизации (FSM AuthStates)

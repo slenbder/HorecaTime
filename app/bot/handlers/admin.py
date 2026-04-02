@@ -409,7 +409,12 @@ async def msg_broadcast_text(message: Message, state: FSMContext):
         label = f"сотрудникам отдела {dept}"
 
     sender_role = _resolve_sender_role(tg_id)
-    sender_label = ROLE_TO_SENDER[sender_role]
+    if sender_role is None:
+        user_data = get_user(tg_id)
+        sender_role = user_data["role"] if user_data else None
+        if sender_role is not None:
+            logger.info("broadcast: sender_role для %s получена из SQLite fallback: %s", tg_id, sender_role)
+    sender_label = ROLE_TO_SENDER.get(sender_role, "администрации")
     broadcast_text = f"📢 Сообщение от {sender_label}\n\n{text}"
     sent = 0
     for user in recipients:

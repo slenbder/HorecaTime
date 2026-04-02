@@ -4,6 +4,15 @@
 
 ---
 
+## Audit Phase 2 — SQLite fallback для sender_role в msg_broadcast_text (2026-04-02)
+
+- `admin.py` `msg_broadcast_text`: добавлен fallback на SQLite если `_resolve_sender_role()` вернула `None`.
+- Обращение к `ROLE_TO_SENDER` заменено на `.get(sender_role, "администрации")` — защита от KeyError при неизвестной роли.
+- При использовании fallback логируется сообщение на уровне INFO.
+- Тесты: 37/37 зелёных.
+
+---
+
 ## Audit Phase 2 — Запись custom_title в Техлист колонку E (2026-04-02)
 
 - `auth.py` `process_fio`: для позиции `"Руководящий состав"` в колонку E Техлиста теперь записывается `custom_title` (напр. "Бренд-шеф", "Су-шеф ЗЦ"), а не строка `"Руководящий состав"`.

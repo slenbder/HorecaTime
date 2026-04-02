@@ -66,8 +66,8 @@
 - **AL/AM/AN** = числовой формат для корректной работы формул
 
 **Защита от инъекций:**
-- **value_input_option="RAW"** во всех операциях записи
-- Защита от formula injection (`=HYPERLINK()`, `=IMPORTXML()` и т.д.)
+- **value_input_option="RAW"** для всех пользовательских данных (защита от formula injection). Исключение: вставка hardcoded формул (`=SUMPRODUCT`, `=S+AJ` и др.) использует `USER_ENTERED`
+- Защита от: `=HYPERLINK()`, `=IMPORTXML()`, `=IMPORTDATA()`
 
 ---
 
@@ -454,11 +454,31 @@ waiting_dev_message     # Ввод сообщения разработчику
 
 ---
 
+## Буферизация медиагруппы Официанта
+
+Глобальные dict в `userhours.py` для обработки нескольких фото от Официанта в одной медиагруппе:
+
+| Dict | Назначение |
+|------|-----------|
+| `_mg_photos[mgid]` | Список `file_id` фото группы |
+| `_mg_context[mgid]` | `{message, state, caption}` — контекст handler'а |
+| `_mg_scheduled` | Guard-set: предотвращает двойной `asyncio.create_task` |
+
+**Механизм:** Telegram присылает фото медиагруппы отдельными апдейтами с одинаковым `media_group_id`. Handler накапливает `file_id` в `_mg_photos`, а `asyncio.create_task(_delayed_process_waiter(mgid))` создаётся **один раз** (guard через `_mg_scheduled`). После `asyncio.sleep(1.0)` все фото уже накоплены.
+
+**Очистка** происходит в трёх местах:
+- После успешной обработки (`_delayed_process_waiter` → `_send_waiter_report`)
+- При ошибке парсинга caption (`result is None` → `state.clear()` + cleanup)
+- В `except`-блоке `_delayed_process_waiter` (предотвращает утечку памяти при неожиданных исключениях)
+
+---
+
 ## Защита от инъекций и атак
 
 ### Formula injection (Google Sheets)
-- **value_input_option="RAW"** во всех операциях записи
-- Защита от `=HYPERLINK()`, `=IMPORTXML()`, `=IMPORTDATA()`
+- **value_input_option="RAW"** для всех пользовательских данных
+- Исключение: вставка hardcoded формул (`=SUMPRODUCT`, `=S+AJ` и др.) использует `USER_ENTERED`
+- Защита от: `=HYPERLINK()`, `=IMPORTXML()`, `=IMPORTDATA()`
 
 ### HTML injection (Telegram)
 - `html.escape()` для всех user inputs в HTML-сообщениях

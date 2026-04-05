@@ -378,6 +378,14 @@
   - `test_get_user_rate_history_not_found` — снимок отсутствует → None
   - Итого тестов: было 47, стало 55
 
+- **HOTFIX: Исправлена запись формул S/AJ/AK при добавлении сотрудника (RAW для данных, USER_ENTERED для формул)**
+  - Файл: `app/services/google_sheets.py`, строка 545
+  - Причина: Phase 1 Bug #1 заменил `"USER_ENTERED"` → `"RAW"` глобально, включая `batch_update` формул
+  - Следствие: `=SUMPRODUCT(...)` записывался как текст `'=SUMPRODUCT(...)` — суммирование не работало
+  - Фикс: только `batch_update` с формулами S/AJ/AK/AL → `"USER_ENTERED"`
+  - `insert_row` (данные ФИО/TG_ID/позиция) и `ws.update` (часы смены) — `"RAW"` оставлен ✅
+  - Итог: user data injection защищена, системные формулы работают
+
 - **Bug #11 Этап 2: Добавлена команда /cancel для выхода из FSM внесения смены**
   - Файл: `app/bot/handlers/userhours.py`
   - Handler `cmd_cancel` зарегистрирован перед `process_shift_input` (порядок критичен)

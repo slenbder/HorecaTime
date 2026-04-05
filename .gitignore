@@ -9,7 +9,6 @@ venv/
 .env
 credentials.json
 *.json
-CLAUDE.md
 
 # Database
 db/
@@ -26,3 +25,6 @@ logs/
 
 # OS
 .DS_Store
+
+# Internal docs (developer-only)
+docs/

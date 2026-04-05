@@ -56,14 +56,22 @@ def init_database():
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS fsm_storage (
-                chat_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                bot_id  INTEGER NOT NULL,
-                state   TEXT,
-                data    TEXT NOT NULL DEFAULT '{}',
+                chat_id    INTEGER NOT NULL,
+                user_id    INTEGER NOT NULL,
+                bot_id     INTEGER NOT NULL,
+                state      TEXT,
+                data       TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (chat_id, user_id, bot_id)
             )
         ''')
+        # Миграция: добавить updated_at если таблица уже существовала без неё
+        try:
+            cursor.execute(
+                "ALTER TABLE fsm_storage ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))"
+            )
+        except sqlite3.OperationalError:
+            pass  # колонка уже существует
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS rates (
                 position   TEXT PRIMARY KEY,

@@ -19,7 +19,7 @@ from aiogram.types import (
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
-from app.services.timeparsing import parse_shift, check_overlap, _parse_time, round_to_half
+from app.services.timeparsing import parse_shift, check_overlap, parse_time, round_to_half
 from app.utils.text_utils import make_mention
 from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
 
@@ -103,6 +103,8 @@ _mg_photos: dict[str, list[str]] = {}
 _mg_context: dict[str, dict] = {}
 # mgids уже запланированных для обработки
 _mg_scheduled: set[str] = set()
+# asyncio.Lock per mgid — защита от race condition при параллельной доставке фото
+_mg_locks: dict[str, asyncio.Lock] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +167,42 @@ async def cmd_shift(message: Message, state: FSMContext):
     else:
         await message.answer("❌ Команда /shift пока недоступна для вашей позиции.")
         await state.clear()
+
+
+# ---------------------------------------------------------------------------
+# /cancel — отмена текущего действия
+# ---------------------------------------------------------------------------
+
+@userhours_router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    """Отменить текущее действие (внесение смены)."""
+    current_state = await state.get_state()
+    user_id = message.from_user.id
+
+    if current_state is None:
+        await message.answer("Нет активных действий для отмены.")
+        return
+
+    # Edge case: Официант с медиагруппой в обработке.
+    # mgid не хранится в FSM state — ищем по user_id в глобальном буфере.
+    for mgid, ctx in list(_mg_context.items()):
+        if ctx["message"].from_user.id == user_id:
+            ctx["cancelled"] = True
+            logger.info(
+                "cmd_cancel: установлен флаг отмены для mgid=%s (user_id=%s)",
+                mgid, user_id,
+            )
+            break
+
+    await state.clear()
+    await message.answer(
+        "✅ Действие отменено. Данные не сохранены.\n\n"
+        "Чтобы внести смену заново, используйте /shift"
+    )
+    logger.info(
+        "cmd_cancel: пользователь %s отменил FSM из состояния %s",
+        user_id, current_state,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -289,26 +327,28 @@ async def _process_waiter_shift_input(message: Message, state: FSMContext) -> No
 
     if mgid:
         # Медиагруппа: накапливаем фото, caption читаем из любого фото группы
-        if mgid not in _mg_photos:
-            _mg_photos[mgid] = []
-            _mg_context[mgid] = {"caption": None, "message": message, "state": state}
+        lock = _mg_locks.setdefault(mgid, asyncio.Lock())
+        async with lock:
+            if mgid not in _mg_photos:
+                _mg_photos[mgid] = []
+                _mg_context[mgid] = {"caption": None, "message": message, "state": state}
 
-        if _mg_photos[mgid] is None:
-            # Группа уже помечена как ошибочная — игнорируем последующие фото
-            return
+            if _mg_photos[mgid] is None:
+                # Группа уже помечена как ошибочная — игнорируем последующие фото
+                return
 
-        if message.caption and _mg_context[mgid]["caption"] is None:
-            _mg_context[mgid]["caption"] = message.caption
-            logger.info(
-                "_process_waiter_shift_input: caption получен от фото в группе %s, user=%s",
-                mgid, tg_id,
-            )
+            if message.caption and _mg_context[mgid]["caption"] is None:
+                _mg_context[mgid]["caption"] = message.caption
+                logger.info(
+                    "_process_waiter_shift_input: caption получен от фото в группе %s, user=%s",
+                    mgid, tg_id,
+                )
 
-        _mg_photos[mgid].append(photo_file_id)
+            _mg_photos[mgid].append(photo_file_id)
 
-        if mgid not in _mg_scheduled:
-            _mg_scheduled.add(mgid)
-            asyncio.create_task(_delayed_process_waiter(mgid))
+            if mgid not in _mg_scheduled:
+                _mg_scheduled.add(mgid)
+                asyncio.create_task(_delayed_process_waiter(mgid))
     else:
         # Одиночное фото
         text = (message.caption or message.text or "").strip()
@@ -384,22 +424,35 @@ async def _delayed_process_waiter(mgid: str) -> None:
     try:
         await asyncio.sleep(1.0)
 
-        photo_ids = _mg_photos.get(mgid)
-        if photo_ids is None:
-            _mg_photos.pop(mgid, None)
-            _mg_context.pop(mgid, None)
-            _mg_scheduled.discard(mgid)
-            return
-        if not photo_ids:
-            return
+        lock = _mg_locks.setdefault(mgid, asyncio.Lock())
+        async with lock:
+            photo_ids = _mg_photos.get(mgid)
+            if photo_ids is None:
+                _mg_photos.pop(mgid, None)
+                _mg_context.pop(mgid, None)
+                _mg_scheduled.discard(mgid)
+                _mg_locks.pop(mgid, None)
+                return
+            if not photo_ids:
+                return
 
-        ctx = _mg_context.pop(mgid)
-        _mg_photos.pop(mgid)
-        _mg_scheduled.discard(mgid)
+            ctx = _mg_context.pop(mgid)
+            _mg_photos.pop(mgid)
+            _mg_scheduled.discard(mgid)
+            _mg_locks.pop(mgid, None)
 
         message = ctx["message"]
         state = ctx["state"]
         caption = (ctx["caption"] or "").strip()
+
+        # Проверка флага отмены (пользователь нажал /cancel пока накапливалась группа)
+        if ctx.get("cancelled"):
+            logger.info(
+                "_delayed_process_waiter: mgid=%s отменён пользователем, пропускаем запись",
+                mgid,
+            )
+            await state.clear()
+            return
 
         logger.info(
             "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
@@ -417,6 +470,7 @@ async def _delayed_process_waiter(mgid: str) -> None:
     except Exception as e:
         error_logger.exception("_delayed_process_waiter: необработанная ошибка mgid=%s: %s", mgid, e)
 
+        lock = _mg_locks.get(mgid)
         ctx = _mg_context.get(mgid)
         if ctx:
             try:
@@ -425,9 +479,16 @@ async def _delayed_process_waiter(mgid: str) -> None:
             except Exception:
                 error_logger.exception("_delayed_process_waiter: не удалось уведомить пользователя mgid=%s", mgid)
 
-        _mg_photos.pop(mgid, None)
-        _mg_context.pop(mgid, None)
-        _mg_scheduled.discard(mgid)
+        if lock:
+            async with lock:
+                _mg_photos.pop(mgid, None)
+                _mg_context.pop(mgid, None)
+                _mg_scheduled.discard(mgid)
+            _mg_locks.pop(mgid, None)
+        else:
+            _mg_photos.pop(mgid, None)
+            _mg_context.pop(mgid, None)
+            _mg_scheduled.discard(mgid)
 
 
 async def _send_waiter_report(
@@ -553,7 +614,7 @@ async def _process_bar_ah_input(message: Message, state: FSMContext, position: s
 
     # Нормализуем разделитель (en/em dash и пробелы вокруг тире)
     normalized = _re.sub(r'\s*[–—\-]\s*', '-', text)
-    time_result = _parse_time(normalized)
+    time_result = parse_time(normalized)
 
     if time_result is None:
         await message.answer(

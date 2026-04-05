@@ -172,7 +172,7 @@ class GoogleSheetsClient:
                 {"range": f"D{row_idx}", "values": [[department]]},
                 {"range": f"E{row_idx}", "values": [[position]]},
                 {"range": f"F{row_idx}", "values": [[now_str]]},
-            ])
+            ], value_input_option="RAW")
             logger.info(
                 "Обновлена заявка пользователя %s в строке %s",
                 telegram_id,
@@ -190,7 +190,7 @@ class GoogleSheetsClient:
             now_str,           # F: Дата регистрации
         ]
 
-        ws.update(f"A{next_row}:F{next_row}", [values])
+        ws.update(f"A{next_row}:F{next_row}", [values], value_input_option="RAW")
         logger.info(
             "Создана новая заявка пользователя %s в строке %s",
             telegram_id,
@@ -246,7 +246,13 @@ class GoogleSheetsClient:
         Помечает пользователя как одобренного (ставит 'ДА' в столбец 'Наличие в таблице сотрудников').
         """
         ws = self._get_techlist_worksheet()
-        ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
+        try:
+            ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
+        except Exception as e:
+            logger.warning("mark_user_approved: ошибка, реконнект: %s", e)
+            self._reconnect()
+            ws = self._get_techlist_worksheet()
+            ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
         logger.info("Пользователь в строке %s помечен как одобренный", row_index)
 
     def get_user_from_techlist(self, telegram_id: int) -> Optional[Dict[str, Any]]:
@@ -536,7 +542,7 @@ class GoogleSheetsClient:
                     {"range": f"AM{r}", "values": [[0]]},
                     {"range": f"AN{r}", "values": [[0]]},
                 ]
-            month_ws.batch_update(updates, value_input_option="RAW")
+            month_ws.batch_update(updates, value_input_option="USER_ENTERED")
             logger.info(
                 "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s, runner=%s)",
                 r, month_ws.title, position in _SIMPLE_H_POSITIONS, position == "Раннер",
@@ -909,7 +915,12 @@ class GoogleSheetsClient:
 
     def get_sheet_id_by_name(self, sheet_name: str) -> int | None:
         """Возвращает числовой gid листа по его названию."""
-        worksheets = self._spreadsheet.worksheets()
+        try:
+            worksheets = self._spreadsheet.worksheets()
+        except Exception as e:
+            logger.warning("get_sheet_id_by_name: ошибка, реконнект: %s", e)
+            self._reconnect()
+            worksheets = self._spreadsheet.worksheets()
         for ws in worksheets:
             if ws.title == sheet_name:
                 return ws.id
@@ -923,8 +934,14 @@ class GoogleSheetsClient:
         возвращает диапазон от заголовка до последней строки блока.
         Если не найдено — возвращает None (весь лист).
         """
-        ws = self._spreadsheet.worksheet(sheet_name)
-        all_values = ws.get_all_values()
+        try:
+            ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
+        except Exception as e:
+            logger.warning("get_section_range: ошибка, реконнект: %s", e)
+            self._reconnect()
+            ws = self._spreadsheet.worksheet(sheet_name)
+            all_values = ws.get_all_values()
 
         ALL_DEPTS = ["кухня", "бар", "зал"]
         dept_lower = department.lower()

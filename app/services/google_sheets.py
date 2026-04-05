@@ -37,7 +37,7 @@ MONTH_NAMES_RU = {
 }
 
 POSITION_TO_SECTION = {
-    "Су-шеф": "Руководящий состав",
+    "Руководящий состав": "Руководящий состав",
     "Горячий цех": "Горячий цех",
     "Холодный цех": "Холодный цех",
     "Кондитерский цех": "Кондитерский цех",
@@ -381,14 +381,28 @@ class GoogleSheetsClient:
                 return False
 
         last_row_month = len(all_data)
-        target_section = POSITION_TO_SECTION.get(position)
+
+        # Если custom_title передан — значит position из Техлиста E = custom_title,
+        # для поиска секции используем базовую позицию "Руководящий состав"
+        if custom_title:
+            section_position = "Руководящий состав"
+        else:
+            section_position = position
+
+        display_position = custom_title if custom_title else position
+        logger.info(
+            "Поиск секции для пользователя %s: section_position='%s', display_position='%s'",
+            telegram_id, section_position, display_position,
+        )
+
+        target_section = POSITION_TO_SECTION.get(section_position)
         department_header = DEPARTMENT_TO_HEADER.get(department)
 
         if not target_section:
             logger.warning(
                 "Позиция '%s' не найдена в POSITION_TO_SECTION для пользователя %s, "
                 "вставка по концу блока отдела",
-                position,
+                section_position,
                 telegram_id,
             )
 
@@ -410,7 +424,6 @@ class GoogleSheetsClient:
 
         new_row = insert_after_row + 1
 
-        display_position = custom_title if custom_title else position
         month_ws.insert_row(
             [full_name, str(telegram_id), display_position],
             index=new_row,
@@ -479,7 +492,7 @@ class GoogleSheetsClient:
 
         # Вставить итоговые формулы в S, AJ, AK новой строки
         _SIMPLE_H_POSITIONS = {
-            "Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
+            "Руководящий состав", "Горячий цех", "Холодный цех", "Кондитерский цех",
             "Заготовочный цех", "Коренной цех", "Хостесс", "Менеджер",
             "Грузчик", "Закупщик", "Клининг", "Котломой",
         }

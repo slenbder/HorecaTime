@@ -20,6 +20,7 @@ from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift, check_overlap, _parse_time, round_to_half
+from app.utils.text_utils import make_mention
 from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
 
 userhours_router = Router()
@@ -37,14 +38,6 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
-
-def make_mention(username: str | None, full_name: str) -> str:
-    """Возвращает кликабельный ник или ФИО если ника нет."""
-    escaped = html.escape(full_name)
-    if username:
-        return f'<a href="https://t.me/{username}">{escaped}</a>'
-    return escaped
-
 
 def _fmt_h(v: float) -> str:
     """8.0 → '8', 8.5 → '8.5'"""
@@ -67,7 +60,7 @@ def _date_str(day: int, month: int, year: int) -> str:
 # ---------------------------------------------------------------------------
 
 KITCHEN_POSITIONS = {
-    "Су-шеф", "Горячий цех", "Холодный цех",
+    "Руководящий состав", "Горячий цех", "Холодный цех",
     "Кондитерский цех", "Заготовочный цех", "Коренной цех",
     "Грузчик", "Закупщик",
 }
@@ -121,7 +114,8 @@ async def cmd_shift(message: Message, state: FSMContext):
     tg_id = message.from_user.id
 
     user_data = get_user(tg_id)
-    if not user_data or user_data.get("role") != "user":
+    role = user_data.get("role") if user_data else None
+    if not user_data or role not in ("user", "admin_hall", "admin_bar", "admin_kitchen"):
         await message.answer("❌ Внесение смен недоступно для вашей роли.")
         return
 
@@ -387,27 +381,26 @@ async def _write_waiter_no_photo(
 
 async def _delayed_process_waiter(mgid: str) -> None:
     """Ждёт 1 сек, чтобы все фото группы успели накопиться, затем обрабатывает."""
-    await asyncio.sleep(1.0)
-
-    photo_ids = _mg_photos.get(mgid)
-    if photo_ids is None:
-        _mg_photos.pop(mgid, None)
-        _mg_context.pop(mgid, None)
-        _mg_scheduled.discard(mgid)
-        return
-    if not photo_ids:
-        return
-
-    ctx = _mg_context.pop(mgid)
-    _mg_photos.pop(mgid)
-    _mg_scheduled.discard(mgid)
-
-    message = ctx["message"]
-    state = ctx["state"]
-    caption = (ctx["caption"] or "").strip()
-    tg_id = message.from_user.id
-
     try:
+        await asyncio.sleep(1.0)
+
+        photo_ids = _mg_photos.get(mgid)
+        if photo_ids is None:
+            _mg_photos.pop(mgid, None)
+            _mg_context.pop(mgid, None)
+            _mg_scheduled.discard(mgid)
+            return
+        if not photo_ids:
+            return
+
+        ctx = _mg_context.pop(mgid)
+        _mg_photos.pop(mgid)
+        _mg_scheduled.discard(mgid)
+
+        message = ctx["message"]
+        state = ctx["state"]
+        caption = (ctx["caption"] or "").strip()
+
         logger.info(
             "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
             mgid, len(photo_ids), caption,
@@ -416,19 +409,25 @@ async def _delayed_process_waiter(mgid: str) -> None:
         result = parse_shift(caption, "Официант")
         if result is None:
             await message.answer("❌ Не удалось распознать формат смены.")
+            await state.clear()
             return
 
-        await _send_waiter_report(message, state, tg_id, result, photo_ids)
-    except Exception:
-        logger.exception("Ошибка обработки медиагруппы для user %s", tg_id)
-        await state.clear()
-        try:
-            await message.bot.send_message(
-                tg_id,
-                "Произошла ошибка при обработке фотографий. Попробуйте отправить заново.",
-            )
-        except Exception:
-            pass  # если не удалось отправить сообщение, хотя бы FSM очистили
+        await _send_waiter_report(message, state, message.from_user.id, result, photo_ids)
+
+    except Exception as e:
+        error_logger.exception("_delayed_process_waiter: необработанная ошибка mgid=%s: %s", mgid, e)
+
+        ctx = _mg_context.get(mgid)
+        if ctx:
+            try:
+                await ctx["message"].answer("❌ Произошла ошибка при обработке фото. Попробуйте ещё раз.")
+                await ctx["state"].clear()
+            except Exception:
+                error_logger.exception("_delayed_process_waiter: не удалось уведомить пользователя mgid=%s", mgid)
+
+        _mg_photos.pop(mgid, None)
+        _mg_context.pop(mgid, None)
+        _mg_scheduled.discard(mgid)
 
 
 async def _send_waiter_report(

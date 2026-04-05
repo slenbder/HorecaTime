@@ -41,7 +41,7 @@ def bar_positions_keyboard() -> ReplyKeyboardMarkup:
 def kitchen_positions_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Шеф/Су-шеф")],
+            [KeyboardButton(text="Руководящий состав")],
             [KeyboardButton(text="Горячий цех")],
             [KeyboardButton(text="Холодный цех")],
             [KeyboardButton(text="Кондитерский цех")],

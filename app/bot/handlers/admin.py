@@ -31,7 +31,7 @@ _DEPT_BUTTONS = ["Зал", "Бар", "Кухня", "МОП"]
 _DEPT_POSITIONS = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
     "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Су-шеф", "Горячий цех", "Холодный цех", "Кондитерский цех",
+    "Кухня": ["Руководящий состав", "Горячий цех", "Холодный цех", "Кондитерский цех",
                "Заготовочный цех", "Коренной цех", "Грузчик", "Закупщик"],
     "МОП":   ["Клининг", "Котломой"],
 }
@@ -75,6 +75,15 @@ def _dept_keyboard() -> InlineKeyboardMarkup:
         for dept in _DEPT_BUTTONS
     ]
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _hall_dept_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="Зал", callback_data="broadcast_dept:Зал")],
+        [InlineKeyboardButton(text="МОП", callback_data="broadcast_dept:МОП")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -346,7 +355,11 @@ async def cmd_message_dept(message: Message, state: FSMContext, user_role: str =
         await message.answer("⛔️ Недостаточно прав.")
         return
 
-    if user_role in _ROLE_TO_DEPT:
+    if user_role == "admin_hall":
+        await state.set_state(AuthStates.waiting_broadcast_dept)
+        logger.info("/message_dept: %s (role=admin_hall) → показываю выбор Зал/МОП", tg_id)
+        await message.answer("Выберите отдел для рассылки:", reply_markup=_hall_dept_keyboard())
+    elif user_role in _ROLE_TO_DEPT:
         dept = _ROLE_TO_DEPT[user_role]
         await state.update_data(broadcast_type="dept", broadcast_dept=dept)
         await state.set_state(AuthStates.waiting_broadcast_text)
@@ -400,7 +413,12 @@ async def msg_broadcast_text(message: Message, state: FSMContext):
         label = f"сотрудникам отдела {dept}"
 
     sender_role = _resolve_sender_role(tg_id)
-    sender_label = ROLE_TO_SENDER[sender_role]
+    if sender_role is None:
+        user_data = get_user(tg_id)
+        sender_role = user_data["role"] if user_data else None
+        if sender_role is not None:
+            logger.info("broadcast: sender_role для %s получена из SQLite fallback: %s", tg_id, sender_role)
+    sender_label = ROLE_TO_SENDER.get(sender_role, "администрации")
     broadcast_text = f"📢 Сообщение от {sender_label}\n\n{text}"
     sent = 0
     for user in recipients:

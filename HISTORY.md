@@ -4,6 +4,16 @@
 
 ---
 
+## Audit Phase 2 — Поиск секции по базовой позиции для custom_title (2026-04-05)
+
+- `google_sheets.py` `ensure_user_in_current_month_hours`: добавлена переменная `section_position`.
+- Если передан `custom_title` (т.е. Техлист E содержит значение custom_title, а не базовую позицию), `section_position = "Руководящий состав"` — используется для поиска блока в `POSITION_TO_SECTION`.
+- `display_position = custom_title if custom_title else position` — используется для записи в колонку C месячного листа (поведение не изменилось, просто перенесено выше по коду).
+- Логируется `section_position` и `display_position` до поиска секции — упрощает отладку.
+- Тесты: 37/37 зелёных.
+
+---
+
 ## Audit Phase 2 — SQLite fallback для sender_role в msg_broadcast_text (2026-04-02)
 
 - `admin.py` `msg_broadcast_text`: добавлен fallback на SQLite если `_resolve_sender_role()` вернула `None`.

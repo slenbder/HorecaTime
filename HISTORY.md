@@ -355,6 +355,17 @@
   - `test_snapshot_empty_user_rates` — пустая user_rates не вызывает ошибок
   - Итого тестов: было 37, стало 41
 
+- **Bug #18: Добавлены 6 тестов для Google Sheets методов (get_section_range, get_sheet_id_by_name)**
+  - Файл: `tests/test_google_sheets_methods.py`
+  - `test_get_section_range_found` — заголовок отдела найден, диапазон начинается с правильной строки
+  - `test_get_section_range_not_found` — отдел отсутствует → None
+  - `test_get_section_range_multiple_sections` — два отдела: возвращает блок нужного отдела корректно
+  - `test_get_sheet_id_found` — лист найден → возвращает id=123456
+  - `test_get_sheet_id_not_found` — листа нет → None
+  - `test_get_sheet_id_empty_list` — пустой список листов → None без исключения
+  - Мокирование через `unittest.mock.MagicMock`, реальных запросов нет
+  - Итого тестов: было 41, стало 47
+
 ---
 
 ## Ключевые изменения терминологии

@@ -335,6 +335,13 @@
   - Удалена строка `Pillow==10.4.0` из `requirements.txt`
   - Уменьшен размер образа и время установки зависимостей
 
+- **Bug #10: Добавлен retry-паттерн в 3 метода Google Sheets API**
+  - Методы выполняли прямые сетевые вызовы без try/except и `_reconnect()`
+  - `mark_user_approved`: обёрнут `ws.update_cell()` в try/except + reconnect
+  - `get_sheet_id_by_name`: обёрнут `self._spreadsheet.worksheets()` в try/except + reconnect
+  - `get_section_range`: обёрнуты `worksheet()` + `get_all_values()` в try/except + reconnect
+  - Паттерн: `logger.warning(...) → self._reconnect() → повторный вызов`
+
 ---
 
 ## Ключевые изменения терминологии

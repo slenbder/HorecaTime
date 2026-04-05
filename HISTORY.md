@@ -347,6 +347,14 @@
   - `app/bot/handlers/userhours.py`: импорт + вызов обновлены на `parse_time`
   - Обновлено 2 файла, 4 вхождения
 
+- **Bug #17: Добавлены 4 теста для snapshot_user_rates_history()**
+  - Файл: `tests/test_snapshot_user_rates.py`
+  - `test_snapshot_basic` — базовый снимок: 3 записи из user_rates → user_rates_history
+  - `test_snapshot_idempotency` — повторный вызов не дублирует строки (INSERT OR IGNORE)
+  - `test_snapshot_different_months` — снимки за март и апрель хранятся независимо
+  - `test_snapshot_empty_user_rates` — пустая user_rates не вызывает ошибок
+  - Итого тестов: было 37, стало 41
+
 ---
 
 ## Ключевые изменения терминологии

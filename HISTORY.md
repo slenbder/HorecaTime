@@ -366,6 +366,18 @@
   - Мокирование через `unittest.mock.MagicMock`, реальных запросов нет
   - Итого тестов: было 41, стало 47
 
+- **Bug #16: Добавлены 8 тестов для user_rates CRUD операций (get/set/history)**
+  - Файл: `tests/test_models_user_rates.py`
+  - `test_get_user_rate_found` — ставка найдена → словарь с base_rate
+  - `test_get_user_rate_not_found` — запись отсутствует → None
+  - `test_get_user_rate_with_extra` — Раннер с extra_rate → оба поля корректны
+  - `test_set_user_rate_create` — новая запись создаётся с правильными данными
+  - `test_set_user_rate_update` — обновление ставки, запись не дублируется
+  - `test_set_user_rate_no_extra` — extra_rate=None сохраняется как NULL в БД
+  - `test_get_user_rate_history_found` — снимок за март 2026 найден
+  - `test_get_user_rate_history_not_found` — снимок отсутствует → None
+  - Итого тестов: было 47, стало 55
+
 ---
 
 ## Ключевые изменения терминологии

@@ -378,6 +378,15 @@
   - `test_get_user_rate_history_not_found` — снимок отсутствует → None
   - Итого тестов: было 47, стало 55
 
+- **Bug #13: Добавлен asyncio.Lock per mgid для защиты глобального _mg_* state**
+  - Файл: `app/bot/handlers/userhours.py`
+  - Добавлена `_mg_locks: dict[str, asyncio.Lock] = {}` рядом с остальными `_mg_*` буферами
+  - `_process_waiter_shift_input`: весь блок записи в `_mg_photos`/`_mg_context`/`_mg_scheduled` обёрнут в `async with lock`
+  - `_delayed_process_waiter`: секция чтения + pop данных обёрнута в `async with lock`; в блоке except — тоже защита через lock; при очистке данных lock удаляется из `_mg_locks`
+  - Lock создаётся через `setdefault()` при первом обращении, удаляется после pop данных
+  - Sleep (1 сек накопления фото) остаётся вне lock — параллельная доставка фото не блокируется
+  - Обновлено 2 функции
+
 ---
 
 ## Ключевые изменения терминологии

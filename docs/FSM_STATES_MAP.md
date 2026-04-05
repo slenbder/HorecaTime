@@ -172,6 +172,40 @@ FSM-классы: `app/bot/fsm/shift_states.py` → `ShiftStates`
 
 ---
 
+## Exit via /cancel
+
+**Handler:** `cmd_cancel` (строка ~176), зарегистрирован ПЕРЕД `process_shift_input`  
+**Фильтр:** `Command("cancel")` — без StateFilter → срабатывает из любого состояния  
+**Порядок регистрации:** важен — `cmd_cancel` объявлен перед `process_shift_input`, иначе  
+`ShiftStates.waiting_shift_input` перехватил бы `/cancel` как текст ввода смены.
+
+### Поведение
+
+| Ситуация | Действие |
+|----------|----------|
+| FSM не активна (`current_state is None`) | Сообщение «Нет активных действий» — без `state.clear()` |
+| Любое активное состояние (Раннер/Simple-H/Бармен) | `state.clear()` → подтверждение пользователю |
+| Официант + медиагруппа в обработке | Ищем mgid в `_mg_context` по `user_id` → ставим `ctx["cancelled"] = True` → `state.clear()` |
+
+### Edge case: Официант + медиагруппа
+
+```
+Пользователь отправил фото → _delayed_process_waiter запущен (asyncio task)
+Пользователь нажимает /cancel:
+  1. cmd_cancel: находит mgid в _mg_context по user_id, ставит ctx["cancelled"] = True
+  2. cmd_cancel: state.clear()
+  3. (через ~1 сек) _delayed_process_waiter просыпается:
+     - pop ctx из _mg_context (lock)
+     - проверяет ctx.get("cancelled") → True → state.clear() (idempotent) → return
+     - запись в таблицу НЕ происходит ✅
+```
+
+Почему `mgid` ищется по `user_id`, а не из FSM state data:  
+`mgid` не сохраняется в FSM state — он является ключом глобального `_mg_context`,  
+а привязка к пользователю — через `ctx["message"].from_user.id`.
+
+---
+
 ## Наблюдения для Bug #11 (FSM /cancel + таймаут)
 
 1. **Все потоки начинаются с `waiting_shift_input`** — `/cancel` должен работать из любого состояния.

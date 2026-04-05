@@ -170,6 +170,42 @@ async def cmd_shift(message: Message, state: FSMContext):
 
 
 # ---------------------------------------------------------------------------
+# /cancel — отмена текущего действия
+# ---------------------------------------------------------------------------
+
+@userhours_router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    """Отменить текущее действие (внесение смены)."""
+    current_state = await state.get_state()
+    user_id = message.from_user.id
+
+    if current_state is None:
+        await message.answer("Нет активных действий для отмены.")
+        return
+
+    # Edge case: Официант с медиагруппой в обработке.
+    # mgid не хранится в FSM state — ищем по user_id в глобальном буфере.
+    for mgid, ctx in list(_mg_context.items()):
+        if ctx["message"].from_user.id == user_id:
+            ctx["cancelled"] = True
+            logger.info(
+                "cmd_cancel: установлен флаг отмены для mgid=%s (user_id=%s)",
+                mgid, user_id,
+            )
+            break
+
+    await state.clear()
+    await message.answer(
+        "✅ Действие отменено. Данные не сохранены.\n\n"
+        "Чтобы внести смену заново, используйте /shift"
+    )
+    logger.info(
+        "cmd_cancel: пользователь %s отменил FSM из состояния %s",
+        user_id, current_state,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Шаг 2 — ввод даты и времени
 # ---------------------------------------------------------------------------
 
@@ -408,6 +444,15 @@ async def _delayed_process_waiter(mgid: str) -> None:
         message = ctx["message"]
         state = ctx["state"]
         caption = (ctx["caption"] or "").strip()
+
+        # Проверка флага отмены (пользователь нажал /cancel пока накапливалась группа)
+        if ctx.get("cancelled"):
+            logger.info(
+                "_delayed_process_waiter: mgid=%s отменён пользователем, пропускаем запись",
+                mgid,
+            )
+            await state.clear()
+            return
 
         logger.info(
             "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",

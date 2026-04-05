@@ -378,6 +378,15 @@
   - `test_get_user_rate_history_not_found` — снимок отсутствует → None
   - Итого тестов: было 47, стало 55
 
+- **Bug #11 Этап 2: Добавлена команда /cancel для выхода из FSM внесения смены**
+  - Файл: `app/bot/handlers/userhours.py`
+  - Handler `cmd_cancel` зарегистрирован перед `process_shift_input` (порядок критичен)
+  - Работает из любого состояния: `waiting_shift_input`, `waiting_ah_input`, `waiting_ah_comment`
+  - Edge case Официант: поиск mgid по `user_id` в `_mg_context` → флаг `ctx["cancelled"] = True`
+  - `_delayed_process_waiter`: проверяет `ctx.get("cancelled")` перед записью → ранний выход
+  - При `current_state is None` — сообщение «нет активных действий» без лишнего `state.clear()`
+  - Обновлён `docs/FSM_STATES_MAP.md`: добавлена секция «Exit via /cancel»
+
 - **Bug #11 Этап 1: Reconnaissance — составлена карта FSM состояний (3 states, 4 entry flows)**
   - Файл: `docs/FSM_STATES_MAP.md` (создан, папка docs/ создана)
   - Ветка: `fix/phase-2-bug11-fsm-cancel`

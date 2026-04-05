@@ -378,6 +378,15 @@
   - `test_get_user_rate_history_not_found` — снимок отсутствует → None
   - Итого тестов: было 47, стало 55
 
+- **Bug #11 Этап 1: Reconnaissance — составлена карта FSM состояний (3 states, 4 entry flows)**
+  - Файл: `docs/FSM_STATES_MAP.md` (создан, папка docs/ создана)
+  - Ветка: `fix/phase-2-bug11-fsm-cancel`
+  - ShiftStates: `waiting_shift_input`, `waiting_ah_input`, `waiting_ah_comment`
+  - 4 flow: Раннер (3 states), Официант (1 state), Бармен/Барбэк (2 states), Simple-H (1 state)
+  - 7 вызовов `state.set_state()`, 16 вызовов `state.clear()` в 7 функциях
+  - Все 3 состояния покрыты handlers ✅
+  - Обнаружено: при отмене из Официант-потока нужна инвалидация `_mg_context[mgid]`
+
 - **Bug #13: Добавлен asyncio.Lock per mgid для защиты глобального _mg_* state**
   - Файл: `app/bot/handlers/userhours.py`
   - Добавлена `_mg_locks: dict[str, asyncio.Lock] = {}` рядом с остальными `_mg_*` буферами

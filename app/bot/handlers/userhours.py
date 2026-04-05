@@ -114,7 +114,8 @@ async def cmd_shift(message: Message, state: FSMContext):
     tg_id = message.from_user.id
 
     user_data = get_user(tg_id)
-    if not user_data or user_data.get("role") != "user":
+    role = user_data.get("role") if user_data else None
+    if not user_data or role not in ("user", "admin_hall", "admin_bar", "admin_kitchen"):
         await message.answer("❌ Внесение смен недоступно для вашей роли.")
         return
 

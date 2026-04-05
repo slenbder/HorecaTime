@@ -9,9 +9,9 @@ Python/aiogram 3 Telegram-бот для учёта рабочего времен
 
 ## Текущий фокус
 
-**Что делаем сейчас:** Audit Phase 1 закрыта (все 5 критичных), Phase 2 в процессе
+**Что делаем сейчас:** Phase 1 ✅ завершена (10 багов), ветка готова к PR → Phase 2 (4/14 закрыты), Phase 3 (улучшения)
 **Активная ветка:** `fix/post-audit-clean`
-**Roadmap:** AUDIT.md → Phase 2 завершение → Phase 3 (улучшения) → Docker → деплой
+**Roadmap:** PR fix/post-audit-clean → main → Phase 2 (оставшиеся 10) → Phase 3 → Docker → деплой
 
 **Этап 10+ завершён:**
 - Таблицы `user_rates` + `user_rates_history` в SQLite
@@ -23,18 +23,28 @@ Python/aiogram 3 Telegram-бот для учёта рабочего времен
 - `/hours_*` считают через `user_rates`
 - Снимок `user_rates_history` при `switch_month()`
 
-**Аудит Phase 1 ✅ завершена (5 критичных):**
+**Аудит Phase 1 ✅ завершена (10 багов):**
+
+*5 критичных из FINAL_AUDIT.md:*
 1. `_pending_custom_titles` → FSM data (валидация 2-50 символов)
 2. `/message_dept` включает МОП для admin_hall
 3. Инъекция формул → `value_input_option="RAW"` в Google Sheets
 4. HTML-escape через `html.escape()` для комментариев и упоминаний
 5. `_delayed_process_waiter` обёрнут в try/except + state.clear()
 
-**Аудит Phase 2 (в процессе):**
-- Проверки ролей в callbacks
-- Email маскировка в логах
-- `make_mention()` вынесена в `app/utils/text_utils.py`
-- Константы позиций консолидированы в `config.py`
+*5 дополнительных из тестирования:*
+6. Переименование `"Шеф/Су-шеф"` → `"Руководящий состав"` (10 файлов + SQL)
+7. `custom_title` записывается в Техлист колонку E (не `"Руководящий состав"`)
+8. SQLite fallback для `sender_role` в `msg_broadcast_text`
+9. Admins (`admin_*`) могут вносить свои смены через `/shift`
+10. Поиск секции по `section_position` (базовой позиции) при `custom_title`
+
+**Аудит Phase 2 (4/14 закрыты — в этой же ветке):**
+- ✅ Проверки ролей в approve callbacks
+- ✅ Email маскировка в логах + `make_mention()` в `text_utils.py`
+- ✅ Константы позиций консолидированы в `config.py`
+- ✅ Retry-паттерн для 3 методов Google Sheets
+- 🔄 Оставшиеся 10 — в следующей ветке
 
 ---
 
@@ -176,8 +186,9 @@ Commit: "fix(scope): описание"
 ## На горизонте
 
 ### Ближайшие задачи
-- **Phase 2 завершение** — тесты, зависимости, .env.example
-- **Phase 3** — улучшения из AUDIT.md
+- **Смержить PR** fix/post-audit-clean → main
+- **Phase 2 остаток** (10/14) — тесты для models.py/snapshot/section, asyncio.Lock для _mg_*, FSM таймауты/отмена
+- **Phase 3** — улучшения из FINAL_AUDIT.md (10 желательных)
 - **Docker** setup и деплой
 - **Apps Script миграция** (отложено)
 
@@ -201,6 +212,9 @@ Commit: "fix(scope): описание"
 - **AUDIT.md line numbers устаревают** — использовать `~244` + контекст
 - **app/db/models.py в .gitignore** — миграция на деплое
 - **Решения сразу в docs**, не откладывать
+- **custom_title пишется в два места**: Техлист колонка E (вместо `position`) + месячный лист колонка C (вместо `position`)
+- **section_position vs display_position**: для поиска блока `POSITION_TO_SECTION` используется `section_position = "Руководящий состав"` (базовая), для записи в C — `display_position = custom_title`
+- **admin_* могут вносить смены**: проверка роли в `/shift` включает `admin_hall/bar/kitchen`, не только `user`
 
 ---
 

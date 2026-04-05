@@ -4,44 +4,6 @@
 
 ---
 
-## Audit Phase 2 — Поиск секции по базовой позиции для custom_title (2026-04-05)
-
-- `google_sheets.py` `ensure_user_in_current_month_hours`: добавлена переменная `section_position`.
-- Если передан `custom_title` (т.е. Техлист E содержит значение custom_title, а не базовую позицию), `section_position = "Руководящий состав"` — используется для поиска блока в `POSITION_TO_SECTION`.
-- `display_position = custom_title if custom_title else position` — используется для записи в колонку C месячного листа (поведение не изменилось, просто перенесено выше по коду).
-- Логируется `section_position` и `display_position` до поиска секции — упрощает отладку.
-- Тесты: 37/37 зелёных.
-
----
-
-## Audit Phase 2 — SQLite fallback для sender_role в msg_broadcast_text (2026-04-02)
-
-- `admin.py` `msg_broadcast_text`: добавлен fallback на SQLite если `_resolve_sender_role()` вернула `None`.
-- Обращение к `ROLE_TO_SENDER` заменено на `.get(sender_role, "администрации")` — защита от KeyError при неизвестной роли.
-- При использовании fallback логируется сообщение на уровне INFO.
-- Тесты: 37/37 зелёных.
-
----
-
-## Audit Phase 2 — Запись custom_title в Техлист колонку E (2026-04-02)
-
-- `auth.py` `process_fio`: для позиции `"Руководящий состав"` в колонку E Техлиста теперь записывается `custom_title` (напр. "Бренд-шеф", "Су-шеф ЗЦ"), а не строка `"Руководящий состав"`.
-- Для всех остальных позиций поведение не изменилось — в E идёт `position`.
-- Логируется выбранное значение для колонки E (с указанием `position` и `custom_title`).
-- Тесты: 37/37 зелёных.
-
----
-
-## Audit Phase 2 — Переименование позиции (2026-04-02)
-
-- Legacy-название `"Шеф/Су-шеф"` (UI) и `"Су-шеф"` (внутреннее имя позиции) переименованы в `"Руководящий состав"` во всех местах кода.
-- Затронуто 7 файлов: `auth.py`, `admin.py`, `superadmin.py`, `userhours.py`, `google_sheets.py`, `monthly_switch.py`, `common.py` + комментарии в `auth_states.py`.
-- SQLite: `UPDATE rates SET position = 'Руководящий состав' WHERE position = 'Су-шеф'` — обновлена 1 строка (ставка 500.0 р/ч).
-- `migrate_user_rates_once.py` не тронут — одноразовый скрипт, уже выполнен.
-- Тесты: 37/37 зелёных.
-
----
-
 ## Этап 0 ✅ завершён
 
 - Полный approve-flow авторизации (FSM AuthStates)
@@ -212,57 +174,73 @@
 
 ---
 
-## Audit Phase 1 ✅ завершена (5 критичных багов)
+## Audit Phase 1 ✅ завершена (10 багов)
 
-**Дата:** 2026-03-28  
-**Ветка:** `fix/post-audit-bugs`
+**Дата:** 2026-04-05
+**Ветка:** `fix/post-audit-clean`
+
+### 5 критичных (из FINAL_AUDIT.md)
 
 1. **_pending_custom_titles → _pending_admins**
    - Глобальный `_pending_custom_titles: dict[int, str]` удалён
    - Валидация custom_title: 2-50 символов в `process_kitchen_title` (FSM)
    - `custom_title` сохраняется в `_pending_admins[callback_key]` вместе с tg_id/row_index/full_name
    - `process_approve` читает `custom_title` из `_pending_admins` по callback_key
-   - Очистка `_pending_custom_titles` в `process_reject` удалена
-   - Файл: `auth.py`
-   - Ветка: `fix/post-audit-clean` (2026-04-02)
+   - Файл: `auth.py` | Коммит: `a05074b`
 
 2. **/message_dept + МОП**
    - admin_hall теперь выбирает отдел (Зал или МОП) перед вводом текста рассылки
    - Добавлена `_hall_dept_keyboard()` с кнопками Зал/МОП/Отмена
    - `cmd_message_dept`: проверка `admin_hall` до `_ROLE_TO_DEPT`, переходит в `waiting_broadcast_dept`
-   - Существующий `cb_broadcast_dept` обрабатывает выбор без изменений
-   - Файл: `admin.py`
-   - Ветка: `fix/post-audit-clean` (2026-04-02)
+   - Файл: `admin.py` | Коммит: `013b5c3`
 
 3. **Инъекция формул Google Sheets**
    - `value_input_option="USER_ENTERED"` → `"RAW"` для пользовательских данных
    - Защита от `=HYPERLINK()`, `=IMPORTXML()` и других формул через `custom_title`/ФИО
-   - Файлы: `google_sheets.py:417` (`insert_row` с `[full_name, telegram_id, display_position]`), `auth.py:293`
-   - Строка `google_sheets.py:526` (`batch_update` с `=SUMPRODUCT`, `=S+AJ` и др.) намеренно оставлена с `USER_ENTERED` — там записываются hardcoded формулы из кода
-   - Ветка: `fix/post-audit-clean` (2026-04-02)
+   - `google_sheets.py:526` (`=SUMPRODUCT`, `=S+AJ`) намеренно оставлена с `USER_ENTERED` — hardcoded формулы
+   - Файлы: `google_sheets.py`, `auth.py` | Коммит: `67197ae`
 
 4. **HTML-инъекция через user inputs в HTML-сообщениях**
-   - `html.escape()` применён ко всем user inputs в parse_mode="HTML" сообщениях
-   - Защита от `<a href="tg://...">` и других HTML-инъекций
-   - `make_mention()` дублировалась в `userhours.py` и `auth.py` без экранирования `full_name`
    - Создан `app/utils/text_utils.py`: `make_mention()` с `html.escape(full_name)` + `mask_email()`
-   - Локальные копии `make_mention()` удалены из обоих файлов, добавлен импорт из `text_utils`
-   - `comment` (FSM input Раннера) → `html.escape(comment)` в `userhours.py`
-   - `text` (сообщение пользователя разработчику) → `html.escape(text)` в `contact_dev_send`
-   - `callback.from_user.full_name` → `html.escape(...)` в `process_approve` и `process_reject`
-   - Все user inputs в HTML-сообщениях теперь экранируются
-   - Файлы: `userhours.py`, `auth.py`, `app/utils/text_utils.py` (новый)
-   - Ветка: `fix/post-audit-clean` (2026-04-02)
+   - `html.escape()` применён к: `comment` Раннера, `text` в contact_dev, `full_name` в approve/reject
+   - Файлы: `userhours.py`, `auth.py`, `app/utils/text_utils.py` (новый) | Коммиты: `5adcb11`, `c0ac67b`
 
 5. **_delayed_process_waiter без try/except**
-   - Всё тело функции обёрнуто в `try/except Exception`
-   - `await state.clear()` при ошибке парсинга caption (`result is None`) — официант больше не застревает в FSM
-   - В `except`: уведомление пользователю + `state.clear()` + очистка `_mg_photos`/`_mg_context`/`_mg_scheduled` (предотвращение утечки памяти)
+   - Тело функции обёрнуто в `try/except Exception`
+   - `await state.clear()` при ошибке; очистка `_mg_photos`/`_mg_context`/`_mg_scheduled`
    - Логирование через `error_logger.exception()` (включает traceback)
-   - Файл: `userhours.py`
-   - Ветка: `fix/post-audit-clean` (2026-04-02)
+   - Файл: `userhours.py` | Коммит: `9da295c`
 
-**Audit Phase 1 полностью завершена — все 5 критичных багов закрыты.**
+### 5 дополнительных (из тестирования)
+
+6. **Переименование "Шеф/Су-шеф" → "Руководящий состав"**
+   - Legacy-названия `"Шеф/Су-шеф"` (UI) и `"Су-шеф"` (внутреннее) заменены во всём коде
+   - Затронуто 7 файлов + SQL: `UPDATE rates SET position = 'Руководящий состав' WHERE position = 'Су-шеф'`
+   - Константа `LEADERSHIP_POSITION = "Руководящий состав"` добавлена в `config.py`
+   - Файлы: `auth.py`, `admin.py`, `superadmin.py`, `userhours.py`, `google_sheets.py`, `monthly_switch.py`, `common.py` | Коммит: `a04a29e`
+
+7. **custom_title записывается в Техлист колонку E**
+   - Для `"Руководящий состав"` в E Техлиста теперь идёт `custom_title` (напр. "Бренд-шеф"), а не строка позиции
+   - Для всех остальных позиций поведение не изменилось — в E идёт `position`
+   - Файл: `auth.py` | Коммит: `0b2de69`
+
+8. **SQLite fallback для sender_role в msg_broadcast_text**
+   - `_resolve_sender_role()` при возврате `None` теперь делает fallback на SQLite
+   - `ROLE_TO_SENDER` заменено на `.get(sender_role, "администрации")` — защита от KeyError
+   - Файл: `admin.py` | Коммит: `a0fe075`
+
+9. **Admins могут вносить свои смены через /shift**
+   - Проверка роли в `cmd_shift` изменена: `role != "user"` → `role not in ("user", "admin_hall", "admin_bar", "admin_kitchen")`
+   - Администраторы теперь могут использовать `/shift` для собственных смен
+   - Файл: `userhours.py` | Коммит: в docs-коммите этой ветки
+
+10. **Поиск секции по базовой позиции при custom_title**
+    - Введена переменная `section_position`: если `custom_title` задан → `"Руководящий состав"`, иначе `position`
+    - `display_position = custom_title if custom_title else position` — для записи в колонку C
+    - `section_position` передаётся в `POSITION_TO_SECTION` для поиска блока
+    - Файл: `google_sheets.py` | Коммит: `e1a6285`
+
+**Все 10 багов Phase 1 закрыты. 37/37 тестов зелёных.**
 
 ---
 

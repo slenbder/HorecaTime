@@ -155,3 +155,20 @@ if dept == "Зал":
 - П.2 — добавить `updated_at` в схему rates в TECH_REFERENCE.md
 
 Код готов к применению фиксов из FINAL_AUDIT.md.
+
+---
+
+## СТАТУС (2026-04-05)
+
+✅ **Все 10 расхождений устранены в ветке `fix/post-audit-clean`:**
+
+- П.1 — `hourly_rate` удалено из схемы `users` (models.py)
+- П.2 — `updated_at` добавлен в схему `rates` в TECH_REFERENCE.md
+- П.3 — МОП включён в рассылку admin_hall (admin.py — `013b5c3`)
+- П.4 — formula injection закрыт (`RAW` вместо `USER_ENTERED` — `67197ae`)
+- П.5 — `_pending_custom_titles` → FSM data (`a05074b`)
+- П.6 — `_delayed_process_waiter` обёрнут в try/except (`9da295c`)
+- П.7 — `html.escape()` применён ко всем user inputs (`5adcb11`, `c0ac67b`)
+- П.8 — `text_utils.py` создан, `make_mention()` и `mask_email()` вынесены (`5adcb11`)
+- П.9 — константы позиций консолидированы в `config.py` (Phase 2 #8)
+- П.10 — проверки ролей в `approve_ah_callback` и `process_approve` добавлены (Phase 2 #3,#4)

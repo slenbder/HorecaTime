@@ -39,6 +39,7 @@ async def main():
     from app.bot.middlewares.roles import RoleMiddleware
     from app.services.google_sheets import GoogleSheetsClient
     from app.scheduler.monthly_switch import notify_upcoming_switch, switch_month
+    from app.scheduler.fsm_cleanup import cleanup_expired_fsm_states
 
     bot = Bot(
         token=BOT_TOKEN,
@@ -72,6 +73,13 @@ async def main():
         switch_month,
         CronTrigger(day=1, hour=18, minute=0, timezone=ZoneInfo("Europe/Moscow")),
         args=[bot, sheets_client, DB_PATH],
+    )
+    scheduler.add_job(
+        cleanup_expired_fsm_states,
+        trigger="interval",
+        minutes=5,
+        id="fsm_cleanup",
+        replace_existing=True,
     )
     scheduler.start()
     logger.info("Планировщик APScheduler запущен (переключение месяца 1-го в 18:00 МСК)")

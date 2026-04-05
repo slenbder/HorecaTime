@@ -27,7 +27,7 @@ from app.bot.keyboards.common import (
 from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role, get_rate, set_user_rate
 from app.services.google_sheets import GoogleSheetsClient
-from app.utils.text_utils import make_mention
+from app.utils.text_utils import make_mention, mask_email
 from config import (
     SUPERADMIN_IDS,
     ADMIN_HALL_IDS,
@@ -870,7 +870,7 @@ async def process_promote_email(message: Message, state: FSMContext):
     username = message.from_user.username
     mention = make_mention(username, full_name)
 
-    logger.info("process_promote_email: пользователь %s ввёл email %s, отдел %s", tg_id, email, dept)
+    logger.info("process_promote_email: пользователь %s ввёл email %s, отдел %s", tg_id, mask_email(email), dept)
 
     notify_text = (
         f"📧 Новый администратор {mention} ввёл email для доступа к таблице:\n"

@@ -308,6 +308,21 @@
 
 ---
 
+## Audit Phase 2 (продолжение) — ветка fix/phase-2-audit
+
+**Дата:** 2026-04-05
+**Ветка:** `fix/phase-2-audit`
+
+### Завершённые баги:
+
+- **Bug #9: Email маскировка в логах через mask_email()**
+  - `process_promote_email` логировал email в plaintext (`auth.py:873`)
+  - Добавлен импорт `mask_email` из `app/utils/text_utils`
+  - Email теперь маскируется: формат `p***r@gmail.com`
+  - Файл: `auth.py:30, 873`
+
+---
+
 ## Ключевые изменения терминологии
 
 **До:**

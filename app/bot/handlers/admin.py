@@ -406,6 +406,10 @@ async def msg_broadcast_text(message: Message, state: FSMContext):
     else:
         dept = data.get("broadcast_dept", "")
         recipients = await get_users_by_department(DB_PATH, dept)
+        if dept == "Зал":
+            mop_users = await get_users_by_department(DB_PATH, "МОП")
+            seen = {u["telegram_id"] for u in recipients}
+            recipients += [u for u in mop_users if u["telegram_id"] not in seen]
         label = f"сотрудникам отдела {dept}"
 
     sender_role = _resolve_sender_role(tg_id)

@@ -284,7 +284,7 @@ async def process_position(message: Message, state: FSMContext):
 
 
 @auth_router.message(AuthStates.waiting_kitchen_title)
-async def process_kitchen_title(message: Message, state: FSMContext):
+async def process_custom_title_input(message: Message, state: FSMContext):
     custom_title = (message.text or "").strip()
     if len(custom_title) < 2 or len(custom_title) > 50:
         logger.warning(
@@ -405,10 +405,10 @@ async def process_fio(message: Message, state: FSMContext):
     # 2. Формируем текст заявки с inline-кнопками
     text = (
         "📝 <b>Новая заявка на доступ к боту:</b>\n\n"
-        f"👤 <b>ФИО:</b> {fio}\n"
+        f"👤 <b>ФИО:</b> {html.escape(fio)}\n"
         f"🏢 <b>Отдел:</b> {department}\n"
         f"💼 <b>Позиция:</b> {position_display}\n"
-        f"🔧 <b>Должность:</b> {display_title}\n"
+        f"🔧 <b>Должность:</b> {html.escape(display_title)}\n"
         f"🆔 Telegram ID: <code>{tg_id}</code>\n"
         f"📱 Ник: {mention}\n"
         f"📋 Строка в Техлисте: {row_index}\n\n"
@@ -594,7 +594,7 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
 
 
 @auth_router.callback_query(F.data.startswith("approve_"))
-async def process_approve(callback: CallbackQuery):
+async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
     try:
         original_text = callback.message.text or ""
@@ -638,13 +638,35 @@ async def process_approve(callback: CallbackQuery):
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
         )
 
+        # Шеф/Су-шеф: запрашиваем должность у администратора через FSM
+        if position == "Су-шеф":
+            await state.update_data(
+                pending_custom_title=True,
+                approved_tg_id=user_tg_id,
+                approved_full_name=fio,
+                approved_dept=department,
+                approved_position=position,
+            )
+            await state.set_state(AuthStates.waiting_kitchen_title)
+            logger.info("custom_title сохранён в FSM для %s", user_tg_id)
+            await callback.message.edit_text(
+                text=original_text + f"\n\n⏳ Одобрено. Ожидаю ввод должности от администратора {callback.from_user.full_name}...",
+                reply_markup=None,
+            )
+            await callback.message.answer(
+                f"Сотрудник {fio} — Шеф/Су-шеф.\n"
+                "Введите должность сотрудника (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):"
+            )
+            await callback.answer()
+            return
+
         # Сразу добавляем пользователя в график текущего месяца
         callback_key = f"{user_tg_id}_{row_index}"
         pending_data = _pending_admins.pop(callback_key, {})
         pending_custom_title = pending_data.get('custom_title')
         try:
             inserted = sheets_client.ensure_user_in_current_month_hours(
-                user_tg_id, custom_title=pending_custom_title
+                user_tg_id, custom_title=None
             )
             logger.info(
                 "Синхронизация в график завершена для %s, inserted=%s",
@@ -801,16 +823,17 @@ async def contact_dev_send(message: Message, state: FSMContext):
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     username = message.from_user.username
+    escaped_full_name = html.escape(full_name)
     if username:
         user_mention = f'<a href="https://t.me/{username}">@{username}</a>'
     else:
-        user_mention = full_name
+        user_mention = escaped_full_name
 
     logger.info("Пользователь %s (%s) отправляет сообщение разработчику", tg_id, full_name)
 
     dev_text = (
         f"📨 Сообщение от пользователя\n\n"
-        f"👤 {user_mention} — {full_name}\n\n"
+        f"👤 {user_mention} — {escaped_full_name}\n\n"
         f"{html.escape(text)}"
     )
 
@@ -851,7 +874,7 @@ async def process_promote_email(message: Message, state: FSMContext):
 
     notify_text = (
         f"📧 Новый администратор {mention} ввёл email для доступа к таблице:\n"
-        f"{email}\n\n"
+        f"{html.escape(email)}\n\n"
         f"Добавьте его как редактора в Google Sheets."
     )
     for sa_id in SUPERADMIN_IDS:

@@ -342,6 +342,11 @@
   - `get_section_range`: обёрнуты `worksheet()` + `get_all_values()` в try/except + reconnect
   - Паттерн: `logger.warning(...) → self._reconnect() → повторный вызов`
 
+- **Bug #12: _parse_time переименована в parse_time (публичный API)**
+  - `app/services/timeparsing.py`: `def _parse_time` → `def parse_time` + внутренний вызов обновлён
+  - `app/bot/handlers/userhours.py`: импорт + вызов обновлены на `parse_time`
+  - Обновлено 2 файла, 4 вхождения
+
 ---
 
 ## Ключевые изменения терминологии

@@ -66,7 +66,7 @@ def _split_hm(raw: str, minutes_str: str | None) -> tuple[int, int] | None:
     return h, m
 
 
-def _parse_time(token: str) -> tuple[float, float] | None:
+def parse_time(token: str) -> tuple[float, float] | None:
     """Возвращает (start_hours, end_hours) или None."""
     m = _TIME_RE.match(token)
     if not m:
@@ -138,7 +138,7 @@ def parse_shift(text: str, position: str) -> dict | None:
         logger.debug("parse_shift: не удалось разобрать дату: %r", date_token)
         return None
 
-    time_result = _parse_time(time_token)
+    time_result = parse_time(time_token)
     if time_result is None:
         logger.debug("parse_shift: не удалось разобрать время: %r", time_token)
         return None

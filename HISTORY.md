@@ -321,6 +321,10 @@
   - Email теперь маскируется: формат `p***r@gmail.com`
   - Файл: `auth.py:30, 873`
 
+- **Bug #14: Добавлен requests>=2.31.0 в requirements.txt**
+  - `app/services/pdfservice.py` использует `import requests`, но пакет отсутствовал в `requirements.txt`
+  - Добавлена строка `requests>=2.31.0` (после `python-dotenv`)
+
 ---
 
 ## Ключевые изменения терминологии

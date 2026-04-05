@@ -172,7 +172,7 @@ class GoogleSheetsClient:
                 {"range": f"D{row_idx}", "values": [[department]]},
                 {"range": f"E{row_idx}", "values": [[position]]},
                 {"range": f"F{row_idx}", "values": [[now_str]]},
-            ])
+            ], value_input_option="RAW")
             logger.info(
                 "Обновлена заявка пользователя %s в строке %s",
                 telegram_id,
@@ -190,7 +190,7 @@ class GoogleSheetsClient:
             now_str,           # F: Дата регистрации
         ]
 
-        ws.update(f"A{next_row}:F{next_row}", [values])
+        ws.update(f"A{next_row}:F{next_row}", [values], value_input_option="RAW")
         logger.info(
             "Создана новая заявка пользователя %s в строке %s",
             telegram_id,
@@ -542,7 +542,7 @@ class GoogleSheetsClient:
                     {"range": f"AM{r}", "values": [[0]]},
                     {"range": f"AN{r}", "values": [[0]]},
                 ]
-            month_ws.batch_update(updates, value_input_option="RAW")
+            month_ws.batch_update(updates, value_input_option="USER_ENTERED")
             logger.info(
                 "Формулы S/AJ/AK вставлены в строку %s листа '%s' (simple_h=%s, runner=%s)",
                 r, month_ws.title, position in _SIMPLE_H_POSITIONS, position == "Раннер",

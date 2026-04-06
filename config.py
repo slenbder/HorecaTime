@@ -29,7 +29,7 @@ if not SPREADSHEET_ID:
     raise ValueError("SPREADSHEET_ID не задан в .env")
 
 # База данных
-DB_PATH = "db/bot.db"
+DB_PATH = "data/bot.db"
 
 # Техлист (лист с авторизованными пользователями)
 TECH_SHEET_NAME = "Техлист"

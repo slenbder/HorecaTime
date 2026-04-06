@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,6 +17,13 @@ DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "0"))
 
 # Google Sheets
 GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
+
+# Поддержка относительных путей для credentials.json
+if not GOOGLE_CREDENTIALS_PATH.startswith('/'):
+    # Относительный путь — преобразуем в абсолютный от корня проекта
+    PROJECT_ROOT = Path(__file__).parent
+    GOOGLE_CREDENTIALS_PATH = str(PROJECT_ROOT / GOOGLE_CREDENTIALS_PATH)
+
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 if not SPREADSHEET_ID:
     raise ValueError("SPREADSHEET_ID не задан в .env")

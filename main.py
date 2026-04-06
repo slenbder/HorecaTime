@@ -45,7 +45,7 @@ async def main():
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
-    dp = Dispatcher(storage=SQLiteStorage(db_path="db/bot.db"))
+    dp = Dispatcher(storage=SQLiteStorage(db_path=DB_PATH))
 
     # Подключаем middleware
     dp.message.middleware(RoleMiddleware())

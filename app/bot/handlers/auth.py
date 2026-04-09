@@ -666,30 +666,36 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
         )
 
-        # Руководящий состав: запрашиваем должность у администратора через FSM
+        # Руководящий состав: если custom_title уже известен — пропустить FSM
         if position == "Руководящий состав":
-            await state.update_data(
-                pending_custom_title=True,
-                approved_tg_id=user_tg_id,
-                approved_full_name=fio,
-                approved_dept=department,
-                approved_position=position,
+            pending_custom_title = pending_data.get("custom_title")
+            if not pending_custom_title:
+                # custom_title неизвестен — запросить у администратора
+                await state.update_data(
+                    pending_custom_title=True,
+                    approved_tg_id=user_tg_id,
+                    approved_full_name=fio,
+                    approved_dept=department,
+                    approved_position=position,
+                )
+                await state.set_state(AuthStates.waiting_kitchen_title)
+                await callback.message.edit_text(
+                    text=original_text + f"\n\n⏳ Одобрено. Ожидаю ввод должности от администратора {callback.from_user.full_name}...",
+                    reply_markup=None,
+                )
+                await callback.message.answer(
+                    f"Сотрудник {fio} — Руководящий состав.\n"
+                    "Введите должность сотрудника (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):"
+                )
+                await callback.answer()
+                return
+            # custom_title восстановлен из Техлиста — продолжаем одобрение без запроса
+            logger.info(
+                "custom_title восстановлен из Техлиста для %s: '%s'",
+                user_tg_id, pending_custom_title,
             )
-            await state.set_state(AuthStates.waiting_kitchen_title)
-            logger.info("custom_title сохранён в FSM для %s", user_tg_id)
-            await callback.message.edit_text(
-                text=original_text + f"\n\n⏳ Одобрено. Ожидаю ввод должности от администратора {callback.from_user.full_name}...",
-                reply_markup=None,
-            )
-            await callback.message.answer(
-                f"Сотрудник {fio} — Руководящий состав.\n"
-                "Введите должность сотрудника (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):"
-            )
-            await callback.answer()
-            return
-
-        # Сразу добавляем пользователя в график текущего месяца
-        pending_custom_title = pending_data.get('custom_title')
+        else:
+            pending_custom_title = pending_data.get('custom_title')
         try:
             inserted = sheets_client.ensure_user_in_current_month_hours(
                 user_tg_id, custom_title=pending_custom_title

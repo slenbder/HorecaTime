@@ -125,14 +125,8 @@ async def cmd_shift(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка подключения к таблице. Обратитесь к администратору.")
         return
 
-    try:
-        user_info = sheets_client.get_user_from_techlist(tg_id)
-    except Exception:
-        error_logger.exception("cmd_shift: ошибка получения данных пользователя %s из техлиста", tg_id)
-        await message.answer("❌ Ошибка получения данных. Попробуйте позже.")
-        return
-
-    position = user_info.get("position", "") if user_info else ""
+    position = user_data.get("position", "")
+    logger.info("cmd_shift: user_id=%s, role=%s, position=%s", tg_id, role, position)
 
     await state.update_data(position=position)
 

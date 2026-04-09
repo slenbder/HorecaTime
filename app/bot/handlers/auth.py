@@ -666,7 +666,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         pending_custom_title = pending_data.get('custom_title')
         try:
             inserted = sheets_client.ensure_user_in_current_month_hours(
-                user_tg_id, custom_title=None
+                user_tg_id, custom_title=pending_custom_title
             )
             logger.info(
                 "Синхронизация в график завершена для %s, inserted=%s",

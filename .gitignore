@@ -28,3 +28,6 @@ logs/
 
 # Internal docs (developer-only)
 docs/
+
+# Local deploy scripts
+deploy.sh

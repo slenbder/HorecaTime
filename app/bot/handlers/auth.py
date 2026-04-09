@@ -633,9 +633,30 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
 
         fio = user_info.get("fio_from_user", "Неизвестно")
         department = user_info.get("department", "")
-        # Техлист колонка E хранит custom_title для Руководящего состава — читаем
-        # каноническую позицию из pending_data (заявка при регистрации), с fallback на Техлист
-        position = pending_data.get("position") or user_info.get("position", "")
+
+        # Техлист колонка E хранит custom_title для Руководящего состава (не базовую позицию).
+        # Reverse mapping: если значение не входит в канонический список — это custom_title.
+        _CANONICAL_POSITIONS = {
+            "Официант", "Раннер", "Хостесс", "Менеджер",
+            "Бармен", "Барбэк",
+            "Руководящий состав", "Горячий цех", "Холодный цех",
+            "Кондитерский цех", "Заготовочный цех", "Коренной цех",
+            "Грузчик", "Закупщик",
+            "Клининг", "Котломой",
+        }
+        raw_position = user_info.get("position", "")
+        if raw_position in _CANONICAL_POSITIONS:
+            position = raw_position
+        else:
+            # Колонка E содержит custom_title → пользователь из "Руководящий состав"
+            position = "Руководящий состав"
+            if not pending_data.get("custom_title"):
+                pending_data["custom_title"] = raw_position
+        logger.info(
+            "process_approve: raw='%s', canonical='%s', custom_title='%s'",
+            raw_position, position, pending_data.get("custom_title"),
+        )
+
         _nickname = (user_info.get("nickname") or "").lstrip("@") or None
         mention = make_mention(_nickname, fio)
 

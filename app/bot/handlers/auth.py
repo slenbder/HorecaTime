@@ -638,8 +638,8 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
         )
 
-        # Шеф/Су-шеф: запрашиваем должность у администратора через FSM
-        if position == "Су-шеф":
+        # Руководящий состав: запрашиваем должность у администратора через FSM
+        if position == "Руководящий состав":
             await state.update_data(
                 pending_custom_title=True,
                 approved_tg_id=user_tg_id,
@@ -654,7 +654,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
                 reply_markup=None,
             )
             await callback.message.answer(
-                f"Сотрудник {fio} — Шеф/Су-шеф.\n"
+                f"Сотрудник {fio} — Руководящий состав.\n"
                 "Введите должность сотрудника (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):"
             )
             await callback.answer()

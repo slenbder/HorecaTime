@@ -14,7 +14,7 @@ class SQLiteStorage(BaseStorage):
 
     async def set_state(self, key: StorageKey, state: StateType = None) -> None:
         state_str = state.state if hasattr(state, "state") else state
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=10.0, isolation_level=None) as db:
             await db.execute("""
                 INSERT INTO fsm_storage (chat_id, user_id, bot_id, state, updated_at)
                 VALUES (?, ?, ?, ?, datetime('now'))
@@ -25,7 +25,7 @@ class SQLiteStorage(BaseStorage):
         logger.debug(f"FSM state set: user={key.user_id} → {state_str}")
 
     async def get_state(self, key: StorageKey) -> Optional[str]:
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=10.0, isolation_level=None) as db:
             async with db.execute(
                 "SELECT state FROM fsm_storage "
                 "WHERE chat_id=? AND user_id=? AND bot_id=?",
@@ -35,7 +35,7 @@ class SQLiteStorage(BaseStorage):
                 return row[0] if row else None
 
     async def set_data(self, key: StorageKey, data: Dict[str, Any]) -> None:
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=10.0, isolation_level=None) as db:
             await db.execute("""
                 INSERT INTO fsm_storage (chat_id, user_id, bot_id, data, updated_at)
                 VALUES (?, ?, ?, ?, datetime('now'))
@@ -45,7 +45,7 @@ class SQLiteStorage(BaseStorage):
             await db.commit()
 
     async def get_data(self, key: StorageKey) -> Dict[str, Any]:
-        async with aiosqlite.connect(self._db_path) as db:
+        async with aiosqlite.connect(self._db_path, timeout=10.0, isolation_level=None) as db:
             async with db.execute(
                 "SELECT data FROM fsm_storage "
                 "WHERE chat_id=? AND user_id=? AND bot_id=?",

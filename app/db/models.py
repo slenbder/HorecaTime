@@ -37,6 +37,7 @@ def init_database():
     logger.info(f"Инициализация базы данных: {DB_PATH}")
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 telegram_id INTEGER PRIMARY KEY,
@@ -221,7 +222,7 @@ async def get_users_by_department(db_path: str, department: str) -> list[dict]:
     Возвращает всех пользователей с указанным department
     (исключая superadmin и developer).
     """
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute(
             'SELECT telegram_id, full_name, role, department '
             'FROM users WHERE department = ? AND role NOT IN ("superadmin", "developer")',
@@ -238,7 +239,7 @@ async def get_all_users(db_path: str) -> list[dict]:
     """
     Возвращает всех пользователей кроме superadmin и developer.
     """
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute(
             'SELECT telegram_id, full_name, role, department '
             'FROM users WHERE role NOT IN ("superadmin", "developer")'
@@ -257,7 +258,7 @@ async def get_rate(db_path: str, position: str) -> Optional[Dict]:
     Возвращает ставку для позиции: {"position", "base_rate", "extra_rate"} или None.
     """
     logger.info("get_rate: position=%s", position)
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute(
             'SELECT position, base_rate, extra_rate FROM rates WHERE position = ?',
             (position,)
@@ -273,7 +274,7 @@ async def get_all_rates(db_path: str) -> list[dict]:
     Возвращает все ставки, отсортированные по позиции.
     """
     logger.info("get_all_rates: запрос всех ставок")
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute(
             'SELECT position, base_rate, extra_rate FROM rates ORDER BY position'
         ) as cursor:
@@ -287,7 +288,7 @@ async def snapshot_rates(db_path: str, month: int, year: int) -> None:
     Если запись уже существует — не перезаписывает (INSERT OR IGNORE).
     """
     logger.info("snapshot_rates: сохранение снимка ставок для %d/%d", month, year)
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute('SELECT position, base_rate, extra_rate FROM rates') as cursor:
             rows = await cursor.fetchall()
         await db.executemany(
@@ -305,7 +306,7 @@ async def get_rate_for_period(db_path: str, position: str, month: int, year: int
     Если не найдено — возвращает текущую ставку из rates как fallback.
     """
     logger.info("get_rate_for_period: position=%s month=%d year=%d", position, month, year)
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute(
             'SELECT position, base_rate, extra_rate FROM rates_history '
             'WHERE position = ? AND month = ? AND year = ?',
@@ -328,7 +329,7 @@ async def update_rate(db_path: str, position: str, base_rate: float,
     """
     now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
     logger.info("update_rate: position=%s base_rate=%s extra_rate=%s", position, base_rate, extra_rate)
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         await db.execute(
             'INSERT OR REPLACE INTO rates (position, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?)',
             (position, base_rate, extra_rate, now_str),
@@ -345,7 +346,7 @@ async def get_user_rate(db_path: str, telegram_id: int) -> Optional[Dict]:
     """
     Возвращает персональную ставку сотрудника: {"telegram_id", "base_rate", "extra_rate"} или None.
     """
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             'SELECT telegram_id, base_rate, extra_rate FROM user_rates WHERE telegram_id = ?',
@@ -364,7 +365,7 @@ async def set_user_rate(db_path: str, telegram_id: int, base_rate: float,
     """
     now_str = datetime.now(MOSCOW_TZ).isoformat()
     logger.info("set_user_rate: telegram_id=%s base_rate=%s extra_rate=%s", telegram_id, base_rate, extra_rate)
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         await db.execute(
             'INSERT INTO user_rates (telegram_id, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?) '
             'ON CONFLICT(telegram_id) DO UPDATE SET base_rate=excluded.base_rate, '
@@ -379,7 +380,7 @@ async def get_user_rate_history(db_path: str, telegram_id: int, month: int, year
     Читает персональную ставку из user_rates_history для указанного периода.
     Возвращает {"telegram_id", "base_rate", "extra_rate"} или None.
     """
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             'SELECT telegram_id, base_rate, extra_rate FROM user_rates_history '
@@ -398,7 +399,7 @@ async def snapshot_user_rates_history(db_path: str, month: int, year: int) -> No
     Существующие записи не перезаписываются (INSERT OR IGNORE).
     """
     logger.info("snapshot_user_rates_history: сохранение снимка персональных ставок для %d/%d", month, year)
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute('SELECT telegram_id, base_rate, extra_rate FROM user_rates') as cursor:
             rows = await cursor.fetchall()
         await db.executemany(
@@ -414,7 +415,7 @@ async def get_users_rates_by_department(db_path: str, department: str) -> list[d
     """
     Возвращает всех сотрудников отдела с их персональными ставками (JOIN users + user_rates).
     """
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             'SELECT u.telegram_id, u.full_name, u.position, ur.base_rate, ur.extra_rate '
@@ -440,7 +441,7 @@ async def get_all_users_rates(db_path: str) -> list[dict]:
     Возвращает всех сотрудников с персональными ставками (JOIN users + user_rates).
     Исключает superadmin и developer.
     """
-    async with aiosqlite.connect(db_path) as db:
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             'SELECT u.telegram_id, u.full_name, u.department, u.position, ur.base_rate, ur.extra_rate '

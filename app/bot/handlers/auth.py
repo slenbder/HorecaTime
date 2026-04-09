@@ -485,6 +485,7 @@ async def process_fio(message: Message, state: FSMContext):
             'row_index': row_index,
             'full_name': fio,
             'custom_title': custom_title,
+            'position': position,
         }
     await state.clear()
 
@@ -620,6 +621,10 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Ошибка подключения к таблице", show_alert=True)
             return
 
+        # Загружаем pending_data заранее — там хранится каноническая позиция из заявки
+        callback_key = f"{user_tg_id}_{row_index}"
+        pending_data = _pending_admins.pop(callback_key, {})
+
         # Получаем данные пользователя из Техлиста
         user_info = sheets_client.get_user_from_techlist(user_tg_id)
         if not user_info:
@@ -628,7 +633,9 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
 
         fio = user_info.get("fio_from_user", "Неизвестно")
         department = user_info.get("department", "")
-        position = user_info.get("position", "")
+        # Техлист колонка E хранит custom_title для Руководящего состава — читаем
+        # каноническую позицию из pending_data (заявка при регистрации), с fallback на Техлист
+        position = pending_data.get("position") or user_info.get("position", "")
         _nickname = (user_info.get("nickname") or "").lstrip("@") or None
         mention = make_mention(_nickname, fio)
 
@@ -661,8 +668,6 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             return
 
         # Сразу добавляем пользователя в график текущего месяца
-        callback_key = f"{user_tg_id}_{row_index}"
-        pending_data = _pending_admins.pop(callback_key, {})
         pending_custom_title = pending_data.get('custom_title')
         try:
             inserted = sheets_client.ensure_user_in_current_month_hours(

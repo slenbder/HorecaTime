@@ -275,7 +275,7 @@ async def process_position(message: Message, state: FSMContext):
         return
 
     if department == "Кухня":
-        await state.update_data(position=position, custom_title="Повар")
+        await state.update_data(position=position, custom_position="Повар")
     else:
         await state.update_data(position=position)
 
@@ -284,20 +284,20 @@ async def process_position(message: Message, state: FSMContext):
 
 
 @auth_router.message(AuthStates.waiting_kitchen_title)
-async def process_custom_title_input(message: Message, state: FSMContext):
-    custom_title = (message.text or "").strip()
-    if len(custom_title) < 2 or len(custom_title) > 50:
+async def process_custom_position_input(message: Message, state: FSMContext):
+    custom_position = (message.text or "").strip()
+    if len(custom_position) < 2 or len(custom_position) > 50:
         logger.warning(
             "Пользователь %s ввёл некорректную должность (длина %d): '%s'",
-            message.from_user.id, len(custom_title), custom_title[:50],
+            message.from_user.id, len(custom_position), custom_position[:50],
         )
         await message.answer("Название должности должно быть от 2 до 50 символов. Введите заново:")
         return
     logger.info(
         "Пользователь %s ввёл должность для Руководящий состав: '%s'",
-        message.from_user.id, custom_title,
+        message.from_user.id, custom_position,
     )
-    await state.update_data(custom_title=custom_title)
+    await state.update_data(custom_position=custom_position)
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
 
@@ -316,7 +316,7 @@ async def process_dop_position(message: Message, state: FSMContext):
         )
         return
     logger.info("Пользователь %s выбрал доп. позицию: %s", message.from_user.id, position)
-    await state.update_data(position=position, custom_title="Повар")
+    await state.update_data(position=position, custom_position="Повар")
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
 
@@ -336,7 +336,7 @@ async def process_fio(message: Message, state: FSMContext):
     data = await state.get_data()
     department = data.get("department")
     position = data.get("position")
-    custom_title = data.get("custom_title")
+    custom_position = data.get("custom_position")
 
     tg_id = message.from_user.id
     nickname = message.from_user.username or ""
@@ -353,13 +353,13 @@ async def process_fio(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Для "Руководящий состав" в колонку E Техлиста идёт custom_title, иначе position
+    # Для "Руководящий состав" в колонку E Техлиста идёт custom_position, иначе position
     position_for_sheet = (
-        custom_title if position == "Руководящий состав" and custom_title else position
+        custom_position if position == "Руководящий состав" and custom_position else position
     )
     logger.info(
-        "Колонка E Техлиста для пользователя %s: %r (position=%r, custom_title=%r)",
-        tg_id, position_for_sheet, position, custom_title,
+        "Колонка E Техлиста для пользователя %s: %r (position=%r, custom_position=%r)",
+        tg_id, position_for_sheet, position, custom_position,
     )
 
     # 1. Записываем/обновляем заявку в Техлисте
@@ -371,6 +371,7 @@ async def process_fio(message: Message, state: FSMContext):
             fio_from_user=fio,
             department=department,
             position=position_for_sheet,
+            custom_position=custom_position,
         )
 
         logger.info(f"Заявка успешно записана в строку {row_index}")
@@ -387,9 +388,9 @@ async def process_fio(message: Message, state: FSMContext):
     if position in DOP_POSITIONS:
         position_display = "Дополнительные сотрудники"
         display_title = position
-    elif position == "Руководящий состав" and custom_title:
+    elif position == "Руководящий состав" and custom_position:
         position_display = "Руководящий состав"
-        display_title = custom_title
+        display_title = custom_position
     elif department == "Кухня":
         position_display = position
         display_title = "Повар"
@@ -478,13 +479,13 @@ async def process_fio(message: Message, state: FSMContext):
         "После одобрения ты сможешь вносить рабочие часы и смотреть отчёты."
     )
     logger.info(f"Регистрация пользователя {tg_id} завершена успешно")
-    if custom_title:
+    if custom_position:
         callback_key = f"{tg_id}_{row_index}"
         _pending_admins[callback_key] = {
             'tg_id': tg_id,
             'row_index': row_index,
             'full_name': fio,
-            'custom_title': custom_title,
+            'custom_position': custom_position,
             'position': position,
         }
     await state.clear()
@@ -634,8 +635,8 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         fio = user_info.get("fio_from_user", "Неизвестно")
         department = user_info.get("department", "")
 
-        # Техлист колонка E хранит custom_title для Руководящего состава (не базовую позицию).
-        # Reverse mapping: если значение не входит в канонический список — это custom_title.
+        # Техлист колонка E хранит custom_position для Руководящего состава (не базовую позицию).
+        # Reverse mapping: если значение не входит в канонический список — это custom_position.
         _CANONICAL_POSITIONS = {
             "Официант", "Раннер", "Хостесс", "Менеджер",
             "Бармен", "Барбэк",
@@ -648,13 +649,13 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         if raw_position in _CANONICAL_POSITIONS:
             position = raw_position
         else:
-            # Колонка E содержит custom_title → пользователь из "Руководящий состав"
+            # Колонка E содержит custom_position → пользователь из "Руководящий состав"
             position = "Руководящий состав"
-            if not pending_data.get("custom_title"):
-                pending_data["custom_title"] = raw_position
+            if not pending_data.get("custom_position"):
+                pending_data["custom_position"] = raw_position
         logger.info(
-            "process_approve: raw='%s', canonical='%s', custom_title='%s'",
-            raw_position, position, pending_data.get("custom_title"),
+            "process_approve: raw='%s', canonical='%s', custom_position='%s'",
+            raw_position, position, pending_data.get("custom_position"),
         )
 
         _nickname = (user_info.get("nickname") or "").lstrip("@") or None
@@ -666,13 +667,13 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
         )
 
-        # Руководящий состав: если custom_title уже известен — пропустить FSM
+        # Руководящий состав: если custom_position уже известен — пропустить FSM
         if position == "Руководящий состав":
-            pending_custom_title = pending_data.get("custom_title")
-            if not pending_custom_title:
-                # custom_title неизвестен — запросить у администратора
+            pending_custom_position = pending_data.get("custom_position")
+            if not pending_custom_position:
+                # custom_position неизвестен — запросить у администратора
                 await state.update_data(
-                    pending_custom_title=True,
+                    pending_custom_position=True,
                     approved_tg_id=user_tg_id,
                     approved_full_name=fio,
                     approved_dept=department,
@@ -689,16 +690,16 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
                 )
                 await callback.answer()
                 return
-            # custom_title восстановлен из Техлиста — продолжаем одобрение без запроса
+            # custom_position восстановлен из Техлиста — продолжаем одобрение без запроса
             logger.info(
-                "custom_title восстановлен из Техлиста для %s: '%s'",
-                user_tg_id, pending_custom_title,
+                "custom_position восстановлен из Техлиста для %s: '%s'",
+                user_tg_id, pending_custom_position,
             )
         else:
-            pending_custom_title = pending_data.get('custom_title')
+            pending_custom_position = pending_data.get('custom_position')
         try:
             inserted = sheets_client.ensure_user_in_current_month_hours(
-                user_tg_id, custom_title=pending_custom_title
+                user_tg_id, custom_position=pending_custom_position
             )
             logger.info(
                 "Синхронизация в график завершена для %s, inserted=%s",

@@ -428,6 +428,10 @@ async def _delayed_process_waiter(mgid: str) -> None:
                 _mg_locks.pop(mgid, None)
                 return
             if not photo_ids:
+                _mg_photos.pop(mgid, None)
+                _mg_context.pop(mgid, None)
+                _mg_scheduled.discard(mgid)
+                _mg_locks.pop(mgid, None)
                 return
 
             ctx = _mg_context.pop(mgid)

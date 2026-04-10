@@ -5,6 +5,7 @@ services:
     image: slenbder/horecatime:latest
     container_name: horecatime-bot
     restart: unless-stopped
+    network_mode: "host"
 
     env_file:
       - ../.env

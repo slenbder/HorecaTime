@@ -639,6 +639,45 @@ def _fetch_user_info(sheets_client, user_tg_id: int) -> dict | None:
     }
 
 
+async def _register_user_in_sheets(
+    sheets_client,
+    user_tg_id: int,
+    row_index: int,
+    custom_position: str | None,
+    admin_id: int
+) -> None:
+    """
+    Регистрирует пользователя в Google Sheets: одобрение + добавление в график.
+
+    ВАЖНО: Выполняет две операции последовательно:
+    1. mark_user_approved() — помечает как одобренного в Техлисте
+    2. ensure_user_in_current_month_hours() — добавляет в месячный лист
+
+    Если вторая операция падает, первая уже выполнена (транзакционный риск).
+
+    Args:
+        sheets_client: Экземпляр GoogleSheetsClient
+        user_tg_id: Telegram ID пользователя
+        row_index: Номер строки в Техлисте для одобрения
+        custom_position: Должность (для Руководящий состав) или None
+        admin_id: Telegram ID администратора (для логирования)
+
+    Raises:
+        Exception: При ошибке добавления в месячный лист
+    """
+    # Одобряем пользователя в Техлисте
+    sheets_client.mark_user_approved(row_index)
+    logger.info(
+        f"Админ {admin_id} одобрил пользователя {user_tg_id} (строка {row_index})"
+    )
+
+    # Добавляем в месячный лист (может упасть → raise наверх)
+    sheets_client.ensure_user_in_current_month_hours(
+        user_tg_id,
+        custom_position=custom_position if custom_position else None
+    )
+
+
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
@@ -669,17 +708,14 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         custom_position = user_data["custom_position"]
         mention = user_data["mention"]
 
-        # Одобряем пользователя в таблице
-        sheets_client.mark_user_approved(row_index)
-        logger.info(
-            f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
-        )
-
-        # Добавление в месячный лист
+        # Регистрация в Sheets (одобрение + график)
         try:
-            sheets_client.ensure_user_in_current_month_hours(
+            await _register_user_in_sheets(
+                sheets_client,
                 user_tg_id,
-                custom_position=custom_position if custom_position else None
+                row_index,
+                custom_position,
+                callback.from_user.id
             )
         except Exception:
             logger.exception(f"approve: ошибка добавления в график для {user_tg_id}")

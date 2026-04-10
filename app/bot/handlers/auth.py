@@ -724,6 +724,48 @@ async def _setup_user_access(
     await set_commands_for_role(bot, user_tg_id, "user")
 
 
+async def _notify_approval(
+    bot,
+    callback,
+    user_tg_id: int,
+    mention: str,
+    original_text: str,
+    admin_full_name: str,
+) -> None:
+    """
+    Отправляет уведомления об одобрении: пользователю и админу.
+
+    Выполняет два действия:
+    1. Отправляет сообщение пользователю об одобрении (ошибки игнорируются)
+    2. Редактирует сообщение админа, добавляя ✅ и имя обработавшего
+
+    Args:
+        bot: Экземпляр бота
+        callback: CallbackQuery от админа
+        user_tg_id: Telegram ID одобренного пользователя
+        mention: HTML-ссылка на пользователя (@username или ФИО)
+        original_text: Исходный текст сообщения админа
+        admin_full_name: Полное имя обработавшего администратора
+    """
+    # Уведомляем пользователя (ошибки игнорируем)
+    try:
+        await bot.send_message(
+            chat_id=user_tg_id,
+            text="✅ Твоя заявка одобрена!\n\nТеперь можешь вносить смены через /shift."
+        )
+    except Exception:
+        pass
+
+    # Редактируем сообщение админа
+    await callback.message.edit_text(
+        text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
+        f"\n✅ Одобрено администратором {html.escape(admin_full_name)}",
+        parse_mode="HTML",
+        reply_markup=None,
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
+
+
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
@@ -781,22 +823,14 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             callback.bot
         )
 
-        # Уведомляем пользователя
-        try:
-            await callback.bot.send_message(
-                chat_id=user_tg_id,
-                text="✅ Твоя заявка одобрена!\n\nТеперь можешь вносить смены через /shift."
-            )
-        except Exception:
-            pass
-
-        # Обновляем сообщение админа
-        await callback.message.edit_text(
-            text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
-            f"\n✅ Одобрено администратором {html.escape(callback.from_user.full_name)}",
-            parse_mode="HTML",
-            reply_markup=None,
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        # Уведомления (пользователю + админу)
+        await _notify_approval(
+            callback.bot,
+            callback,
+            user_tg_id,
+            mention,
+            original_text,
+            callback.from_user.full_name
         )
 
         await callback.answer("Пользователь одобрен!")

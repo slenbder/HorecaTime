@@ -586,6 +586,27 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         )
 
 
+def _parse_approve_callback(callback_data: str) -> tuple[int, int] | None:
+    """
+    Парсит callback_data формата 'approve_{user_tg_id}_{row_index}'.
+
+    Args:
+        callback_data: Строка из callback.data
+
+    Returns:
+        Tuple (user_tg_id, row_index) или None при ошибке парсинга
+    """
+    try:
+        parts = callback_data.split("_")
+        if len(parts) < 3:
+            return None
+        user_tg_id = int(parts[1])
+        row_index = int(parts[2])
+        return (user_tg_id, row_index)
+    except (ValueError, IndexError):
+        return None
+
+
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
@@ -595,19 +616,11 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Уже обработано другим администратором.")
             return
 
-        # Парсим callback_data: approve_TELEGRAM_ID_ROW_INDEX
-        parts = callback.data.split("_")
-        if len(parts) < 3:
-            logger.error("Некорректный формат callback_data при одобрении: %s", callback.data)
-            await callback.answer("Некорректный формат данных", show_alert=True)
+        parsed = _parse_approve_callback(callback.data)
+        if parsed is None:
+            await callback.answer("❌ Ошибка обработки заявки.")
             return
-        try:
-            user_tg_id = int(parts[1])
-            row_index = int(parts[2])
-        except ValueError:
-            logger.error("Не удалось распарсить ID из callback_data: %s", callback.data)
-            await callback.answer("Некорректные данные в запросе", show_alert=True)
-            return
+        user_tg_id, row_index = parsed
 
         if sheets_client is None:
             await callback.answer("Ошибка подключения к таблице", show_alert=True)

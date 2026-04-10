@@ -20,6 +20,7 @@ COL_DEPARTMENT     = 4  # D
 COL_POSITION       = 5  # E
 COL_REGISTERED_AT  = 6  # F
 COL_IN_STAFF_TABLE = 7  # G — «ДА» если утверждён в графике
+COL_CUSTOM_POSITION = 8  # H — Должность
 
 MONTH_NAMES_RU = {
     1: "Январь",
@@ -143,6 +144,7 @@ class GoogleSheetsClient:
                     "position": row[COL_POSITION - 1] if len(row) >= COL_POSITION else "",
                     "registered_at": row[COL_REGISTERED_AT - 1] if len(row) >= COL_REGISTERED_AT else "",
                     "in_staff_table": row[COL_IN_STAFF_TABLE - 1] if len(row) >= COL_IN_STAFF_TABLE else "",
+                    "custom_position": row[COL_CUSTOM_POSITION - 1] if len(row) >= COL_CUSTOM_POSITION else "",
                 }
 
         return None
@@ -154,6 +156,7 @@ class GoogleSheetsClient:
         fio_from_user: str,
         department: str = "",
         position: str = "",
+        custom_position: str = "",
     ) -> int:
         """
         Создаёт или обновляет запись пользователя в Техлисте (заявка на доступ).
@@ -172,11 +175,13 @@ class GoogleSheetsClient:
                 {"range": f"D{row_idx}", "values": [[department]]},
                 {"range": f"E{row_idx}", "values": [[position]]},
                 {"range": f"F{row_idx}", "values": [[now_str]]},
+                {"range": f"H{row_idx}", "values": [[custom_position]]},
             ], value_input_option="RAW")
             logger.info(
-                "Обновлена заявка пользователя %s в строке %s",
+                "Обновлена заявка пользователя %s в строке %s, custom_position='%s'",
                 telegram_id,
                 row_idx,
+                custom_position,
             )
             return row_idx
 
@@ -188,13 +193,16 @@ class GoogleSheetsClient:
             department,        # D: Отдел
             position,          # E: Позиция
             now_str,           # F: Дата регистрации
+            "",                # G: Статус (пусто до одобрения)
+            custom_position,   # H: Должность
         ]
 
-        ws.update(f"A{next_row}:F{next_row}", [values], value_input_option="RAW")
+        ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW")
         logger.info(
-            "Создана новая заявка пользователя %s в строке %s",
+            "Создана новая заявка пользователя %s в строке %s, custom_position='%s'",
             telegram_id,
             next_row,
+            custom_position,
         )
         self._auto_resize_columns(ws)
         return next_row
@@ -357,7 +365,7 @@ class GoogleSheetsClient:
 
         return last_employee_row
 
-    def ensure_user_in_current_month_hours(self, telegram_id: int, custom_title: Optional[str] = None) -> bool:
+    def ensure_user_in_current_month_hours(self, telegram_id: int, custom_position: Optional[str] = None) -> bool:
         logger.info("Добавление пользователя %s в график текущего месяца", telegram_id)
         user_info = self.get_user_by_telegram_id(telegram_id)
         if not user_info:
@@ -388,14 +396,14 @@ class GoogleSheetsClient:
 
         last_row_month = len(all_data)
 
-        # Если custom_title передан — значит position из Техлиста E = custom_title,
+        # Если custom_position передан — сотрудник из "Руководящий состав",
         # для поиска секции используем базовую позицию "Руководящий состав"
-        if custom_title:
+        if custom_position:
             section_position = "Руководящий состав"
         else:
             section_position = position
 
-        display_position = custom_title if custom_title else position
+        display_position = custom_position if custom_position else position
         logger.info(
             "Поиск секции для пользователя %s: section_position='%s', display_position='%s'",
             telegram_id, section_position, display_position,

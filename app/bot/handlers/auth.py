@@ -274,10 +274,7 @@ async def process_position(message: Message, state: FSMContext):
         await state.set_state(AuthStates.waiting_dop_position)
         return
 
-    if department == "Кухня":
-        await state.update_data(position=position, custom_position="Повар")
-    else:
-        await state.update_data(position=position)
+    await state.update_data(position=position)
 
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)

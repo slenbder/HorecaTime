@@ -35,9 +35,6 @@ deploy.sh
 # Test cache
 .pytest_cache/
 
-# Context/audit files (developer-only, not for version control)
-CLAUDE.md
-HISTORY.md
-TECH_REFERENCE.md
-FINAL_AUDIT.md
-FSM_STATES_MAP.md
+# ВАЖНО: CLAUDE.md, HISTORY.md, TECH_REFERENCE.md НИКОГДА не добавлять сюда!
+# Это жизненно необходимые контекстные файлы для Claude Code.
+# Они намеренно отслеживаются git и остаются в корне проекта.

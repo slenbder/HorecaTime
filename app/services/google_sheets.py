@@ -396,13 +396,14 @@ class GoogleSheetsClient:
 
         last_row_month = len(all_data)
 
-        # Если custom_position передан — сотрудник из "Руководящий состав",
-        # для поиска секции используем базовую позицию "Руководящий состав"
-        if custom_position:
-            section_position = "Руководящий состав"
-        else:
-            section_position = position
+        # Секция определяется по должности (position), не по наличию custom_position.
+        # position здесь = роль сотрудника ("Руководящий состав", "Холодный цех", "Бармен" и т.д.)
+        # section_position = ключ для поиска в POSITION_TO_SECTION
+        section_position = position
 
+        # Для отображения в колонке C месячного листа:
+        # - Руководящий состав → показываем custom_position ("Шеф ЗЦ", "Бренд-шеф")
+        # - Все остальные → показываем position ("Холодный цех", "Бармен", "Грузчик" и т.д.)
         display_position = custom_position if custom_position else position
         logger.info(
             "Поиск секции для пользователя %s: section_position='%s', display_position='%s'",

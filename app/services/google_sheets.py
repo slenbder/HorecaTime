@@ -100,7 +100,7 @@ class GoogleSheetsClient:
         try:
             return self._spreadsheet.worksheet(TECH_SHEET_NAME)
         except Exception as e:
-            logger.warning("Ошибка получения листа '%s', пробуем переподключиться: %s", TECH_SHEET_NAME, e)
+            logger.error("Ошибка получения листа '%s', пробуем переподключиться: %s", TECH_SHEET_NAME, e, exc_info=True)
             self._reconnect()
             return self._spreadsheet.worksheet(TECH_SHEET_NAME)
     
@@ -266,7 +266,7 @@ class GoogleSheetsClient:
         try:
             ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
         except Exception as e:
-            logger.warning("mark_user_approved: ошибка, реконнект: %s", e)
+            logger.error("mark_user_approved: ошибка, реконнект: %s", e, exc_info=True)
             self._reconnect()
             ws = self._get_techlist_worksheet()
             ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
@@ -304,7 +304,7 @@ class GoogleSheetsClient:
         except WorksheetNotFound as exc:
             raise ValueError(f"Лист текущего месяца '{sheet_name}' не найден") from exc
         except Exception as e:
-            logger.warning(f"Ошибка получения листа месяца, пробуем переподключиться: {e}")
+            logger.error("Ошибка получения листа месяца, пробуем переподключиться: %s", e, exc_info=True)
             self._reconnect()
             try:
                 return self._spreadsheet.worksheet(sheet_name)
@@ -610,7 +610,7 @@ class GoogleSheetsClient:
         except WorksheetNotFound:
             raise ValueError(f"Лист '{sheet_name}' не найден")
         except Exception as e:
-            logger.warning("write_shift: ошибка доступа к листу, реконнект: %s", e)
+            logger.error("write_shift: ошибка доступа к листу, реконнект: %s", e, exc_info=True)
             self._reconnect()
             try:
                 ws = self._spreadsheet.worksheet(sheet_name)
@@ -708,7 +708,7 @@ class GoogleSheetsClient:
             logger.info("get_summary_hours: лист '%s' не найден", sheet_name)
             return None
         except Exception as e:
-            logger.warning("get_summary_hours: ошибка доступа к листу '%s', реконнект: %s", sheet_name, e)
+            logger.error("get_summary_hours: ошибка доступа к листу '%s', реконнект: %s", sheet_name, e, exc_info=True)
             self._reconnect()
             try:
                 ws = self._spreadsheet.worksheet(sheet_name)
@@ -798,7 +798,7 @@ class GoogleSheetsClient:
             ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
             all_values = ws.get_all_values()
         except Exception as e:
-            logger.warning("get_employees_by_dept: ошибка доступа, реконнект: %s", e)
+            logger.error("get_employees_by_dept: ошибка доступа, реконнект: %s", e, exc_info=True)
             self._reconnect()
             ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
             all_values = ws.get_all_values()
@@ -940,7 +940,7 @@ class GoogleSheetsClient:
         try:
             worksheets = self._spreadsheet.worksheets()
         except Exception as e:
-            logger.warning("get_sheet_id_by_name: ошибка, реконнект: %s", e)
+            logger.error("get_sheet_id_by_name: ошибка, реконнект: %s", e, exc_info=True)
             self._reconnect()
             worksheets = self._spreadsheet.worksheets()
         for ws in worksheets:
@@ -960,7 +960,7 @@ class GoogleSheetsClient:
             ws = self._spreadsheet.worksheet(sheet_name)
             all_values = ws.get_all_values()
         except Exception as e:
-            logger.warning("get_section_range: ошибка, реконнект: %s", e)
+            logger.error("get_section_range: ошибка, реконнект: %s", e, exc_info=True)
             self._reconnect()
             ws = self._spreadsheet.worksheet(sheet_name)
             all_values = ws.get_all_values()

@@ -678,6 +678,52 @@ async def _register_user_in_sheets(
     )
 
 
+async def _setup_user_access(
+    user_tg_id: int,
+    fio: str,
+    department: str,
+    position: str,
+    bot,
+) -> None:
+    """
+    Настраивает доступ нового пользователя: ставка, кеш ролей, команды меню.
+
+    Выполняет три независимые операции последовательно:
+    1. Копирует дефолтную ставку из rates → user_rates
+    2. Обновляет кеш ролей в SQLite
+    3. Устанавливает команды бота для роли "user"
+
+    Args:
+        user_tg_id: Telegram ID пользователя
+        fio: Полное имя пользователя (для логов)
+        department: Отдел пользователя
+        position: Позиция пользователя
+        bot: Экземпляр бота для установки команд
+    """
+    # Копируем дефолтную ставку
+    default_rate = await get_rate(DB_PATH, position)
+    if default_rate:
+        await set_user_rate(
+            DB_PATH, user_tg_id,
+            base_rate=default_rate["base_rate"],
+            extra_rate=default_rate.get("extra_rate")
+        )
+        logger.info(f"Установлена ставка для {fio}: {default_rate['base_rate']}/{default_rate.get('extra_rate')} р/ч")
+
+    # Обновляем кеш ролей
+    RolesCacheService.update_user_role(
+        telegram_id=user_tg_id,
+        full_name=fio,
+        role="user",
+        department=department,
+        position=position,
+    )
+    logger.info(f"Пользователь {user_tg_id} добавлен в кеш ролей: {department}, {position}")
+
+    # Устанавливаем команды меню
+    await set_commands_for_role(bot, user_tg_id, "user")
+
+
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
@@ -726,28 +772,14 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
 
         logger.info(f"Синхронизация в график завершена для {user_tg_id}")
 
-        # Копирование ставки
-        default_rate = await get_rate(DB_PATH, position)
-        if default_rate:
-            await set_user_rate(
-                DB_PATH, user_tg_id,
-                base_rate=default_rate["base_rate"],
-                extra_rate=default_rate.get("extra_rate")
-            )
-            logger.info(f"Установлена ставка для {fio}: {default_rate['base_rate']}/{default_rate.get('extra_rate')} р/ч")
-
-        # Обновление кеша
-        RolesCacheService.update_user_role(
-            telegram_id=user_tg_id,
-            full_name=fio,
-            role="user",
-            department=department,
-            position=position,
+        # Настройка доступа (ставка + кеш + команды)
+        await _setup_user_access(
+            user_tg_id,
+            fio,
+            department,
+            position,
+            callback.bot
         )
-        logger.info(f"Пользователь {user_tg_id} добавлен в кеш ролей: {department}, {position}")
-
-        # Команды меню
-        await set_commands_for_role(callback.bot, user_tg_id, "user")
 
         # Уведомляем пользователя
         try:

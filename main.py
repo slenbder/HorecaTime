@@ -49,6 +49,7 @@ async def main():
     from app.services.google_sheets import GoogleSheetsClient
     from app.scheduler.monthly_switch import notify_upcoming_switch, switch_month
     from app.scheduler.fsm_cleanup import cleanup_expired_fsm_states
+    from app.scheduler.healthcheck import healthcheck
 
     bot = Bot(
         token=BOT_TOKEN,
@@ -131,6 +132,17 @@ async def main():
     )
     scheduler.start()
     logger.info("Планировщик APScheduler запущен (переключение месяца 1-го в 18:00 МСК)")
+
+    # Healthcheck каждые 30 минут
+    scheduler.add_job(
+        healthcheck,
+        trigger="interval",
+        minutes=30,
+        args=[bot],
+        id="healthcheck",
+        replace_existing=True,
+    )
+    logger.info("Healthcheck job зарегистрирован (каждые 30 минут)")
 
     logger.info("Бот HorecaTime запущен, начинаю поллинг")
     try:

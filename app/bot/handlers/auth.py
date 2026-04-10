@@ -1065,8 +1065,10 @@ async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
         filtered = []
         for emp in employees:
             user_data = get_user(emp["telegram_id"])
-            if user_data and user_data.get("role") == "user":
-                filtered.append(emp)
+            if user_data is None:
+                continue
+            # Показываем всех (user + admin) — fork demote/fire реализован в dismiss_select
+            filtered.append(emp)
 
     if not filtered:
         type_label = "сотрудников" if dismiss_type == "user" else "администраторов"

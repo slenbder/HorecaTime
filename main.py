@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import ErrorEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from app.db.fsm_storage import SQLiteStorage
@@ -13,6 +14,14 @@ from app.db.fsm_storage import SQLiteStorage
 from config import BOT_TOKEN, DB_PATH
 from app.logging_config import setup_logging
 from app.db.models import init_database
+from app.utils.error_alerts import (
+    extract_context,
+    is_critical_exception,
+    should_send_alert,
+    send_critical_alert,
+    send_warning_alert,
+    CRITICAL_HANDLERS,
+)
 
 
 async def main():
@@ -57,6 +66,45 @@ async def main():
     dp.include_router(reports_router)
     dp.include_router(admin_router)
     dp.include_router(superadmin_router)
+
+    @dp.error()
+    async def global_error_handler(event: ErrorEvent) -> None:
+        """
+        Глобальный обработчик необработанных исключений.
+        Логирует ошибку + отправляет алерт девелоперу если критично.
+        """
+        exception = event.exception
+        context = extract_context(event)
+        handler_name = context['handler']
+
+        # Логируем в errors.log
+        logger.error(
+            "Необработанное исключение в %s: %s",
+            handler_name,
+            exception,
+            exc_info=True,
+        )
+
+        # Определяем severity
+        is_critical = (
+            handler_name in CRITICAL_HANDLERS
+            or is_critical_exception(exception)
+        )
+
+        # Проверяем rate limit
+        if not should_send_alert(handler_name, exception):
+            logger.info(
+                "Алерт для %s:%s пропущен (throttle)",
+                handler_name,
+                type(exception).__name__,
+            )
+            return
+
+        # Отправляем алерт
+        if is_critical:
+            await send_critical_alert(bot, exception, context)
+        else:
+            await send_warning_alert(bot, exception, context)
 
     # Планировщик месячного переключения
     sheets_client = GoogleSheetsClient()

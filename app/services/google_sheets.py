@@ -56,6 +56,15 @@ POSITION_TO_SECTION = {
     "Менеджер": "Менеджеры",
 }
 
+# Маппинг цехов Кухни на отображаемую должность в месячном листе
+KITCHEN_DEPARTMENTS_TO_DISPLAY = {
+    "Горячий цех": "Повар",
+    "Холодный цех": "Повар",
+    "Кондитерский цех": "Повар",
+    "Заготовочный цех": "Повар",
+    "Коренной цех": "Повар",
+}
+
 DEPARTMENT_TO_HEADER = {
     "Кухня": "КУХНЯ",
     "Бар": "БАР",
@@ -402,9 +411,13 @@ class GoogleSheetsClient:
         section_position = position
 
         # Для отображения в колонке C месячного листа:
-        # - Руководящий состав → показываем custom_position ("Шеф ЗЦ", "Бренд-шеф")
-        # - Все остальные → показываем position ("Холодный цех", "Бармен", "Грузчик" и т.д.)
-        display_position = custom_position if custom_position else position
+        # - Руководящий состав → custom_position ("Шеф ЗЦ")
+        # - Цеха Кухни → "Повар" (через маппинг)
+        # - Все остальные → position как есть
+        display_position = (
+            custom_position if custom_position
+            else KITCHEN_DEPARTMENTS_TO_DISPLAY.get(position, position)
+        )
         logger.info(
             "Поиск секции для пользователя %s: section_position='%s', display_position='%s'",
             telegram_id, section_position, display_position,

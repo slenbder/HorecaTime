@@ -274,10 +274,7 @@ async def process_position(message: Message, state: FSMContext):
         await state.set_state(AuthStates.waiting_dop_position)
         return
 
-    if department == "Кухня":
-        await state.update_data(position=position, custom_position="Повар")
-    else:
-        await state.update_data(position=position)
+    await state.update_data(position=position)
 
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
@@ -586,60 +583,237 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         )
 
 
+def _parse_approve_callback(callback_data: str) -> tuple[int, int] | None:
+    """
+    Парсит callback_data формата 'approve_{user_tg_id}_{row_index}'.
+
+    Args:
+        callback_data: Строка из callback.data
+
+    Returns:
+        Tuple (user_tg_id, row_index) или None при ошибке парсинга
+    """
+    try:
+        parts = callback_data.split("_")
+        if len(parts) < 3:
+            return None
+        user_tg_id = int(parts[1])
+        row_index = int(parts[2])
+        return (user_tg_id, row_index)
+    except (ValueError, IndexError):
+        return None
+
+
+def _fetch_user_info(sheets_client, user_tg_id: int) -> dict | None:
+    """
+    Получает данные пользователя из Техлиста и подготавливает для approve.
+
+    Args:
+        sheets_client: Экземпляр GoogleSheetsClient
+        user_tg_id: Telegram ID пользователя
+
+    Returns:
+        Dict с полями: fio, department, position, custom_position, mention
+        или None если пользователь не найден
+    """
+    user_info = sheets_client.get_user_from_techlist(user_tg_id)
+    if not user_info:
+        return None
+
+    fio = user_info.get("fio_from_user", "Неизвестно")
+    department = user_info.get("department", "")
+    position = user_info.get("position", "")
+    custom_position = user_info.get("custom_position", "")
+    nickname = (user_info.get("nickname") or "").lstrip("@") or None
+    mention = make_mention(nickname, fio)
+
+    return {
+        "fio": fio,
+        "department": department,
+        "position": position,
+        "custom_position": custom_position,
+        "mention": mention,
+    }
+
+
+async def _register_user_in_sheets(
+    sheets_client,
+    user_tg_id: int,
+    row_index: int,
+    custom_position: str | None,
+    admin_id: int
+) -> None:
+    """
+    Регистрирует пользователя в Google Sheets: одобрение + добавление в график.
+
+    ВАЖНО: Выполняет две операции последовательно:
+    1. mark_user_approved() — помечает как одобренного в Техлисте
+    2. ensure_user_in_current_month_hours() — добавляет в месячный лист
+
+    Если вторая операция падает, первая уже выполнена (транзакционный риск).
+
+    Args:
+        sheets_client: Экземпляр GoogleSheetsClient
+        user_tg_id: Telegram ID пользователя
+        row_index: Номер строки в Техлисте для одобрения
+        custom_position: Должность (для Руководящий состав) или None
+        admin_id: Telegram ID администратора (для логирования)
+
+    Raises:
+        Exception: При ошибке добавления в месячный лист
+    """
+    # Одобряем пользователя в Техлисте
+    sheets_client.mark_user_approved(row_index)
+    logger.info(
+        f"Админ {admin_id} одобрил пользователя {user_tg_id} (строка {row_index})"
+    )
+
+    # Добавляем в месячный лист (может упасть → raise наверх)
+    sheets_client.ensure_user_in_current_month_hours(
+        user_tg_id,
+        custom_position=custom_position if custom_position else None
+    )
+
+
+async def _setup_user_access(
+    user_tg_id: int,
+    fio: str,
+    department: str,
+    position: str,
+    bot,
+) -> None:
+    """
+    Настраивает доступ нового пользователя: ставка, кеш ролей, команды меню.
+
+    Выполняет три независимые операции последовательно:
+    1. Копирует дефолтную ставку из rates → user_rates
+    2. Обновляет кеш ролей в SQLite
+    3. Устанавливает команды бота для роли "user"
+
+    Args:
+        user_tg_id: Telegram ID пользователя
+        fio: Полное имя пользователя (для логов)
+        department: Отдел пользователя
+        position: Позиция пользователя
+        bot: Экземпляр бота для установки команд
+    """
+    # Копируем дефолтную ставку
+    default_rate = await get_rate(DB_PATH, position)
+    if default_rate:
+        await set_user_rate(
+            DB_PATH, user_tg_id,
+            base_rate=default_rate["base_rate"],
+            extra_rate=default_rate.get("extra_rate")
+        )
+        logger.info(f"Установлена ставка для {fio}: {default_rate['base_rate']}/{default_rate.get('extra_rate')} р/ч")
+
+    # Обновляем кеш ролей
+    RolesCacheService.update_user_role(
+        telegram_id=user_tg_id,
+        full_name=fio,
+        role="user",
+        department=department,
+        position=position,
+    )
+    logger.info(f"Пользователь {user_tg_id} добавлен в кеш ролей: {department}, {position}")
+
+    # Устанавливаем команды меню
+    await set_commands_for_role(bot, user_tg_id, "user")
+
+
+async def _notify_approval(
+    bot,
+    callback,
+    user_tg_id: int,
+    mention: str,
+    original_text: str,
+    admin_full_name: str,
+) -> None:
+    """
+    Отправляет уведомления об одобрении: пользователю и админу.
+
+    Выполняет два действия:
+    1. Отправляет сообщение пользователю об одобрении (ошибки игнорируются)
+    2. Редактирует сообщение админа, добавляя ✅ и имя обработавшего
+
+    Args:
+        bot: Экземпляр бота
+        callback: CallbackQuery от админа
+        user_tg_id: Telegram ID одобренного пользователя
+        mention: HTML-ссылка на пользователя (@username или ФИО)
+        original_text: Исходный текст сообщения админа
+        admin_full_name: Полное имя обработавшего администратора
+    """
+    # Уведомляем пользователя (ошибки игнорируем)
+    try:
+        await bot.send_message(
+            chat_id=user_tg_id,
+            text="✅ Твоя заявка одобрена!\n\nТеперь можешь вносить смены через /shift."
+        )
+    except Exception:
+        pass
+
+    # Редактируем сообщение админа
+    await callback.message.edit_text(
+        text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
+        f"\n✅ Одобрено администратором {html.escape(admin_full_name)}",
+        parse_mode="HTML",
+        reply_markup=None,
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
+
+
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
-    """Обработка нажатия кнопки 'Одобрить'"""
+    """
+    Обрабатывает одобрение заявки нового пользователя администратором.
+
+    Выполняет полный цикл одобрения:
+    1. Парсинг callback данных
+    2. Получение информации из Техлиста
+    3. Регистрация в Google Sheets (Техлист + месячный график)
+    4. Настройка доступа (ставка + кеш + команды)
+    5. Уведомления пользователю и админу
+
+    Args:
+        callback: CallbackQuery от кнопки "Одобрить"
+        state: FSM состояние (не используется, для совместимости)
+    """
     try:
         original_text = callback.message.text or ""
         if "✅" in original_text or "❌" in original_text:
             await callback.answer("Уже обработано другим администратором.")
             return
 
-        # Парсим callback_data: approve_TELEGRAM_ID_ROW_INDEX
-        parts = callback.data.split("_")
-        if len(parts) < 3:
-            logger.error("Некорректный формат callback_data при одобрении: %s", callback.data)
-            await callback.answer("Некорректный формат данных", show_alert=True)
+        parsed = _parse_approve_callback(callback.data)
+        if parsed is None:
+            await callback.answer("❌ Ошибка обработки заявки.")
             return
-        try:
-            user_tg_id = int(parts[1])
-            row_index = int(parts[2])
-        except ValueError:
-            logger.error("Не удалось распарсить ID из callback_data: %s", callback.data)
-            await callback.answer("Некорректные данные в запросе", show_alert=True)
-            return
+        user_tg_id, row_index = parsed
 
         if sheets_client is None:
             await callback.answer("Ошибка подключения к таблице", show_alert=True)
             return
 
-        # Получаем данные пользователя из Техлиста
-        user_info = sheets_client.get_user_from_techlist(user_tg_id)
-        if not user_info:
-            await callback.answer("Пользователь не найден в Техлисте", show_alert=True)
+        user_data = _fetch_user_info(sheets_client, user_tg_id)
+        if user_data is None:
+            await callback.answer("❌ Пользователь не найден в Техлисте.")
             return
 
-        fio = user_info.get("fio_from_user", "Неизвестно")
-        department = user_info.get("department", "")
+        fio = user_data["fio"]
+        department = user_data["department"]
+        position = user_data["position"]
+        custom_position = user_data["custom_position"]
+        mention = user_data["mention"]
 
-        # Читаем данные из Техлиста
-        position = user_info.get("position", "")         # колонка E — всегда базовая
-        custom_position = user_info.get("custom_position", "")  # колонка H
-
-        _nickname = (user_info.get("nickname") or "").lstrip("@") or None
-        mention = make_mention(_nickname, fio)
-
-        # Одобряем пользователя в таблице
-        sheets_client.mark_user_approved(row_index)
-        logger.info(
-            f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
-        )
-
-        # Добавление в месячный лист
+        # Регистрация в Sheets (одобрение + график)
         try:
-            sheets_client.ensure_user_in_current_month_hours(
+            await _register_user_in_sheets(
+                sheets_client,
                 user_tg_id,
-                custom_position=custom_position if custom_position else None
+                row_index,
+                custom_position,
+                callback.from_user.id
             )
         except Exception:
             logger.exception(f"approve: ошибка добавления в график для {user_tg_id}")
@@ -650,45 +824,23 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
 
         logger.info(f"Синхронизация в график завершена для {user_tg_id}")
 
-        # Копирование ставки
-        default_rate = await get_rate(DB_PATH, position)
-        if default_rate:
-            await set_user_rate(
-                DB_PATH, user_tg_id,
-                base_rate=default_rate["base_rate"],
-                extra_rate=default_rate.get("extra_rate")
-            )
-            logger.info(f"Установлена ставка для {fio}: {default_rate['base_rate']}/{default_rate.get('extra_rate')} р/ч")
-
-        # Обновление кеша
-        RolesCacheService.update_user_role(
-            telegram_id=user_tg_id,
-            full_name=fio,
-            role="user",
-            department=department,
-            position=position,
+        # Настройка доступа (ставка + кеш + команды)
+        await _setup_user_access(
+            user_tg_id,
+            fio,
+            department,
+            position,
+            callback.bot
         )
-        logger.info(f"Пользователь {user_tg_id} добавлен в кеш ролей: {department}, {position}")
 
-        # Команды меню
-        await set_commands_for_role(callback.bot, user_tg_id, "user")
-
-        # Уведомляем пользователя
-        try:
-            await callback.bot.send_message(
-                chat_id=user_tg_id,
-                text="✅ Твоя заявка одобрена!\n\nТеперь можешь вносить смены через /shift."
-            )
-        except Exception:
-            pass
-
-        # Обновляем сообщение админа
-        await callback.message.edit_text(
-            text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
-            f"\n✅ Одобрено администратором {html.escape(callback.from_user.full_name)}",
-            parse_mode="HTML",
-            reply_markup=None,
-            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        # Уведомления (пользователю + админу)
+        await _notify_approval(
+            callback.bot,
+            callback,
+            user_tg_id,
+            mention,
+            original_text,
+            callback.from_user.full_name
         )
 
         await callback.answer("Пользователь одобрен!")
@@ -910,8 +1062,10 @@ async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
         filtered = []
         for emp in employees:
             user_data = get_user(emp["telegram_id"])
-            if user_data and user_data.get("role") == "user":
-                filtered.append(emp)
+            if user_data is None:
+                continue
+            # Показываем всех (user + admin) — fork demote/fire реализован в dismiss_select
+            filtered.append(emp)
 
     if not filtered:
         type_label = "сотрудников" if dismiss_type == "user" else "администраторов"

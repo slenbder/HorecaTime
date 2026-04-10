@@ -613,10 +613,6 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Ошибка подключения к таблице", show_alert=True)
             return
 
-        # Загружаем pending_data заранее — там хранится каноническая позиция из заявки
-        callback_key = f"{user_tg_id}_{row_index}"
-        pending_data = _pending_admins.pop(callback_key, {})
-
         # Получаем данные пользователя из Техлиста
         user_info = sheets_client.get_user_from_techlist(user_tg_id)
         if not user_info:
@@ -626,28 +622,9 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         fio = user_info.get("fio_from_user", "Неизвестно")
         department = user_info.get("department", "")
 
-        # Техлист колонка E хранит custom_position для Руководящего состава (не базовую позицию).
-        # Reverse mapping: если значение не входит в канонический список — это custom_position.
-        _CANONICAL_POSITIONS = {
-            "Официант", "Раннер", "Хостесс", "Менеджер",
-            "Бармен", "Барбэк",
-            "Руководящий состав", "Горячий цех", "Холодный цех",
-            "Кондитерский цех", "Заготовочный цех", "Коренной цех",
-            "Грузчик", "Закупщик",
-            "Клининг", "Котломой",
-        }
-        raw_position = user_info.get("position", "")
-        if raw_position in _CANONICAL_POSITIONS:
-            position = raw_position
-        else:
-            # Колонка E содержит custom_position → пользователь из "Руководящий состав"
-            position = "Руководящий состав"
-            if not pending_data.get("custom_position"):
-                pending_data["custom_position"] = raw_position
-        logger.info(
-            "process_approve: raw='%s', canonical='%s', custom_position='%s'",
-            raw_position, position, pending_data.get("custom_position"),
-        )
+        # Читаем данные из Техлиста
+        position = user_info.get("position", "")         # колонка E — всегда базовая
+        custom_position = user_info.get("custom_position", "")  # колонка H
 
         _nickname = (user_info.get("nickname") or "").lstrip("@") or None
         mention = make_mention(_nickname, fio)
@@ -658,79 +635,32 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             f"Админ {callback.from_user.id} одобрил пользователя {user_tg_id} (строка {row_index})"
         )
 
-        # Руководящий состав: если custom_position уже известен — пропустить FSM
-        if position == "Руководящий состав":
-            pending_custom_position = pending_data.get("custom_position")
-            if not pending_custom_position:
-                # custom_position неизвестен — запросить у администратора
-                await state.update_data(
-                    pending_custom_position=True,
-                    approved_tg_id=user_tg_id,
-                    approved_full_name=fio,
-                    approved_dept=department,
-                    approved_position=position,
-                )
-                await state.set_state(AuthStates.waiting_kitchen_title)
-                await callback.message.edit_text(
-                    text=original_text + f"\n\n⏳ Одобрено. Ожидаю ввод должности от администратора {callback.from_user.full_name}...",
-                    reply_markup=None,
-                )
-                await callback.message.answer(
-                    f"Сотрудник {fio} — Руководящий состав.\n"
-                    "Введите должность сотрудника (например: Шеф, Су-шеф ЗЦ, Шеф КЦ):"
-                )
-                await callback.answer()
-                return
-            # custom_position восстановлен из Техлиста — продолжаем одобрение без запроса
-            logger.info(
-                "custom_position восстановлен из Техлиста для %s: '%s'",
-                user_tg_id, pending_custom_position,
-            )
-        else:
-            pending_custom_position = pending_data.get('custom_position')
+        # Добавление в месячный лист
         try:
-            inserted = sheets_client.ensure_user_in_current_month_hours(
-                user_tg_id, custom_position=pending_custom_position
-            )
-            logger.info(
-                "Синхронизация в график завершена для %s, inserted=%s",
+            sheets_client.ensure_user_in_current_month_hours(
                 user_tg_id,
-                inserted,
+                custom_position=custom_position if custom_position else None
             )
-        except Exception as sync_error:
-            logger.exception(
-                "Пользователь %s помечен как одобренный, но не был добавлен в график: %s",
-                user_tg_id,
-                sync_error,
-            )
-
+        except Exception:
+            logger.exception(f"approve: ошибка добавления в график для {user_tg_id}")
             await callback.message.edit_text(
-                text=callback.message.text + "\n\n⚠️ ОДОБРЕНО, НО НЕ ДОБАВЛЕН В ГРАФИК",
-                reply_markup=None,
-            )
-            await callback.answer(
-                "В Техлисте проставлено ДА, но добавить пользователя в график не удалось. Проверь лист месяца и данные в Техлисте.",
-                show_alert=True,
+                f"❌ Ошибка при добавлении {fio} в график."
             )
             return
 
-        # Устанавливаем персональную ставку из шаблона
-        _KNOWN_POSITIONS = {
-            "Официант", "Раннер", "Хостесс", "Менеджер", "Бармен", "Барбэк",
-            "Горячий цех", "Холодный цех", "Кондитерский цех", "Заготовочный цех",
-            "Коренной цех", "Грузчик", "Закупщик", "Клининг", "Котломой",
-        }
-        normalized_position = position if position in _KNOWN_POSITIONS else "Руководящий состав"
-        try:
-            rate = await get_rate(DB_PATH, normalized_position)
-            base_rate = rate["base_rate"] if rate else 250.0
-            extra_rate = rate["extra_rate"] if rate else None
-            await set_user_rate(DB_PATH, user_tg_id, base_rate, extra_rate)
-            logger.info("Установлена ставка для %s: %s/%s р/ч", fio, base_rate, extra_rate)
-        except Exception:
-            logger.error("Не удалось установить ставку для %s (%s)", fio, user_tg_id, exc_info=True)
+        logger.info(f"Синхронизация в график завершена для {user_tg_id}")
 
-        # Записываем в кеш ролей
+        # Копирование ставки
+        default_rate = await get_rate(DB_PATH, position)
+        if default_rate:
+            await set_user_rate(
+                DB_PATH, user_tg_id,
+                base_rate=default_rate["base_rate"],
+                extra_rate=default_rate.get("extra_rate")
+            )
+            logger.info(f"Установлена ставка для {fio}: {default_rate['base_rate']}/{default_rate.get('extra_rate')} р/ч")
+
+        # Обновление кеша
         RolesCacheService.update_user_role(
             telegram_id=user_tg_id,
             full_name=fio,
@@ -740,24 +670,17 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         )
         logger.info(f"Пользователь {user_tg_id} добавлен в кеш ролей: {department}, {position}")
 
+        # Команды меню
+        await set_commands_for_role(callback.bot, user_tg_id, "user")
+
         # Уведомляем пользователя
         try:
             await callback.bot.send_message(
                 chat_id=user_tg_id,
-                text="✅ Твоя заявка одобрена!\n\nТеперь ты можешь вносить рабочие часы и смотреть отчёты.",
-                reply_markup=ReplyKeyboardRemove(),
+                text="✅ Твоя заявка одобрена!\n\nТеперь можешь вносить смены через /shift."
             )
-            if SHEET_URL:
-                await callback.bot.send_message(
-                    chat_id=user_tg_id,
-                    text=f"📊 Ссылка на график:\n{SHEET_URL}",
-                )
-        except Exception as e:
-            logger.error(f"Не удалось уведомить пользователя {user_tg_id}: {e}")
-
-        cached = RolesCacheService.get_user_role(user_tg_id)
-        if cached and cached.get("role") and cached["role"] != "guest":
-            await set_commands_for_role(callback.bot, user_tg_id, cached["role"])
+        except Exception:
+            pass
 
         # Обновляем сообщение админа
         await callback.message.edit_text(

@@ -607,6 +607,38 @@ def _parse_approve_callback(callback_data: str) -> tuple[int, int] | None:
         return None
 
 
+def _fetch_user_info(sheets_client, user_tg_id: int) -> dict | None:
+    """
+    Получает данные пользователя из Техлиста и подготавливает для approve.
+
+    Args:
+        sheets_client: Экземпляр GoogleSheetsClient
+        user_tg_id: Telegram ID пользователя
+
+    Returns:
+        Dict с полями: fio, department, position, custom_position, mention
+        или None если пользователь не найден
+    """
+    user_info = sheets_client.get_user_from_techlist(user_tg_id)
+    if not user_info:
+        return None
+
+    fio = user_info.get("fio_from_user", "Неизвестно")
+    department = user_info.get("department", "")
+    position = user_info.get("position", "")
+    custom_position = user_info.get("custom_position", "")
+    nickname = (user_info.get("nickname") or "").lstrip("@") or None
+    mention = make_mention(nickname, fio)
+
+    return {
+        "fio": fio,
+        "department": department,
+        "position": position,
+        "custom_position": custom_position,
+        "mention": mention,
+    }
+
+
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
     """Обработка нажатия кнопки 'Одобрить'"""
@@ -626,21 +658,16 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Ошибка подключения к таблице", show_alert=True)
             return
 
-        # Получаем данные пользователя из Техлиста
-        user_info = sheets_client.get_user_from_techlist(user_tg_id)
-        if not user_info:
-            await callback.answer("Пользователь не найден в Техлисте", show_alert=True)
+        user_data = _fetch_user_info(sheets_client, user_tg_id)
+        if user_data is None:
+            await callback.answer("❌ Пользователь не найден в Техлисте.")
             return
 
-        fio = user_info.get("fio_from_user", "Неизвестно")
-        department = user_info.get("department", "")
-
-        # Читаем данные из Техлиста
-        position = user_info.get("position", "")         # колонка E — всегда базовая
-        custom_position = user_info.get("custom_position", "")  # колонка H
-
-        _nickname = (user_info.get("nickname") or "").lstrip("@") or None
-        mention = make_mention(_nickname, fio)
+        fio = user_data["fio"]
+        department = user_data["department"]
+        position = user_data["position"]
+        custom_position = user_data["custom_position"]
+        mention = user_data["mention"]
 
         # Одобряем пользователя в таблице
         sheets_client.mark_user_approved(row_index)

@@ -768,7 +768,20 @@ async def _notify_approval(
 
 @auth_router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery, state: FSMContext):
-    """Обработка нажатия кнопки 'Одобрить'"""
+    """
+    Обрабатывает одобрение заявки нового пользователя администратором.
+
+    Выполняет полный цикл одобрения:
+    1. Парсинг callback данных
+    2. Получение информации из Техлиста
+    3. Регистрация в Google Sheets (Техлист + месячный график)
+    4. Настройка доступа (ставка + кеш + команды)
+    5. Уведомления пользователю и админу
+
+    Args:
+        callback: CallbackQuery от кнопки "Одобрить"
+        state: FSM состояние (не используется, для совместимости)
+    """
     try:
         original_text = callback.message.text or ""
         if "✅" in original_text or "❌" in original_text:

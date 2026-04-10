@@ -313,7 +313,7 @@ async def process_dop_position(message: Message, state: FSMContext):
         )
         return
     logger.info("Пользователь %s выбрал доп. позицию: %s", message.from_user.id, position)
-    await state.update_data(position=position, custom_position="Повар")
+    await state.update_data(position=position)
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
     await state.set_state(AuthStates.entering_fio)
 

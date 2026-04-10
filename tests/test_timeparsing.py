@@ -218,3 +218,7 @@ class TestCheckOverlap:
     def test_boundary_no_overlap(self):
         # 10-20 и 20-23 — конец одного = начало другого, не пересекаются
         assert check_overlap(10.0, 20.0, 20.0, 23.0) is False
+
+    def test_overlap_mixed_midnight(self):
+        # 20-23 (не через полночь) и 22-02 (через полночь) — пересекаются (22:00–23:00)
+        assert check_overlap(20.0, 23.0, 22.0, 2.0) is True

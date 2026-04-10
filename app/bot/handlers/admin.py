@@ -300,12 +300,12 @@ async def msg_setrate_new_rate(message: Message, state: FSMContext):
         await state.update_data(set_rate_base=base_rate)
         await state.set_state(SetRateStates.waiting_extra_rate)
         extra_label = _EXTRA_LABEL.get(position, "повышенную")
-        logger.info("/set_rate: base=%s для %s, запрашиваю %s ставку", base_rate, full_name, extra_label)
+        logger.info("/set_rate: base=%s для user_id=%s, запрашиваю %s ставку", base_rate, target_id, extra_label)
         await message.answer(f"Введите повышенную ставку (выходные дни, р/ч):")
     else:
         await set_user_rate(DB_PATH, target_id, base_rate, extra_rate=None)
         await state.clear()
-        logger.info("/set_rate: сохранено для %s (%s): base=%s", full_name, target_id, base_rate)
+        logger.info("/set_rate: сохранено для user_id=%s: base=%s", target_id, base_rate)
         await message.answer(f"✅ Ставка обновлена: {full_name} — {_fmt_money(base_rate)} р/ч")
 
 
@@ -329,8 +329,8 @@ async def msg_setrate_extra_rate(message: Message, state: FSMContext):
     await state.clear()
 
     logger.info(
-        "/set_rate: сохранено для %s (%s): base=%s extra=%s",
-        full_name, target_id, base_rate, extra_rate,
+        "/set_rate: сохранено для user_id=%s: base=%s extra=%s",
+        target_id, base_rate, extra_rate,
     )
     await message.answer(
         f"✅ Ставка обновлена: {full_name} — {_fmt_money(base_rate)}/{_fmt_money(extra_rate)} р/ч"

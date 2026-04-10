@@ -31,3 +31,13 @@ docs/
 
 # Local deploy scripts
 deploy.sh
+
+# Test cache
+.pytest_cache/
+
+# Context/audit files (developer-only, not for version control)
+CLAUDE.md
+HISTORY.md
+TECH_REFERENCE.md
+FINAL_AUDIT.md
+FSM_STATES_MAP.md

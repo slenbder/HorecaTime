@@ -750,8 +750,12 @@ async def _notify_approval(
             chat_id=user_tg_id,
             text="✅ Твоя заявка одобрена!\n\nТеперь можешь вносить смены через /shift."
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            "Не удалось уведомить user %s об одобрении: %s",
+            user_tg_id,
+            e,
+        )
 
     # Редактируем сообщение админа
     await callback.message.edit_text(
@@ -882,7 +886,11 @@ async def process_reject(callback: CallbackQuery):
                 text="❌ Твоя заявка отклонена.\n\nОбратись к администратору для уточнения причины."
             )
         except Exception as e:
-            logger.error(f"Не удалось уведомить пользователя {user_tg_id}: {e}")
+            logger.warning(
+                "Не удалось уведомить user %s об отклонении: %s",
+                user_tg_id,
+                e,
+            )
 
         # Обновляем сообщение админа
         await callback.message.edit_text(

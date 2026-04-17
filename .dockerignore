@@ -1,48 +1,43 @@
-# Git
-.git/
-.gitignore
-
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
-
-# Virtual environments
-venv/
-env/
-ENV/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Project specific
-.env
-.env.example
-credentials*.json
-data/
-logs/
-tests/
-
-# Documentation
-CLAUDE.md
-HISTORY.md
-TECH_REFERENCE.md
-FINAL_AUDIT.md
 
 # CI/CD
-.github/
-
 # Docker
-docker-compose.yml
-Dockerfile
+# Documentation
+# Git
+# IDE
+# Project specific
+# Python cache
+# Virtual environments
+*.egg
+*.egg-info/
+*.pyc
+*.pyd
+*.pyo
+*.so
+*.swo
+*.swp
+.Python
 .dockerignore
+.env
+.env.example
+.git/
+.github/
+.gitignore
+.idea/
+.vscode/
+CLAUDE.md
+Dockerfile
+ENV/
+FINAL_AUDIT.md
+HISTORY.md
+TECH_REFERENCE.md
+__pycache__/
+build/
+credentials*.json
+credentials.json
+data/
+dist/
+docker-compose.yml
+env/
+logs/
+tests/
+venv/

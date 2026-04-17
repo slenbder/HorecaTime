@@ -68,6 +68,10 @@ def is_critical_exception(exception: Exception) -> bool:
     exc_type = type(exception).__name__
     exc_str = str(exception)
 
+    # Callback timeout — не критично (UI feedback, данные уже записаны)
+    if "query is too old" in exc_str.lower():
+        return False
+
     if exc_type in CRITICAL_EXCEPTION_TYPES:
         return True
 

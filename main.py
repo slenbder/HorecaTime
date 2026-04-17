@@ -1,10 +1,13 @@
 import asyncio
 import logging
 import os
+import socket
 from zoneinfo import ZoneInfo
 
+from aiohttp import TCPConnector
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.types import ErrorEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -51,8 +54,11 @@ async def main():
     from app.scheduler.fsm_cleanup import cleanup_expired_fsm_states
     from app.scheduler.healthcheck import healthcheck
 
+    connector = TCPConnector(family=socket.AF_INET)
+    session = AiohttpSession(connector=connector)
     bot = Bot(
         token=BOT_TOKEN,
+        session=session,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher(storage=SQLiteStorage(db_path=DB_PATH))

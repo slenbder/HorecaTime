@@ -21,7 +21,7 @@ from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift, check_overlap, parse_time, round_to_half
 from app.utils.text_utils import make_mention
-from config import SUPERADMIN_IDS, DB_PATH
+from config import DB_PATH
 from app.db.models import get_admins_by_department
 
 userhours_router = Router()
@@ -394,7 +394,7 @@ async def _write_waiter_no_photo(
     await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
 
     hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
-    recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
+    recipients = hall_admin_ids
     if not recipients:
         logger.warning("_write_waiter_no_photo: получатели пустые, уведомление не отправлено")
         return
@@ -515,7 +515,7 @@ async def _send_waiter_report(
     await message.answer("✅ Смена принята, ожидайте подтверждения администратора.")
 
     hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
-    recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
+    recipients = hall_admin_ids
     if not recipients:
         logger.warning(
             "_send_waiter_report: получатели пустые, отчёт официанта %s не отправлен",
@@ -713,7 +713,7 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
         )
 
     bar_admin_ids = await get_admins_by_department(DB_PATH, "Бар")
-    recipients = list(set(bar_admin_ids + list(SUPERADMIN_IDS)))
+    recipients = bar_admin_ids
     for admin_id in recipients:
         try:
             await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
@@ -759,11 +759,11 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
 
     if position in KITCHEN_POSITIONS:
         kitchen_admin_ids = await get_admins_by_department(DB_PATH, "Кухня")
-        recipients = list(set(kitchen_admin_ids + list(SUPERADMIN_IDS)))
+        recipients = kitchen_admin_ids
     else:
         dept = "МОП" if position in MOP_POSITIONS else "Зал"
         hall_admin_ids = await get_admins_by_department(DB_PATH, dept)
-        recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
+        recipients = hall_admin_ids
 
     written: list[tuple[str, float]] = []
 
@@ -885,7 +885,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
         )
 
     hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
-    recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
+    recipients = hall_admin_ids
     for admin_id in recipients:
         try:
             await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))

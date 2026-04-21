@@ -217,6 +217,19 @@ def delete_user(telegram_id: int) -> None:
 
 # --- Выборки пользователей (async, aiosqlite) ---
 
+async def get_user_role(db_path: str, telegram_id: int) -> Optional[str]:
+    """
+    Возвращает role пользователя из БД или None если не найден.
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        async with db.execute(
+            'SELECT role FROM users WHERE telegram_id = ?',
+            (telegram_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    return row[0] if row else None
+
+
 async def get_users_by_department(db_path: str, department: str) -> list[dict]:
     """
     Возвращает всех пользователей с указанным department

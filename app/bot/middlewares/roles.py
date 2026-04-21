@@ -5,7 +5,8 @@ from aiogram.types import TelegramObject, Message, CallbackQuery
 
 from app.services.roles_cache import RolesCacheService
 
-from config import SUPERADMIN_IDS, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS, DEVELOPER_ID
+from config import DEVELOPER_ID, SUPERADMIN_IDS, DB_PATH
+from app.db.models import get_user_role
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,10 @@ class RoleMiddleware(BaseMiddleware):
                 role = "developer"
             elif telegram_id in SUPERADMIN_IDS:
                 role = "superadmin"
-            elif telegram_id in ADMIN_HALL_IDS:
-                role = "admin_hall"
-            elif telegram_id in ADMIN_BAR_IDS:
-                role = "admin_bar"
-            elif telegram_id in ADMIN_KITCHEN_IDS:
-                role = "admin_kitchen"
+            else:
+                db_role = await get_user_role(DB_PATH, telegram_id)
+                if db_role and db_role.startswith("admin_"):
+                    role = db_role
 
         data["user_role"] = role
         data["user_data"] = user_data

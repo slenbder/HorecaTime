@@ -21,7 +21,8 @@ from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.timeparsing import parse_shift, check_overlap, parse_time, round_to_half
 from app.utils.text_utils import make_mention
-from config import ADMIN_BAR_IDS, ADMIN_HALL_IDS, ADMIN_KITCHEN_IDS, SUPERADMIN_IDS
+from config import SUPERADMIN_IDS, DB_PATH
+from app.db.models import get_admins_by_department
 
 userhours_router = Router()
 logger = logging.getLogger(__name__)
@@ -392,7 +393,8 @@ async def _write_waiter_no_photo(
     await state.clear()
     await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
 
-    recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+    hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+    recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
     if not recipients:
         logger.warning("_write_waiter_no_photo: получатели пустые, уведомление не отправлено")
         return
@@ -512,7 +514,8 @@ async def _send_waiter_report(
     await state.clear()
     await message.answer("✅ Смена принята, ожидайте подтверждения администратора.")
 
-    recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+    hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+    recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
     if not recipients:
         logger.warning(
             "_send_waiter_report: получатели пустые, отчёт официанта %s не отправлен",
@@ -709,7 +712,8 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
         )
 
-    recipients = list(set(ADMIN_BAR_IDS + SUPERADMIN_IDS))
+    bar_admin_ids = await get_admins_by_department(DB_PATH, "Бар")
+    recipients = list(set(bar_admin_ids + list(SUPERADMIN_IDS)))
     for admin_id in recipients:
         try:
             await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
@@ -754,9 +758,12 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
     mention = make_mention(message.from_user.username, full_name)
 
     if position in KITCHEN_POSITIONS:
-        recipients = list(set(ADMIN_KITCHEN_IDS + SUPERADMIN_IDS))
+        kitchen_admin_ids = await get_admins_by_department(DB_PATH, "Кухня")
+        recipients = list(set(kitchen_admin_ids + list(SUPERADMIN_IDS)))
     else:
-        recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+        dept = "МОП" if position in MOP_POSITIONS else "Зал"
+        hall_admin_ids = await get_admins_by_department(DB_PATH, dept)
+        recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
 
     written: list[tuple[str, float]] = []
 
@@ -877,7 +884,8 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}"
         )
 
-    recipients = list(set(ADMIN_HALL_IDS + SUPERADMIN_IDS))
+    hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+    recipients = list(set(hall_admin_ids + list(SUPERADMIN_IDS)))
     for admin_id in recipients:
         try:
             await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))

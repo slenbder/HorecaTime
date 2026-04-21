@@ -28,15 +28,8 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role, get_rate, set_user_rate
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email
-from config import (
-    SUPERADMIN_IDS,
-    ADMIN_HALL_IDS,
-    ADMIN_BAR_IDS,
-    ADMIN_KITCHEN_IDS,
-    DEVELOPER_ID,
-    DB_PATH,
-    SHEET_URL,
-)
+from config import DEVELOPER_ID, SUPERADMIN_IDS, DB_PATH, SHEET_URL
+from app.db.models import get_admins_by_department
 
 auth_router = Router()
 logger = logging.getLogger(__name__)
@@ -90,9 +83,6 @@ POSITION_KEYBOARDS = {
 }
 
 logger.debug("Загружены SUPERADMIN_IDS: %s", SUPERADMIN_IDS)
-logger.debug("Загружены ADMIN_HALL_IDS: %s", ADMIN_HALL_IDS)
-logger.debug("Загружены ADMIN_BAR_IDS: %s", ADMIN_BAR_IDS)
-logger.debug("Загружены ADMIN_KITCHEN_IDS: %s", ADMIN_KITCHEN_IDS)
 
 # Инициализируем клиента Google Sheets
 try:
@@ -420,23 +410,8 @@ async def process_fio(message: Message, state: FSMContext):
 
 
     # 3. Определяем, кому отправлять уведомление
-    recipients = []
-
-    # Админы подразделений
-    if department == "Зал":
-        recipients.extend(ADMIN_HALL_IDS)
-    elif department == "Бар":
-        recipients.extend(ADMIN_BAR_IDS)
-    elif department == "Кухня":
-        recipients.extend(ADMIN_KITCHEN_IDS)
-    elif department == "МОП":
-        recipients.extend(ADMIN_HALL_IDS)
-
-    # Суперадмины получают все заявки
-    recipients.extend(SUPERADMIN_IDS)
-
-    # Убираем дубли
-    recipients = list(set(recipients))
+    dept_admins = await get_admins_by_department(DB_PATH, department)
+    recipients = list(set(dept_admins + list(SUPERADMIN_IDS)))
 
     # 4. Отправляем уведомления
     if recipients:

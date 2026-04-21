@@ -460,3 +460,34 @@ async def get_all_users_rates(db_path: str) -> list[dict]:
         }
         for r in rows
     ]
+
+
+async def get_admins_by_department(db_path: str, department: str) -> list[int]:
+    """
+    Возвращает список telegram_id всех админов отдела.
+
+    Args:
+        db_path: путь к SQLite БД
+        department: "Зал", "Бар", "Кухня" или "МОП"
+
+    Returns:
+        Список telegram_id админов (например [123456789, 987654321])
+        Пустой список если отдел неизвестен или админов нет
+    """
+    async with aiosqlite.connect(db_path) as db:
+        role_map = {
+            "Зал": "admin_hall",
+            "Бар": "admin_bar",
+            "Кухня": "admin_kitchen",
+            "МОП": "admin_hall",  # МОП подчиняется admin_hall
+        }
+        role = role_map.get(department)
+        if not role:
+            return []
+
+        cursor = await db.execute(
+            "SELECT telegram_id FROM users WHERE role = ?",
+            (role,)
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]

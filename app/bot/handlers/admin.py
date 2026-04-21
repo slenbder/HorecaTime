@@ -11,8 +11,8 @@ from aiogram.types import (
 
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.fsm.admin_states import SetRateStates
-from app.db.models import get_users_by_department, get_all_users, get_user, get_users_rates_by_department, set_user_rate
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, ADMIN_HALL_IDS, ADMIN_BAR_IDS, ADMIN_KITCHEN_IDS
+from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, get_user_role
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
 
 admin_router = Router()
 logger = logging.getLogger(__name__)
@@ -48,16 +48,10 @@ ROLE_TO_SENDER = {
 }
 
 
-def _resolve_sender_role(tg_id: int) -> str | None:
+async def _resolve_sender_role(tg_id: int) -> str | None:
     if tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID:
         return "superadmin"
-    if tg_id in ADMIN_HALL_IDS:
-        return "admin_hall"
-    if tg_id in ADMIN_BAR_IDS:
-        return "admin_bar"
-    if tg_id in ADMIN_KITCHEN_IDS:
-        return "admin_kitchen"
-    return None
+    return await get_user_role(DB_PATH, tg_id)
 
 
 def _positions_for_dept(dept: str) -> list[str]:
@@ -107,10 +101,7 @@ def _fmt_emp_rate(emp: dict) -> str:
 @admin_router.message(Command("rates"))
 async def cmd_rates(message: Message):
     tg_id = message.from_user.id
-    role = _resolve_sender_role(tg_id)
-    if role is None:
-        user_data = get_user(tg_id)
-        role = user_data["role"] if user_data else None
+    role = await _resolve_sender_role(tg_id)
     if role not in _ROLE_TO_DEPT:
         logger.warning("/rates: доступ запрещён для %s (role=%s)", tg_id, role)
         await message.answer("⛔️ Недостаточно прав.")
@@ -175,10 +166,7 @@ async def _setrate_get_employees(dept: str) -> list[dict]:
 @admin_router.message(Command("set_rate"))
 async def cmd_set_rate(message: Message, state: FSMContext):
     tg_id = message.from_user.id
-    role = _resolve_sender_role(tg_id)
-    if role is None:
-        user_data = get_user(tg_id)
-        role = user_data["role"] if user_data else None
+    role = await _resolve_sender_role(tg_id)
     if role not in _ROLE_TO_DEPT:
         logger.warning("/set_rate: доступ запрещён для %s (role=%s)", tg_id, role)
         await message.answer("⛔️ Недостаточно прав.")
@@ -412,12 +400,7 @@ async def msg_broadcast_text(message: Message, state: FSMContext):
             recipients += [u for u in mop_users if u["telegram_id"] not in seen]
         label = f"сотрудникам отдела {dept}"
 
-    sender_role = _resolve_sender_role(tg_id)
-    if sender_role is None:
-        user_data = get_user(tg_id)
-        sender_role = user_data["role"] if user_data else None
-        if sender_role is not None:
-            logger.info("broadcast: sender_role для %s получена из SQLite fallback: %s", tg_id, sender_role)
+    sender_role = await _resolve_sender_role(tg_id)
     sender_label = ROLE_TO_SENDER.get(sender_role, "администрации")
     broadcast_text = f"📢 Сообщение от {sender_label}\n\n{text}"
     sent = 0

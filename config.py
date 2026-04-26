@@ -12,6 +12,16 @@ if not BOT_TOKEN:
 SUPERADMIN_IDS = [int(x) for x in os.getenv("SUPERADMIN_IDS", "").split(",") if x]
 DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "0"))
 
+# Позиции с двумя ставками (базовая + повышенная)
+POSITIONS_WITH_EXTRA = {"Бармен", "Барбэк", "Раннер"}
+
+# Названия повышенной ставки для каждой позиции
+EXTRA_RATE_LABELS = {
+    "Бармен": "тусовочные",
+    "Барбэк": "тусовочные",
+    "Раннер": "выходные",
+}
+
 # Google Sheets
 GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
 

@@ -12,13 +12,13 @@ from aiogram.types import (
 )
 
 from app.bot.commands import set_commands_for_role
-from app.bot.fsm.auth_states import AuthStates, SetRateStates
+from app.bot.fsm.auth_states import AuthStates
 from app.db.fsm_storage import SQLiteStorage
-from app.db.models import get_all_users_rates, set_user_rate, get_all_users, get_user
+from app.db.models import get_all_users, get_user, get_user_rate, get_user_rate_future
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.roles_cache import RolesCacheService
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, EXTRA_RATE_LABELS
 
 _sheets_client = GoogleSheetsClient()
 
@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 def _is_allowed(tg_id: int) -> bool:
     return tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID
 
-_POSITIONS_WITH_EXTRA = {"Бармен", "Барбэк", "Раннер"}
-
 _DEPT_EMOJIS = {"Зал": "🍽", "Бар": "🍺", "Кухня": "🔪", "МОП": "🧹"}
+
+_MONTH_NAMES = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 _DEPT_POSITIONS_ORDER: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
@@ -111,214 +111,52 @@ async def cmd_rates_all(message: Message):
         await message.answer("⛔️ Недостаточно прав.")
         return
 
-    employees = await get_all_users_rates(DB_PATH)
+    all_users = await get_all_users(DB_PATH)
+    employees = [u for u in all_users if u.get("role") == "user"]
+
     if not employees:
-        await message.answer("📊 Нет сотрудников с установленными ставками.")
+        await message.answer("Нет зарегистрированных сотрудников.")
         return
 
-    lines = _format_rates_grouped(employees)
+    by_dept: dict[str, list] = {}
+    for user in employees:
+        dept = user.get("department") or "—"
+        by_dept.setdefault(dept, []).append(user)
+
+    lines = ["💰 Все ставки:\n"]
+
+    for dept, emoji in _DEPT_EMOJIS.items():
+        group = by_dept.get(dept)
+        if not group:
+            continue
+        lines.append(f"\n{emoji} {dept}:")
+
+        for user in group:
+            uid = user["telegram_id"]
+            position = user.get("position") or "—"
+            full_name = user["full_name"]
+
+            rate = await get_user_rate(DB_PATH, uid)
+            if rate:
+                base = _fmt_money(rate["base_rate"])
+                if rate.get("extra_rate"):
+                    extra = _fmt_money(rate["extra_rate"])
+                    extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
+                    rate_text = f"{base}/{extra} р/ч ({extra_label})"
+                else:
+                    rate_text = f"{base} р/ч"
+            else:
+                rate_text = "не установлена"
+
+            future = await get_user_rate_future(DB_PATH, uid)
+            if future:
+                future_base = _fmt_money(future["base_rate"])
+                month_name = _MONTH_NAMES[future["effective_month"]]
+                rate_text += f"\n    📅 С 1 {month_name}: {future_base} р/ч"
+
+            lines.append(f"  • {full_name} ({position}): {rate_text}")
+
     await message.answer("\n".join(lines))
-
-
-# --- /set_rate_all (FSM: dept → position → employee → rate) ---
-
-@superadmin_router.message(Command("set_rate_all"))
-async def cmd_set_rate_all(message: Message, state: FSMContext):
-    tg_id = message.from_user.id
-    logger.info("/set_rate_all: шаг 1 — выбор отдела, от %s", tg_id)
-    if not _is_allowed(tg_id):
-        logger.warning("/set_rate_all: доступ запрещён для %s", tg_id)
-        await message.answer("⛔️ Недостаточно прав.")
-        return
-
-    await state.set_state(SetRateStates.waiting_set_rate_dept)
-    buttons = [
-        [InlineKeyboardButton(text=dept, callback_data=f"setrate_dept:{dept}")]
-        for dept in _DEPT_EMOJIS
-    ]
-    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")])
-    await message.answer(
-        "Выберите отдел:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-
-
-@superadmin_router.callback_query(
-    SetRateStates.waiting_set_rate_dept,
-    F.data.startswith("setrate_dept:"),
-)
-async def cb_setrate_all_dept(callback: CallbackQuery, state: FSMContext):
-    dept = callback.data.split(":", 1)[1]
-    logger.info("/set_rate_all: шаг 2 — выбор позиции, отдел=%s", dept)
-
-    employees = await get_all_users_rates(DB_PATH)
-    dept_emps = [e for e in employees if e.get("department") == dept]
-    if not dept_emps:
-        await callback.answer("Нет сотрудников в отделе.", show_alert=True)
-        return
-
-    positions: list[str] = []
-    seen: set[str] = set()
-    for pos in _DEPT_POSITIONS_ORDER.get(dept, []):
-        if any((e.get("position") or "—") == pos for e in dept_emps) and pos not in seen:
-            positions.append(pos)
-            seen.add(pos)
-    for emp in dept_emps:
-        pos = emp.get("position") or "—"
-        if pos not in seen:
-            positions.append(pos)
-            seen.add(pos)
-
-    await state.update_data(sra_dept=dept)
-    await state.set_state(SetRateStates.waiting_set_rate_position)
-
-    buttons = [
-        [InlineKeyboardButton(text=pos, callback_data=f"setrate_pos:{pos}")]
-        for pos in positions
-    ]
-    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")])
-    await callback.message.edit_text(
-        f"Отдел: {dept}\nВыберите позицию:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-    await callback.answer()
-
-
-@superadmin_router.callback_query(
-    SetRateStates.waiting_set_rate_position,
-    F.data.startswith("setrate_pos:"),
-)
-async def cb_setrate_all_position(callback: CallbackQuery, state: FSMContext):
-    position = callback.data.split(":", 1)[1]
-    data = await state.get_data()
-    dept = data["sra_dept"]
-    logger.info("/set_rate_all: шаг 3 — выбор сотрудника, позиция=%s", position)
-
-    employees = await get_all_users_rates(DB_PATH)
-    group = [
-        e for e in employees
-        if e.get("department") == dept and (e.get("position") or "—") == position
-    ]
-    if not group:
-        await callback.answer("Сотрудников нет.", show_alert=True)
-        return
-
-    await state.update_data(sra_position=position)
-    await state.set_state(SetRateStates.waiting_set_rate_employee)
-
-    buttons = [
-        [InlineKeyboardButton(
-            text=f"{emp['full_name']} ({_fmt_emp_rate(emp)})",
-            callback_data=f"setrate_emp:{emp['telegram_id']}",
-        )]
-        for emp in group
-    ]
-    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")])
-    await callback.message.edit_text(
-        f"Позиция: {position}\nВыберите сотрудника:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
-    await callback.answer()
-
-
-@superadmin_router.callback_query(
-    SetRateStates.waiting_set_rate_employee,
-    F.data.startswith("setrate_emp:"),
-)
-async def cb_setrate_all_employee(callback: CallbackQuery, state: FSMContext):
-    target_id = int(callback.data.split(":", 1)[1])
-    data = await state.get_data()
-    position = data["sra_position"]
-    dept = data["sra_dept"]
-    logger.info("/set_rate_all: шаг 4 — ввод ставки, сотрудник=%s позиция=%s", target_id, position)
-
-    employees = await get_all_users_rates(DB_PATH)
-    emp = next(
-        (e for e in employees if e["telegram_id"] == target_id and e.get("department") == dept),
-        None,
-    )
-    full_name = emp["full_name"] if emp else str(target_id)
-    current_rate = _fmt_emp_rate(emp) if emp else "не установлена"
-
-    await state.update_data(sra_target_id=target_id, sra_full_name=full_name)
-    await state.set_state(SetRateStates.waiting_set_rate_base)
-
-    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")]
-    ])
-    if position in _POSITIONS_WITH_EXTRA:
-        prompt = (
-            f"Сотрудник: {full_name}\n"
-            f"Текущая ставка: {current_rate}\n\n"
-            f"Введите базовую ставку (р/ч):"
-        )
-    else:
-        prompt = (
-            f"Сотрудник: {full_name}\n"
-            f"Текущая ставка: {current_rate}\n\n"
-            f"Введите новую ставку (р/ч):"
-        )
-    await callback.message.edit_text(prompt, reply_markup=cancel_kb)
-    await callback.answer()
-
-
-@superadmin_router.message(SetRateStates.waiting_set_rate_base)
-async def msg_set_rate_base(message: Message, state: FSMContext):
-    data = await state.get_data()
-    position = data["sra_position"]
-    target_id = data["sra_target_id"]
-    full_name = data["sra_full_name"]
-
-    text = message.text.strip().replace(",", ".")
-    try:
-        base_rate = float(text)
-        if base_rate <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Введите корректное число больше 0:")
-        return
-
-    if position in _POSITIONS_WITH_EXTRA:
-        await state.update_data(sra_base_rate=base_rate)
-        await state.set_state(SetRateStates.waiting_set_rate_extra)
-        logger.info("/set_rate_all: base=%s для %s, запрашиваю повышенную ставку", base_rate, full_name)
-        await message.answer("Введите повышенную ставку (выходные дни, р/ч):")
-    else:
-        await set_user_rate(DB_PATH, target_id, base_rate, extra_rate=None)
-        await state.clear()
-        logger.info(
-            "/set_rate_all: сохранено для %s (%s): base=%s (от %s)",
-            full_name, target_id, base_rate, message.from_user.id,
-        )
-        await message.answer(f"✅ Ставка обновлена: {full_name} — {_fmt_money(base_rate)} р/ч")
-
-
-@superadmin_router.message(SetRateStates.waiting_set_rate_extra)
-async def msg_set_rate_extra(message: Message, state: FSMContext):
-    data = await state.get_data()
-    target_id = data["sra_target_id"]
-    full_name = data["sra_full_name"]
-    base_rate = data["sra_base_rate"]
-
-    text = message.text.strip().replace(",", ".")
-    try:
-        extra_rate = float(text)
-        if extra_rate <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Введите корректное число больше 0:")
-        return
-
-    await set_user_rate(DB_PATH, target_id, base_rate, extra_rate)
-    await state.clear()
-
-    logger.info(
-        "/set_rate_all: сохранено для %s (%s): base=%s extra=%s (от %s)",
-        full_name, target_id, base_rate, extra_rate, message.from_user.id,
-    )
-    await message.answer(
-        f"✅ Ставка обновлена: {full_name} — {_fmt_money(base_rate)}/{_fmt_money(extra_rate)} р/ч"
-    )
 
 
 @superadmin_router.message(Command("switch_month"))

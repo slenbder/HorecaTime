@@ -25,7 +25,7 @@ from app.bot.keyboards.common import (
 )
 
 from app.bot.commands import set_commands_for_role
-from app.db.models import get_user, delete_user, get_users_by_role, get_rate, set_user_rate
+from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email
 from config import DEVELOPER_ID, SUPERADMIN_IDS, DB_PATH, SHEET_URL
@@ -658,12 +658,11 @@ async def _setup_user_access(
     bot,
 ) -> None:
     """
-    Настраивает доступ нового пользователя: ставка, кеш ролей, команды меню.
+    Настраивает доступ нового пользователя: кеш ролей, команды меню.
 
-    Выполняет три независимые операции последовательно:
-    1. Копирует дефолтную ставку из rates → user_rates
-    2. Обновляет кеш ролей в SQLite
-    3. Устанавливает команды бота для роли "user"
+    Выполняет две независимые операции последовательно:
+    1. Обновляет кеш ролей в SQLite
+    2. Устанавливает команды бота для роли "user"
 
     Args:
         user_tg_id: Telegram ID пользователя
@@ -672,16 +671,6 @@ async def _setup_user_access(
         position: Позиция пользователя
         bot: Экземпляр бота для установки команд
     """
-    # Копируем дефолтную ставку
-    default_rate = await get_rate(DB_PATH, position)
-    if default_rate:
-        await set_user_rate(
-            DB_PATH, user_tg_id,
-            base_rate=default_rate["base_rate"],
-            extra_rate=default_rate.get("extra_rate")
-        )
-        logger.info(f"Установлена ставка для {fio}: {default_rate['base_rate']}/{default_rate.get('extra_rate')} р/ч")
-
     # Обновляем кеш ролей
     RolesCacheService.update_user_role(
         telegram_id=user_tg_id,

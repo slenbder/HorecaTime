@@ -10,25 +10,6 @@ from config import DB_PATH
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_RATES = [
-    ("Бармен",            350.0, 500.0),
-    ("Барбэк",            250.0, 400.0),
-    ("Официант",          250.0, None),
-    ("Раннер",            200.0, 300.0),
-    ("Хостесс",           200.0, None),
-    ("Менеджер",          350.0, None),
-    ("Горячий цех",       280.0, None),
-    ("Холодный цех",      250.0, None),
-    ("Кондитерский цех",  280.0, None),
-    ("Заготовочный цех",  230.0, None),
-    ("Коренной цех",      230.0, None),
-    ("Грузчик",           180.0, None),
-    ("Закупщик",          180.0, None),
-    ("Клининг",           200.0, None),
-    ("Котломой",          200.0, None),
-    ("Су-шеф",            500.0, None),
-]
-
 
 def init_database():
     """
@@ -74,24 +55,6 @@ def init_database():
         except sqlite3.OperationalError:
             pass  # колонка уже существует
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rates (
-                position   TEXT PRIMARY KEY,
-                base_rate  REAL NOT NULL,
-                extra_rate REAL,
-                updated_at TEXT NOT NULL
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rates_history (
-                position   TEXT NOT NULL,
-                base_rate  REAL NOT NULL,
-                extra_rate REAL,
-                month      INTEGER NOT NULL,
-                year       INTEGER NOT NULL,
-                PRIMARY KEY (position, month, year)
-            )
-        ''')
-        cursor.execute('''
             CREATE TABLE IF NOT EXISTS user_rates (
                 telegram_id INTEGER PRIMARY KEY REFERENCES users(telegram_id),
                 base_rate   REAL NOT NULL,
@@ -109,23 +72,16 @@ def init_database():
                 PRIMARY KEY (telegram_id, month, year)
             )
         ''')
-        # Вставить дефолтные ставки, если таблица пустая
-        cursor.execute('SELECT COUNT(*) FROM rates')
-        if cursor.fetchone()[0] == 0:
-            now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
-            cursor.executemany(
-                'INSERT INTO rates (position, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?)',
-                [(pos, base, extra, now_str) for pos, base, extra in _DEFAULT_RATES],
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_rates_future (
+                telegram_id      INTEGER PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
+                base_rate        REAL NOT NULL,
+                extra_rate       REAL,
+                effective_month  INTEGER NOT NULL,
+                effective_year   INTEGER NOT NULL,
+                created_at       TEXT NOT NULL
             )
-            logger.info("Дефолтные ставки вставлены в таблицу rates")
-        else:
-            # Миграция: добавить новые позиции если они отсутствуют
-            now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
-            cursor.executemany(
-                'INSERT OR IGNORE INTO rates (position, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?)',
-                [(pos, base, extra, now_str) for pos, base, extra in _DEFAULT_RATES],
-            )
-            logger.info("Миграция ставок: добавлены недостающие позиции")
+        ''')
         conn.commit()
     logger.info("База данных успешно инициализирована")
 
@@ -264,92 +220,6 @@ async def get_all_users(db_path: str) -> list[dict]:
     ]
 
 
-# --- Ставки (async, aiosqlite) ---
-
-async def get_rate(db_path: str, position: str) -> Optional[Dict]:
-    """
-    Возвращает ставку для позиции: {"position", "base_rate", "extra_rate"} или None.
-    """
-    logger.info("get_rate: position=%s", position)
-    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        async with db.execute(
-            'SELECT position, base_rate, extra_rate FROM rates WHERE position = ?',
-            (position,)
-        ) as cursor:
-            row = await cursor.fetchone()
-    if row is None:
-        return None
-    return {"position": row[0], "base_rate": row[1], "extra_rate": row[2]}
-
-
-async def get_all_rates(db_path: str) -> list[dict]:
-    """
-    Возвращает все ставки, отсортированные по позиции.
-    """
-    logger.info("get_all_rates: запрос всех ставок")
-    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        async with db.execute(
-            'SELECT position, base_rate, extra_rate FROM rates ORDER BY position'
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [{"position": r[0], "base_rate": r[1], "extra_rate": r[2]} for r in rows]
-
-
-async def snapshot_rates(db_path: str, month: int, year: int) -> None:
-    """
-    Копирует текущие ставки из rates в rates_history для указанного месяца/года.
-    Если запись уже существует — не перезаписывает (INSERT OR IGNORE).
-    """
-    logger.info("snapshot_rates: сохранение снимка ставок для %d/%d", month, year)
-    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        async with db.execute('SELECT position, base_rate, extra_rate FROM rates') as cursor:
-            rows = await cursor.fetchall()
-        await db.executemany(
-            'INSERT OR IGNORE INTO rates_history (position, base_rate, extra_rate, month, year) '
-            'VALUES (?, ?, ?, ?, ?)',
-            [(r[0], r[1], r[2], month, year) for r in rows],
-        )
-        await db.commit()
-    logger.info("snapshot_rates: сохранено %d записей для %d/%d", len(rows), month, year)
-
-
-async def get_rate_for_period(db_path: str, position: str, month: int, year: int) -> Optional[Dict]:
-    """
-    Читает ставку из rates_history для указанной позиции и периода.
-    Если не найдено — возвращает текущую ставку из rates как fallback.
-    """
-    logger.info("get_rate_for_period: position=%s month=%d year=%d", position, month, year)
-    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        async with db.execute(
-            'SELECT position, base_rate, extra_rate FROM rates_history '
-            'WHERE position = ? AND month = ? AND year = ?',
-            (position, month, year),
-        ) as cursor:
-            row = await cursor.fetchone()
-    if row is not None:
-        return {"position": row[0], "base_rate": row[1], "extra_rate": row[2]}
-    logger.warning(
-        "get_rate_for_period: снимок для %s %d/%d не найден, используем текущую ставку",
-        position, month, year,
-    )
-    return await get_rate(db_path, position)
-
-
-async def update_rate(db_path: str, position: str, base_rate: float,
-                      extra_rate: Optional[float] = None) -> None:
-    """
-    Обновляет ставку для позиции.
-    """
-    now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
-    logger.info("update_rate: position=%s base_rate=%s extra_rate=%s", position, base_rate, extra_rate)
-    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        await db.execute(
-            'INSERT OR REPLACE INTO rates (position, base_rate, extra_rate, updated_at) VALUES (?, ?, ?, ?)',
-            (position, base_rate, extra_rate, now_str),
-        )
-        await db.commit()
-
-
 # --- Персональные ставки (async, aiosqlite) ---
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
@@ -386,6 +256,93 @@ async def set_user_rate(db_path: str, telegram_id: int, base_rate: float,
             (telegram_id, base_rate, extra_rate, now_str),
         )
         await db.commit()
+
+
+async def set_user_rate_future(
+    db_path: str,
+    telegram_id: int,
+    base_rate: float,
+    extra_rate: Optional[float],
+    effective_month: int,
+    effective_year: int,
+) -> None:
+    """
+    Устанавливает будущую ставку сотрудника (с 1-го числа указанного месяца).
+    При повторном вызове для того же telegram_id — перезаписывает.
+    """
+    now_str = datetime.now(MOSCOW_TZ).isoformat()
+    logger.info(
+        "set_user_rate_future: telegram_id=%s base_rate=%s extra_rate=%s effective=%d/%d",
+        telegram_id, base_rate, extra_rate, effective_month, effective_year,
+    )
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            'INSERT INTO user_rates_future '
+            '(telegram_id, base_rate, extra_rate, effective_month, effective_year, created_at) '
+            'VALUES (?, ?, ?, ?, ?, ?) '
+            'ON CONFLICT(telegram_id) DO UPDATE SET '
+            'base_rate=excluded.base_rate, extra_rate=excluded.extra_rate, '
+            'effective_month=excluded.effective_month, effective_year=excluded.effective_year, '
+            'created_at=excluded.created_at',
+            (telegram_id, base_rate, extra_rate, effective_month, effective_year, now_str),
+        )
+        await db.commit()
+
+
+async def get_user_rate_future(db_path: str, telegram_id: int) -> Optional[Dict]:
+    """
+    Возвращает запланированную будущую ставку сотрудника, если она есть.
+    Формат: {"base_rate", "extra_rate", "effective_month", "effective_year"}
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        async with db.execute(
+            'SELECT base_rate, extra_rate, effective_month, effective_year '
+            'FROM user_rates_future WHERE telegram_id = ?',
+            (telegram_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {
+        "base_rate": row[0],
+        "extra_rate": row[1],
+        "effective_month": row[2],
+        "effective_year": row[3],
+    }
+
+
+async def delete_user_rate_future(db_path: str, telegram_id: int) -> None:
+    """Удаляет запланированную будущую ставку сотрудника."""
+    logger.info("delete_user_rate_future: telegram_id=%s", telegram_id)
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            'DELETE FROM user_rates_future WHERE telegram_id = ?',
+            (telegram_id,),
+        )
+        await db.commit()
+
+
+async def get_all_future_rates(db_path: str) -> list[dict]:
+    """
+    Возвращает все запланированные будущие ставки.
+    Используется в switch_month() для применения изменений.
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        async with db.execute(
+            'SELECT telegram_id, base_rate, extra_rate, effective_month, effective_year '
+            'FROM user_rates_future',
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {
+            "telegram_id": r[0],
+            "base_rate": r[1],
+            "extra_rate": r[2],
+            "effective_month": r[3],
+            "effective_year": r[4],
+        }
+        for r in rows
+    ]
 
 
 async def get_user_rate_history(db_path: str, telegram_id: int, month: int, year: int) -> Optional[Dict]:

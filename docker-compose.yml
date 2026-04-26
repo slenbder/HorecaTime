@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+    container_name: horecatime-bot
+    restart: unless-stopped
+    network_mode: "host"
+
+    env_file:
+      - .env
+
+    environment:
+      - TZ=Europe/Moscow
+      - PYTHONUNBUFFERED=1
+
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./credentials.json:/app/credentials.json:ro
+
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "python"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -109,6 +109,16 @@ def init_database():
                 PRIMARY KEY (telegram_id, month, year)
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_rates_future (
+                telegram_id      INTEGER PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
+                base_rate        REAL NOT NULL,
+                extra_rate       REAL,
+                effective_month  INTEGER NOT NULL,
+                effective_year   INTEGER NOT NULL,
+                created_at       TEXT NOT NULL
+            )
+        ''')
         # Вставить дефолтные ставки, если таблица пустая
         cursor.execute('SELECT COUNT(*) FROM rates')
         if cursor.fetchone()[0] == 0:
@@ -386,6 +396,93 @@ async def set_user_rate(db_path: str, telegram_id: int, base_rate: float,
             (telegram_id, base_rate, extra_rate, now_str),
         )
         await db.commit()
+
+
+async def set_user_rate_future(
+    db_path: str,
+    telegram_id: int,
+    base_rate: float,
+    extra_rate: Optional[float],
+    effective_month: int,
+    effective_year: int,
+) -> None:
+    """
+    Устанавливает будущую ставку сотрудника (с 1-го числа указанного месяца).
+    При повторном вызове для того же telegram_id — перезаписывает.
+    """
+    now_str = datetime.now(MOSCOW_TZ).isoformat()
+    logger.info(
+        "set_user_rate_future: telegram_id=%s base_rate=%s extra_rate=%s effective=%d/%d",
+        telegram_id, base_rate, extra_rate, effective_month, effective_year,
+    )
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            'INSERT INTO user_rates_future '
+            '(telegram_id, base_rate, extra_rate, effective_month, effective_year, created_at) '
+            'VALUES (?, ?, ?, ?, ?, ?) '
+            'ON CONFLICT(telegram_id) DO UPDATE SET '
+            'base_rate=excluded.base_rate, extra_rate=excluded.extra_rate, '
+            'effective_month=excluded.effective_month, effective_year=excluded.effective_year, '
+            'created_at=excluded.created_at',
+            (telegram_id, base_rate, extra_rate, effective_month, effective_year, now_str),
+        )
+        await db.commit()
+
+
+async def get_user_rate_future(db_path: str, telegram_id: int) -> Optional[Dict]:
+    """
+    Возвращает запланированную будущую ставку сотрудника, если она есть.
+    Формат: {"base_rate", "extra_rate", "effective_month", "effective_year"}
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        async with db.execute(
+            'SELECT base_rate, extra_rate, effective_month, effective_year '
+            'FROM user_rates_future WHERE telegram_id = ?',
+            (telegram_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {
+        "base_rate": row[0],
+        "extra_rate": row[1],
+        "effective_month": row[2],
+        "effective_year": row[3],
+    }
+
+
+async def delete_user_rate_future(db_path: str, telegram_id: int) -> None:
+    """Удаляет запланированную будущую ставку сотрудника."""
+    logger.info("delete_user_rate_future: telegram_id=%s", telegram_id)
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            'DELETE FROM user_rates_future WHERE telegram_id = ?',
+            (telegram_id,),
+        )
+        await db.commit()
+
+
+async def get_all_future_rates(db_path: str) -> list[dict]:
+    """
+    Возвращает все запланированные будущие ставки.
+    Используется в switch_month() для применения изменений.
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        async with db.execute(
+            'SELECT telegram_id, base_rate, extra_rate, effective_month, effective_year '
+            'FROM user_rates_future',
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {
+            "telegram_id": r[0],
+            "base_rate": r[1],
+            "extra_rate": r[2],
+            "effective_month": r[3],
+            "effective_year": r[4],
+        }
+        for r in rows
+    ]
 
 
 async def get_user_rate_history(db_path: str, telegram_id: int, month: int, year: int) -> Optional[Dict]:

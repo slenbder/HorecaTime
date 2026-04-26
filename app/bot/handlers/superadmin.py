@@ -14,11 +14,11 @@ from aiogram.types import (
 from app.bot.commands import set_commands_for_role
 from app.bot.fsm.auth_states import AuthStates
 from app.db.fsm_storage import SQLiteStorage
-from app.db.models import get_all_users_rates, get_all_users, get_user
+from app.db.models import get_all_users, get_user, get_user_rate, get_user_rate_future
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.roles_cache import RolesCacheService
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, EXTRA_RATE_LABELS
 
 _sheets_client = GoogleSheetsClient()
 
@@ -30,6 +30,8 @@ def _is_allowed(tg_id: int) -> bool:
     return tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID
 
 _DEPT_EMOJIS = {"Зал": "🍽", "Бар": "🍺", "Кухня": "🔪", "МОП": "🧹"}
+
+_MONTH_NAMES = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 _DEPT_POSITIONS_ORDER: dict[str, list[str]] = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
@@ -109,12 +111,51 @@ async def cmd_rates_all(message: Message):
         await message.answer("⛔️ Недостаточно прав.")
         return
 
-    employees = await get_all_users_rates(DB_PATH)
+    all_users = await get_all_users(DB_PATH)
+    employees = [u for u in all_users if u.get("role") == "user"]
+
     if not employees:
-        await message.answer("📊 Нет сотрудников с установленными ставками.")
+        await message.answer("Нет зарегистрированных сотрудников.")
         return
 
-    lines = _format_rates_grouped(employees)
+    by_dept: dict[str, list] = {}
+    for user in employees:
+        dept = user.get("department") or "—"
+        by_dept.setdefault(dept, []).append(user)
+
+    lines = ["💰 Все ставки:\n"]
+
+    for dept, emoji in _DEPT_EMOJIS.items():
+        group = by_dept.get(dept)
+        if not group:
+            continue
+        lines.append(f"\n{emoji} {dept}:")
+
+        for user in group:
+            uid = user["telegram_id"]
+            position = user.get("position") or "—"
+            full_name = user["full_name"]
+
+            rate = await get_user_rate(DB_PATH, uid)
+            if rate:
+                base = _fmt_money(rate["base_rate"])
+                if rate.get("extra_rate"):
+                    extra = _fmt_money(rate["extra_rate"])
+                    extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
+                    rate_text = f"{base}/{extra} р/ч ({extra_label})"
+                else:
+                    rate_text = f"{base} р/ч"
+            else:
+                rate_text = "не установлена"
+
+            future = await get_user_rate_future(DB_PATH, uid)
+            if future:
+                future_base = _fmt_money(future["base_rate"])
+                month_name = _MONTH_NAMES[future["effective_month"]]
+                rate_text += f"\n    📅 С 1 {month_name}: {future_base} р/ч"
+
+            lines.append(f"  • {full_name} ({position}): {rate_text}")
+
     await message.answer("\n".join(lines))
 
 

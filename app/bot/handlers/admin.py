@@ -13,7 +13,7 @@ from aiogram.types import (
 
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.fsm.shift_states import SetRateStates
-from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, set_user_rate_future, get_user_role
+from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, set_user_rate_future, get_user_role, get_user_rate, get_user_rate_future
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA, EXTRA_RATE_LABELS
 
 admin_router = Router()
@@ -29,6 +29,8 @@ _ROLE_TO_DEPT = {
 }
 
 _DEPT_BUTTONS = ["Зал", "Бар", "Кухня", "МОП"]
+
+_MONTH_NAMES = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 _DEPT_POSITIONS = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
@@ -107,47 +109,44 @@ async def cmd_rates(message: Message):
         return
 
     dept = _ROLE_TO_DEPT[role]
-    logger.info("/rates: %s запрашивает персональные ставки отдела %s", tg_id, dept)
+    logger.info("/rates: %s запрашивает ставки отдела %s", tg_id, dept)
 
-    employees = await get_users_rates_by_department(DB_PATH, dept)
+    all_users = await get_all_users(DB_PATH)
+    users_in_dept = [u for u in all_users if u.get("department") == dept and u.get("role") == "user"]
     if dept == "Зал":
-        mop_employees = await get_users_rates_by_department(DB_PATH, "МОП")
-        employees = employees + mop_employees
+        mop_users = [u for u in all_users if u.get("department") == "МОП" and u.get("role") == "user"]
+        users_in_dept.extend(mop_users)
 
-    if not employees:
-        await message.answer("Нет сотрудников в отделе")
+    if not users_in_dept:
+        await message.answer(f"В отделе {dept} нет сотрудников.")
         return
 
-    # Группируем по позиции, порядок — из _positions_for_dept
-    by_position: dict[str, list] = {}
-    for emp in employees:
-        pos = emp.get("position") or "—"
-        by_position.setdefault(pos, []).append(emp)
+    lines = [f"💰 Ставки отдела {dept}:\n"]
 
-    ordered = _positions_for_dept(dept)
-    for pos in by_position:
-        if pos not in ordered:
-            ordered.append(pos)
+    for user in users_in_dept:
+        uid = user["telegram_id"]
+        position = user.get("position") or "—"
+        full_name = user["full_name"]
 
-    lines = [f"📊 Ставки отдела «{dept}»"]
-    for pos in ordered:
-        group = by_position.get(pos)
-        if not group:
-            continue
-        n = len(group)
-        rates_unique = {(emp.get("base_rate"), emp.get("extra_rate")) for emp in group}
-        if len(rates_unique) == 1:
-            # Все одинаковые — схлопываем
-            rate_str = _fmt_emp_rate(group[0])
-            if n > 1:
-                lines.append(f"{pos} ({n} чел.): {rate_str}")
+        rate = await get_user_rate(DB_PATH, uid)
+        if rate:
+            base = _fmt_money(rate["base_rate"])
+            if rate.get("extra_rate"):
+                extra = _fmt_money(rate["extra_rate"])
+                extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
+                rate_text = f"{base}/{extra} р/ч ({extra_label})"
             else:
-                lines.append(f"{pos}: {rate_str}")
+                rate_text = f"{base} р/ч"
         else:
-            # Разные — раскрываем список
-            lines.append(f"{pos}:")
-            for emp in group:
-                lines.append(f"— {emp['full_name']}: {_fmt_emp_rate(emp)}")
+            rate_text = "не установлена"
+
+        future = await get_user_rate_future(DB_PATH, uid)
+        if future:
+            future_base = _fmt_money(future["base_rate"])
+            month_name = _MONTH_NAMES[future["effective_month"]]
+            rate_text += f"\n  📅 С 1 {month_name}: {future_base} р/ч"
+
+        lines.append(f"• {full_name} ({position}): {rate_text}")
 
     await message.answer("\n".join(lines))
 

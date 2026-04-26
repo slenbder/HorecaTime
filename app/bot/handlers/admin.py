@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -11,7 +13,7 @@ from aiogram.types import (
 
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.fsm.shift_states import SetRateStates
-from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, get_user_role
+from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, set_user_rate_future, get_user_role
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA, EXTRA_RATE_LABELS
 
 admin_router = Router()
@@ -152,6 +154,54 @@ async def cmd_rates(message: Message):
 
 # --- /set_rate ---
 
+async def _apply_rate_change(
+    message: Message,
+    state: FSMContext,
+    base_rate: float,
+    extra_rate: float | None,
+) -> None:
+    data = await state.get_data()
+    telegram_id = data.get("target_telegram_id")
+    period = data.get("period")
+    position = data.get("position", "")
+
+    try:
+        if period == "current":
+            await set_user_rate(DB_PATH, telegram_id, base_rate, extra_rate)
+            period_text = "с текущего месяца"
+            logger.info(
+                "_apply_rate_change: ставка для %d (текущий): base=%s, extra=%s",
+                telegram_id, base_rate, extra_rate,
+            )
+        else:
+            now = datetime.now(ZoneInfo("Europe/Moscow"))
+            next_month = now.month + 1 if now.month < 12 else 1
+            next_year = now.year if now.month < 12 else now.year + 1
+            await set_user_rate_future(DB_PATH, telegram_id, base_rate, extra_rate, next_month, next_year)
+            period_text = "со следующего месяца"
+            logger.info(
+                "_apply_rate_change: будущая ставка для %d (%d/%d): base=%s, extra=%s",
+                telegram_id, next_month, next_year, base_rate, extra_rate,
+            )
+
+        if extra_rate is not None:
+            extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
+            rate_text = (
+                f"Базовая: {_fmt_money(base_rate)} р/ч\n"
+                f"Повышенная ({extra_label}): {_fmt_money(extra_rate)} р/ч"
+            )
+        else:
+            rate_text = f"{_fmt_money(base_rate)} р/ч"
+
+        await message.answer(f"✅ Ставка установлена {period_text}:\n{rate_text}")
+
+    except Exception as e:
+        logger.error("_apply_rate_change: ошибка при установке ставки: %s", e, exc_info=True)
+        await message.answer("❌ Ошибка при установке ставки. Попробуйте позже.")
+    finally:
+        await state.clear()
+
+
 @admin_router.message(Command("set_rate"))
 async def cmd_set_rate(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
@@ -267,6 +317,72 @@ async def cancel_set_rate(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.message.edit_text("❌ Установка ставки отменена.")
     await callback.answer()
+
+
+@admin_router.callback_query(SetRateStates.waiting_period_choice, F.data.startswith("setrate_period:"))
+async def process_period_choice(callback: CallbackQuery, state: FSMContext) -> None:
+    period = callback.data.split(":", 1)[1]
+    await state.update_data(period=period)
+    await state.set_state(SetRateStates.waiting_base_rate)
+
+    data = await state.get_data()
+    position = data.get("position", "")
+
+    if position in POSITIONS_WITH_EXTRA:
+        rate_label = f"базовую ставку (обычные дни, р/ч)"
+    else:
+        rate_label = "ставку (р/ч)"
+
+    period_text = "с 1-го числа текущего месяца" if period == "current" else "с 1-го числа следующего месяца"
+
+    await callback.message.edit_text(
+        f"Введите {rate_label}.\n"
+        f"Изменение вступит в силу {period_text}.\n\n"
+        f"Формат: целое или дробное число (например: 350 или 450.5)"
+    )
+    await callback.answer()
+
+
+@admin_router.message(SetRateStates.waiting_base_rate)
+async def process_base_rate(message: Message, state: FSMContext) -> None:
+    text = message.text.strip().replace(",", ".")
+    try:
+        base_rate = float(text)
+        if base_rate <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Неверный формат. Введите число (например: 350 или 450.5).")
+        return
+
+    await state.update_data(base_rate=base_rate)
+    data = await state.get_data()
+    position = data.get("position", "")
+
+    if position in POSITIONS_WITH_EXTRA:
+        await state.set_state(SetRateStates.waiting_extra_rate)
+        extra_label = EXTRA_RATE_LABELS.get(position, "повышенные")
+        await message.answer(
+            f"Введите повышенную ставку ({extra_label}, р/ч).\n"
+            f"Формат: целое или дробное число."
+        )
+    else:
+        await _apply_rate_change(message, state, base_rate, extra_rate=None)
+
+
+@admin_router.message(SetRateStates.waiting_extra_rate)
+async def process_extra_rate(message: Message, state: FSMContext) -> None:
+    text = message.text.strip().replace(",", ".")
+    try:
+        extra_rate = float(text)
+        if extra_rate <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Неверный формат. Введите число (например: 500 или 600.5).")
+        return
+
+    data = await state.get_data()
+    base_rate = data.get("base_rate")
+    await _apply_rate_change(message, state, base_rate, extra_rate)
 
 
 # --- /message_dept ---

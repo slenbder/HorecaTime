@@ -10,7 +10,7 @@ from aiogram.types import (
 )
 
 from app.bot.fsm.auth_states import AuthStates
-from app.bot.fsm.admin_states import SetRateStates
+from app.bot.fsm.shift_states import SetRateStates
 from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, get_user_role
 from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA, EXTRA_RATE_LABELS
 

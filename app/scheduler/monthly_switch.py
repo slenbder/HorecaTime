@@ -9,7 +9,6 @@ from config import SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
 from app.services.google_sheets import MONTH_NAMES_RU
 from app.db.models import (
     get_all_users,
-    snapshot_rates,
     snapshot_user_rates_history,
     get_all_future_rates,
     set_user_rate,
@@ -188,12 +187,6 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
 
         logger.info("switch_month: начинаю переключение '%s' → '%s'", current_name, next_name)
 
-        # Сохраняем снимки ставок ДО копирования листа
-        await snapshot_rates(db_path, current_month, current_year)
-        logger.info(
-            "switch_month: снимок ставок сохранён для %s %d",
-            MONTH_NAMES_RU[current_month], current_year,
-        )
         try:
             await snapshot_user_rates_history(db_path, current_month, current_year)
             logger.info(

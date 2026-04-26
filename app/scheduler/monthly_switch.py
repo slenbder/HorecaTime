@@ -7,7 +7,14 @@ from aiogram import Bot
 
 from config import SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
 from app.services.google_sheets import MONTH_NAMES_RU
-from app.db.models import get_all_users, snapshot_rates, snapshot_user_rates_history
+from app.db.models import (
+    get_all_users,
+    snapshot_rates,
+    snapshot_user_rates_history,
+    get_all_future_rates,
+    set_user_rate,
+    delete_user_rate_future,
+)
 
 logger = logging.getLogger("app")
 error_logger = logging.getLogger("errors")
@@ -97,6 +104,49 @@ def _make_formulas(r: int, position: str) -> tuple[str, str, str]:
     return formula_s, formula_aj, formula_ak
 
 
+async def apply_future_rates(db_path: str, target_month: int, target_year: int) -> None:
+    """
+    Применяет запланированные будущие ставки для указанного месяца.
+
+    Логика:
+    1. Получить все future ставки (get_all_future_rates)
+    2. Отфильтровать те, которые вступают в силу в target_month/year
+    3. Для каждой: скопировать в user_rates (set_user_rate)
+    4. Удалить из user_rates_future (delete_user_rate_future)
+    """
+    future_rates = await get_all_future_rates(db_path)
+
+    applicable_rates = [
+        r for r in future_rates
+        if r["effective_month"] == target_month and r["effective_year"] == target_year
+    ]
+
+    if not applicable_rates:
+        logger.info(
+            "apply_future_rates: нет запланированных изменений на %d/%d",
+            target_month, target_year,
+        )
+        return
+
+    logger.info(
+        "apply_future_rates: применяю %d запланированных изменений на %d/%d",
+        len(applicable_rates), target_month, target_year,
+    )
+
+    for rate in applicable_rates:
+        telegram_id = rate["telegram_id"]
+        base_rate = rate["base_rate"]
+        extra_rate = rate["extra_rate"]
+
+        await set_user_rate(db_path, telegram_id, base_rate, extra_rate)
+        await delete_user_rate_future(db_path, telegram_id)
+
+        logger.info(
+            "apply_future_rates: применена ставка для telegram_id=%d: base=%.2f, extra=%s",
+            telegram_id, base_rate, extra_rate if extra_rate is not None else "None",
+        )
+
+
 async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
     """
     Main monthly switch function. Called by the scheduler on the 1st at 18:00 MSK.
@@ -154,6 +204,15 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             logger.error(
                 "switch_month: не удалось сохранить user_rates_history %d/%d: %s",
                 current_month, current_year, snap_err,
+            )
+
+        # Применяем запланированные будущие ставки
+        try:
+            await apply_future_rates(db_path, next_month, next_year)
+        except Exception as future_err:
+            logger.error(
+                "switch_month: не удалось применить future ставки %d/%d: %s",
+                next_month, next_year, future_err, exc_info=True,
             )
 
         # Проверка: лист следующего месяца уже существует

@@ -200,7 +200,11 @@ async def cmd_hours_first(message: Message):
     position = user_data.get("position") or None
     rate = await get_user_rate(DB_PATH, tg_id)
     if rate is None:
-        logger.warning("hours_first: ставка не найдена для %s", tg_id)
+        await message.answer(
+            "⚠️ Ваша ставка ещё не установлена.\n"
+            "Обратитесь к администратору вашего отдела для установки ставки."
+        )
+        return
 
     lines = _build_hours_first_lines(data, position, rate)
     await message.answer("\n".join(lines))
@@ -227,7 +231,11 @@ async def cmd_hours_second(message: Message):
     position = user_data.get("position") or None
     rate = await get_user_rate(DB_PATH, tg_id)
     if rate is None:
-        logger.warning("hours_second: ставка не найдена для %s", tg_id)
+        await message.answer(
+            "⚠️ Ваша ставка ещё не установлена.\n"
+            "Обратитесь к администратору вашего отдела для установки ставки."
+        )
+        return
 
     lines = _build_hours_second_lines(data, position, rate)
     await message.answer("\n".join(lines))
@@ -266,7 +274,10 @@ async def cmd_hours_last(message: Message):
             "cmd_hours_last: у пользователя %d нет ставки за %d/%d и текущей ставки",
             tg_id, prev_month, prev_year,
         )
-        await message.answer("⚠️ Не удалось рассчитать заработок — ставка не установлена.")
+        await message.answer(
+            "⚠️ Ваша ставка ещё не установлена.\n"
+            "Обратитесь к администратору вашего отдела для установки ставки."
+        )
         return
 
     lines = _build_hours_second_lines(data, position, rate, sheet_label=sheet_name)

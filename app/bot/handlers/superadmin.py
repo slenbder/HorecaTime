@@ -18,7 +18,7 @@ from app.db.models import get_all_users_rates, set_user_rate, get_all_users, get
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.roles_cache import RolesCacheService
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA
 
 _sheets_client = GoogleSheetsClient()
 
@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 def _is_allowed(tg_id: int) -> bool:
     return tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID
-
-_POSITIONS_WITH_EXTRA = {"Бармен", "Барбэк", "Раннер"}
 
 _DEPT_EMOJIS = {"Зал": "🍽", "Бар": "🍺", "Кухня": "🔪", "МОП": "🧹"}
 
@@ -246,7 +244,7 @@ async def cb_setrate_all_employee(callback: CallbackQuery, state: FSMContext):
     cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")]
     ])
-    if position in _POSITIONS_WITH_EXTRA:
+    if position in POSITIONS_WITH_EXTRA:
         prompt = (
             f"Сотрудник: {full_name}\n"
             f"Текущая ставка: {current_rate}\n\n"
@@ -278,7 +276,7 @@ async def msg_set_rate_base(message: Message, state: FSMContext):
         await message.answer("Введите корректное число больше 0:")
         return
 
-    if position in _POSITIONS_WITH_EXTRA:
+    if position in POSITIONS_WITH_EXTRA:
         await state.update_data(sra_base_rate=base_rate)
         await state.set_state(SetRateStates.waiting_set_rate_extra)
         logger.info("/set_rate_all: base=%s для %s, запрашиваю повышенную ставку", base_rate, full_name)

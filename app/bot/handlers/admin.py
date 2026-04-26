@@ -12,7 +12,7 @@ from aiogram.types import (
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.fsm.admin_states import SetRateStates
 from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, get_user_role
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID
+from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA, EXTRA_RATE_LABELS
 
 admin_router = Router()
 logger = logging.getLogger(__name__)
@@ -35,9 +35,6 @@ _DEPT_POSITIONS = {
                "Заготовочный цех", "Коренной цех", "Грузчик", "Закупщик"],
     "МОП":   ["Клининг", "Котломой"],
 }
-
-_POSITIONS_WITH_EXTRA = {"Бармен", "Барбэк", "Раннер"}
-_EXTRA_LABEL = {"Бармен": "тусовочные", "Барбэк": "тусовочные", "Раннер": "выходные"}
 
 ROLE_TO_SENDER = {
     "admin_hall":    "администратора Зала",
@@ -252,7 +249,7 @@ async def cb_setrate_employee(callback: CallbackQuery, state: FSMContext):
     cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отмена", callback_data="setrate_cancel")]
     ])
-    if position in _POSITIONS_WITH_EXTRA:
+    if position in POSITIONS_WITH_EXTRA:
         prompt = (
             f"Сотрудник: {full_name}\n"
             f"Текущая ставка: {current_rate}\n\n"
@@ -284,10 +281,10 @@ async def msg_setrate_new_rate(message: Message, state: FSMContext):
         await message.answer("Введите корректное число больше 0:")
         return
 
-    if position in _POSITIONS_WITH_EXTRA:
+    if position in POSITIONS_WITH_EXTRA:
         await state.update_data(set_rate_base=base_rate)
         await state.set_state(SetRateStates.waiting_extra_rate)
-        extra_label = _EXTRA_LABEL.get(position, "повышенную")
+        extra_label = EXTRA_RATE_LABELS.get(position, "повышенную")
         logger.info("/set_rate: base=%s для user_id=%s, запрашиваю %s ставку", base_rate, target_id, extra_label)
         await message.answer(f"Введите повышенную ставку (выходные дни, р/ч):")
     else:

@@ -9,7 +9,7 @@ from aiogram.types import Message, BufferedInputFile
 from app.db.models import get_user, get_user_rate, get_user_rate_history
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
-from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL
+from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL, POSITIONS_WITH_EXTRA
 
 reports_router = Router()
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ except Exception:
 _ALLOWED_ROLES = {"user", "admin_hall", "admin_bar", "admin_kitchen", "superadmin", "developer"}
 
 # Позиции, у которых AH = тусовочные часы с повышенной ставкой
-_BAR_POSITIONS = {"Бармен", "Барбэк"}
+_BAR_POSITIONS = POSITIONS_WITH_EXTRA - {"Раннер"}
 
 
 def _get_current_sheet_name() -> str:

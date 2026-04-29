@@ -11,41 +11,44 @@ _USER_COMMANDS = [
     BotCommand(command="hours_second", description="Часы и заработок: 16–конец + итог"),
     BotCommand(command="hours_last",   description="Часы и заработок за прошлый месяц"),
     BotCommand(command="schedule",     description="График на месяц"),
+    BotCommand(command="sheet",        description="Ссылка на график"),
+    BotCommand(command="contact_dev",  description="Написать разработчику"),
 ]
 
-_ADMIN_EXTRA_COMMANDS = [
-    BotCommand(command="rates",        description="Ставки отдела"),
+_ADMIN_COMMANDS = [
+    BotCommand(command="shift",        description="Внести смену"),
     BotCommand(command="set_rate",     description="Изменить ставку"),
     BotCommand(command="message_dept", description="Сообщение сотрудникам отдела"),
+    BotCommand(command="rates",        description="Ставки отдела"),
+    BotCommand(command="hours_first",  description="Часы и заработок: 1–15"),
+    BotCommand(command="hours_second", description="Часы и заработок: 16–конец + итог"),
+    BotCommand(command="hours_last",   description="Часы и заработок за прошлый месяц"),
+    BotCommand(command="schedule",     description="График на месяц"),
+    BotCommand(command="sheet",        description="Ссылка на график"),
+    BotCommand(command="contact_dev",  description="Написать разработчику"),
 ]
 
 _SUPERADMIN_COMMANDS = [
-    BotCommand(command="schedule",     description="График на месяц"),
-    BotCommand(command="rates_all",    description="Ставки всех отделов"),
-    BotCommand(command="set_rate_all", description="Изменить ставку"),
+    BotCommand(command="set_rate",     description="Изменить ставку"),
     BotCommand(command="message_dept", description="Сообщение отделу"),
     BotCommand(command="message_all",  description="Сообщение всем сотрудникам"),
-    BotCommand(command="switch_month", description="Переход на новый месяц"),
-    BotCommand(command="dismiss",      description="Уволить сотрудника"),
     BotCommand(command="promote",      description="Повысить сотрудника до администратора"),
     BotCommand(command="demote",       description="Понизить администратора до сотрудника"),
-]
-
-_SHEET_COMMAND = [
+    BotCommand(command="dismiss",      description="Уволить сотрудника"),
+    BotCommand(command="rates_all",    description="Ставки всех отделов"),
+    BotCommand(command="schedule",     description="График на месяц"),
+    BotCommand(command="switch_month", description="Переход на новый месяц"),
     BotCommand(command="sheet",        description="Ссылка на график"),
-]
-
-_CONTACT_DEV = [
     BotCommand(command="contact_dev",  description="Написать разработчику"),
 ]
 
 _ROLE_COMMANDS: dict[str, list[BotCommand]] = {
-    "user":           _USER_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
-    "admin_hall":     _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
-    "admin_bar":      _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
-    "admin_kitchen":  _USER_COMMANDS + _ADMIN_EXTRA_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
-    "superadmin":     _SUPERADMIN_COMMANDS + _SHEET_COMMAND + _CONTACT_DEV,
-    "developer":      _SUPERADMIN_COMMANDS + _SHEET_COMMAND,
+    "user":           _USER_COMMANDS,
+    "admin_hall":     _ADMIN_COMMANDS,
+    "admin_bar":      _ADMIN_COMMANDS,
+    "admin_kitchen":  _ADMIN_COMMANDS,
+    "superadmin":     _SUPERADMIN_COMMANDS,
+    "developer":      _SUPERADMIN_COMMANDS,
 }
 
 

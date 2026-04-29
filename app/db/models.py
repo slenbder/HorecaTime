@@ -163,6 +163,12 @@ def delete_user(telegram_id: int) -> None:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
+            cursor.execute('DELETE FROM user_rates_history WHERE telegram_id = ?', (telegram_id,))
+            logger.info("delete_user: удалены ставки telegram_id=%s", telegram_id)
+            cursor.execute('DELETE FROM user_rates_future WHERE telegram_id = ?', (telegram_id,))
+            logger.info("delete_user: удалены ставки telegram_id=%s", telegram_id)
+            cursor.execute('DELETE FROM user_rates WHERE telegram_id = ?', (telegram_id,))
+            logger.info("delete_user: удалены ставки telegram_id=%s", telegram_id)
             cursor.execute('DELETE FROM users WHERE telegram_id = ?', (telegram_id,))
             conn.commit()
         logger.info("Пользователь %s удалён из БД", telegram_id)

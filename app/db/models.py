@@ -395,7 +395,7 @@ async def get_users_rates_by_department(db_path: str, department: str) -> list[d
         db.row_factory = aiosqlite.Row
         async with db.execute(
             'SELECT u.telegram_id, u.full_name, u.position, ur.base_rate, ur.extra_rate '
-            'FROM users u JOIN user_rates ur ON u.telegram_id = ur.telegram_id '
+            'FROM users u LEFT JOIN user_rates ur ON u.telegram_id = ur.telegram_id '
             'WHERE u.department = ? AND u.role NOT IN ("superadmin", "developer")',
             (department,),
         ) as cursor:

@@ -268,6 +268,32 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 next_name, move_err,
             )
 
+        # Установить Plain text формат для D-AK — предотвращает интерпретацию "8.5" как даты
+        logger.info("switch_month: устанавливаем Plain text формат для D-AK в '%s'", next_name)
+        try:
+            format_request = {
+                "requests": [{
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": new_ws.id,
+                            "startRowIndex": 4,   # строки 5+ (заголовки 1-4 пропускаем)
+                            "startColumnIndex": 3,  # D
+                            "endColumnIndex": 37,   # AK+1
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {"type": "TEXT"}
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                }]
+            }
+            sheets_client._spreadsheet.batch_update(format_request)
+            logger.info("switch_month: Plain text формат установлен для D-AK")
+        except Exception as e:
+            logger.error("switch_month: ошибка установки формата D-AK: %s", e, exc_info=True)
+
         # Step c: Update C2 (month name) and T2 (year)
         new_ws.update_cell(2, 3, MONTH_NAMES_RU[next_month])
         new_ws.update_cell(2, 20, next_year)

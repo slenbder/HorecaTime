@@ -37,9 +37,10 @@ _SUPERADMIN_COMMANDS = [
     BotCommand(command="dismiss",      description="Уволить сотрудника"),
     BotCommand(command="rates_all",    description="Ставки всех отделов"),
     BotCommand(command="schedule",     description="График на месяц"),
-    BotCommand(command="switch_month", description="Переход на новый месяц"),
-    BotCommand(command="sheet",        description="Ссылка на график"),
-    BotCommand(command="contact_dev",  description="Написать разработчику"),
+    BotCommand(command="switch_month",  description="Переход на новый месяц"),
+    BotCommand(command="restore_user",  description="Восстановить юзера в месячном листе"),
+    BotCommand(command="sheet",         description="Ссылка на график"),
+    BotCommand(command="contact_dev",   description="Написать разработчику"),
 ]
 
 _ROLE_COMMANDS: dict[str, list[BotCommand]] = {

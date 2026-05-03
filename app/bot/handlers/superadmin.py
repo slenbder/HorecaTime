@@ -671,3 +671,52 @@ async def cb_demote_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("Отменено.")
     await callback.answer()
+
+
+@superadmin_router.message(Command("restore_user"))
+async def cmd_restore_user(message: Message, state: FSMContext):
+    tg_id = message.from_user.id
+    logger.info("/restore_user: запрос от %s", tg_id)
+    if not _is_allowed(tg_id):
+        logger.warning("/restore_user: доступ запрещён для %s", tg_id)
+        await message.answer("⛔️ Недостаточно прав.")
+        return
+    await state.set_state(AuthStates.waiting_restore_user)
+    await message.answer("Введите Telegram ID сотрудника для восстановления:")
+
+
+@superadmin_router.message(AuthStates.waiting_restore_user)
+async def process_restore_user(message: Message, state: FSMContext):
+    if not message.text or not message.text.strip().lstrip("-").isdigit():
+        await message.answer("Неверный формат. Введите числовой Telegram ID")
+        return
+
+    telegram_id = int(message.text.strip())
+    admin_id = message.from_user.id
+
+    user_data = _sheets_client.get_user_by_telegram_id(telegram_id)
+    if user_data is None:
+        await message.answer(f"❌ Пользователь {telegram_id} не найден в Техлисте")
+        await state.clear()
+        return
+
+    full_name = user_data.get("fio_from_user") or user_data.get("full_name") or str(telegram_id)
+    custom_position = user_data.get("custom_position") or None
+
+    try:
+        success = _sheets_client.ensure_user_in_current_month_hours(telegram_id, custom_position)
+    except Exception:
+        logger.exception("MANUAL_RESTORE: ошибка восстановления пользователя %s (admin %s)", telegram_id, admin_id)
+        await message.answer("⚠️ Ошибка восстановления. Проверьте логи")
+        await state.clear()
+        return
+
+    if success:
+        logger.info("MANUAL_RESTORE: User %s restored by admin %s", telegram_id, admin_id)
+        await message.answer(
+            f"✅ Сотрудник {full_name} ({telegram_id}) восстановлен в текущем месячном листе"
+        )
+    else:
+        await message.answer("⚠️ Ошибка восстановления. Проверьте логи")
+
+    await state.clear()

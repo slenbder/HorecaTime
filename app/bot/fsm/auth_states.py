@@ -21,6 +21,7 @@ class AuthStates(StatesGroup):
     waiting_demote_dept = State()        # /demote: выбор подразделения
     waiting_demote_user = State()        # /demote: выбор конкретного админа
     waiting_demote_confirm = State()     # /demote: подтверждение
+    waiting_restore_user = State()       # /restore_user: ввод telegram_id для восстановления
 
 
 class SetRateStates(StatesGroup):

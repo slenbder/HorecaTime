@@ -77,28 +77,34 @@ def _find_last_month_sheet(spreadsheet) -> tuple[str, int, int]:
 def _make_formulas(r: int, position: str) -> tuple[str, str, str]:
     """Returns (formula_s, formula_aj, formula_ak) for the given row number."""
     if position in _SIMPLE_H_POSITIONS:
-        formula_s = f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IFERROR(VALUE(D{r}:R{r});0)))'
-        formula_aj = f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IFERROR(VALUE(T{r}:AI{r});0)))'
+        formula_s = (
+            f'=СУММПРОИЗВ(ЕСЛИ(D{r}:R{r}="";0;'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(D{r}:R{r};".";"," ));0)))'
+        )
+        formula_aj = (
+            f'=СУММПРОИЗВ(ЕСЛИ(T{r}:AI{r}="";0;'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(T{r}:AI{r};".";"," ));0)))'
+        )
         formula_ak = f'=S{r}+AJ{r}'
     else:
         formula_s = (
-            f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-            f'IFERROR(VALUE(LEFT(D{r}:R{r};FIND("/";D{r}:R{r})-1));0);'
-            f'IFERROR(VALUE(D{r}:R{r});0))))&"/"&'
-            f'SUMPRODUCT(IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-            f'IFERROR(VALUE(MID(D{r}:R{r};FIND("/";D{r}:R{r})+1;100));0);0))'
+            f'=СУММПРОИЗВ(ЕСЛИ(D{r}:R{r}="";0;ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";D{r}:R{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ЛЕВСИМВ(D{r}:R{r};НАЙТИ("/";D{r}:R{r})-1);".";"," ));0);'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(D{r}:R{r};".";"," ));0))))&"/"&'
+            f'СУММПРОИЗВ(ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";D{r}:R{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ПСТР(D{r}:R{r};НАЙТИ("/";D{r}:R{r})+1;100);".";"," ));0);0))'
         )
         formula_aj = (
-            f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-            f'IFERROR(VALUE(LEFT(T{r}:AI{r};FIND("/";T{r}:AI{r})-1));0);'
-            f'IFERROR(VALUE(T{r}:AI{r});0))))&"/"&'
-            f'SUMPRODUCT(IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-            f'IFERROR(VALUE(MID(T{r}:AI{r};FIND("/";T{r}:AI{r})+1;100));0);0))'
+            f'=СУММПРОИЗВ(ЕСЛИ(T{r}:AI{r}="";0;ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";T{r}:AI{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ЛЕВСИМВ(T{r}:AI{r};НАЙТИ("/";T{r}:AI{r})-1);".";"," ));0);'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(T{r}:AI{r};".";"," ));0))))&"/"&'
+            f'СУММПРОИЗВ(ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";T{r}:AI{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ПСТР(T{r}:AI{r};НАЙТИ("/";T{r}:AI{r})+1;100);".";"," ));0);0))'
         )
         formula_ak = (
-            f'=(VALUE(LEFT(S{r};FIND("/";S{r})-1))+VALUE(LEFT(AJ{r};FIND("/";AJ{r})-1)))'
+            f'=(ЗНАЧЕН(ЛЕВСИМВ(S{r};НАЙТИ("/";S{r})-1))+ЗНАЧЕН(ЛЕВСИМВ(AJ{r};НАЙТИ("/";AJ{r})-1)))'
             f'&"/"&'
-            f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
+            f'(ЗНАЧЕН(ПСТР(S{r};НАЙТИ("/";S{r})+1;100))+ЗНАЧЕН(ПСТР(AJ{r};НАЙТИ("/";AJ{r})+1;100)))'
         )
     return formula_s, formula_aj, formula_ak
 

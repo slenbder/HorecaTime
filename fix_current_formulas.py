@@ -6,6 +6,9 @@
 
 Использует _make_formulas() из monthly_switch, чтобы формулы были идентичны
 тем, что вставляются при switch_month().
+
+Позиция сотрудника берётся из Техлиста (базовая, например "Холодный цех"),
+а не из колонки C месячного листа (где хранится custom_position — "Повар").
 """
 import argparse
 import logging
@@ -14,7 +17,7 @@ from datetime import date
 
 import gspread
 
-from app.services.google_sheets import GoogleSheetsClient, POSITION_TO_SECTION
+from app.services.google_sheets import GoogleSheetsClient, POSITION_TO_SECTION, TECH_SHEET_NAME
 from app.scheduler.monthly_switch import _make_formulas
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -23,10 +26,36 @@ logger = logging.getLogger(__name__)
 FIRST_DATA_ROW = 5  # строки 1-4 — заголовки
 COL_A = 0   # ФИО (0-indexed)
 COL_B = 1   # telegram_id
-COL_C = 2   # position
 COL_S = 18  # колонка S
 COL_AJ = 35 # колонка AJ
 COL_AK = 36 # колонка AK
+
+# Техлист: колонки (1-indexed → 0-indexed)
+TECH_COL_TG_ID   = 0  # колонка A
+TECH_COL_POSITION = 4  # колонка E
+
+
+def _load_techlist_positions(client: GoogleSheetsClient) -> dict[int, str]:
+    """Читает Техлист один раз и возвращает словарь {telegram_id: position}."""
+    try:
+        tech_ws = client._spreadsheet.worksheet(TECH_SHEET_NAME)
+        rows = tech_ws.get_all_values()
+    except Exception as e:
+        logger.error("Не удалось прочитать Техлист '%s': %s", TECH_SHEET_NAME, e)
+        sys.exit(1)
+
+    result: dict[int, str] = {}
+    for row in rows[1:]:  # пропускаем заголовок
+        if not row:
+            continue
+        tg_raw = row[TECH_COL_TG_ID].strip() if len(row) > TECH_COL_TG_ID else ""
+        if not tg_raw or not tg_raw.lstrip("-").isdigit():
+            continue
+        position = row[TECH_COL_POSITION].strip() if len(row) > TECH_COL_POSITION else ""
+        result[int(tg_raw)] = position
+
+    logger.info("Техлист загружен: %d записей", len(result))
+    return result
 
 
 def _read_formulas(ws, last_row: int) -> list[list[str]]:
@@ -79,6 +108,8 @@ def main() -> None:
 
     logger.info("Открыт лист: '%s'", sheet_name)
 
+    techlist = _load_techlist_positions(client)
+
     try:
         all_values = ws.get_all_values()
     except Exception as e:
@@ -105,19 +136,28 @@ def main() -> None:
         if not tg_id_str or not tg_id_str.lstrip("-").isdigit():
             continue
 
-        position = row[COL_C].strip()
+        tg_id = int(tg_id_str)
         name = row[COL_A].strip() or f"tg={tg_id_str}"
 
+        # Получаем базовую position из Техлиста
+        if tg_id not in techlist:
+            logger.warning("Строка %d (%s): tg_id=%d не найден в Техлисте, пропускаем", row_idx, name, tg_id)
+            continue
+
+        position = techlist[tg_id]
+
         if not position:
-            logger.warning("Строка %d (%s): пустая позиция, пропускаем", row_idx, name)
+            logger.error("Строка %d (%s): у tg_id=%d отсутствует position в Техлисте", row_idx, name, tg_id)
             continue
 
         if position not in POSITION_TO_SECTION:
-            logger.warning(
-                "Строка %d (%s): позиция '%s' не в POSITION_TO_SECTION, пропускаем",
+            logger.error(
+                "Строка %d (%s): position '%s' из Техлиста не в POSITION_TO_SECTION — ошибка конфигурации",
                 row_idx, name, position,
             )
             continue
+
+        logger.debug("Строка %d (%s): позиция из Техлиста '%s'", row_idx, name, position)
 
         total += 1
 
@@ -135,7 +175,7 @@ def main() -> None:
     if to_update:
         print()
         for row_idx, name, position, cur_s, cur_aj, cur_ak, new_s, new_aj, new_ak in to_update:
-            print(f"Строка {row_idx}: {name} ({position})")
+            print(f"Строка {row_idx}: {name} (позиция из Техлиста: '{position}')")
             if cur_s != new_s:
                 print(f"  S:  {cur_s or '(пусто)'}")
                 print(f"  →   {new_s}")

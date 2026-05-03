@@ -77,28 +77,34 @@ def _find_last_month_sheet(spreadsheet) -> tuple[str, int, int]:
 def _make_formulas(r: int, position: str) -> tuple[str, str, str]:
     """Returns (formula_s, formula_aj, formula_ak) for the given row number."""
     if position in _SIMPLE_H_POSITIONS:
-        formula_s = f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IFERROR(VALUE(D{r}:R{r});0)))'
-        formula_aj = f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IFERROR(VALUE(T{r}:AI{r});0)))'
+        formula_s = (
+            f'=СУММПРОИЗВ(ЕСЛИ(D{r}:R{r}="";0;'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(D{r}:R{r};".";"," ));0)))'
+        )
+        formula_aj = (
+            f'=СУММПРОИЗВ(ЕСЛИ(T{r}:AI{r}="";0;'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(T{r}:AI{r};".";"," ));0)))'
+        )
         formula_ak = f'=S{r}+AJ{r}'
     else:
         formula_s = (
-            f'=SUMPRODUCT(IF(D{r}:R{r}="";0;IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-            f'IFERROR(VALUE(LEFT(D{r}:R{r};FIND("/";D{r}:R{r})-1));0);'
-            f'IFERROR(VALUE(D{r}:R{r});0))))&"/"&'
-            f'SUMPRODUCT(IF(ISNUMBER(FIND("/";D{r}:R{r}));'
-            f'IFERROR(VALUE(MID(D{r}:R{r};FIND("/";D{r}:R{r})+1;100));0);0))'
+            f'=СУММПРОИЗВ(ЕСЛИ(D{r}:R{r}="";0;ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";D{r}:R{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ЛЕВСИМВ(D{r}:R{r};НАЙТИ("/";D{r}:R{r})-1);".";"," ));0);'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(D{r}:R{r};".";"," ));0))))&"/"&'
+            f'СУММПРОИЗВ(ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";D{r}:R{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ПСТР(D{r}:R{r};НАЙТИ("/";D{r}:R{r})+1;100);".";"," ));0);0))'
         )
         formula_aj = (
-            f'=SUMPRODUCT(IF(T{r}:AI{r}="";0;IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-            f'IFERROR(VALUE(LEFT(T{r}:AI{r};FIND("/";T{r}:AI{r})-1));0);'
-            f'IFERROR(VALUE(T{r}:AI{r});0))))&"/"&'
-            f'SUMPRODUCT(IF(ISNUMBER(FIND("/";T{r}:AI{r}));'
-            f'IFERROR(VALUE(MID(T{r}:AI{r};FIND("/";T{r}:AI{r})+1;100));0);0))'
+            f'=СУММПРОИЗВ(ЕСЛИ(T{r}:AI{r}="";0;ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";T{r}:AI{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ЛЕВСИМВ(T{r}:AI{r};НАЙТИ("/";T{r}:AI{r})-1);".";"," ));0);'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(T{r}:AI{r};".";"," ));0))))&"/"&'
+            f'СУММПРОИЗВ(ЕСЛИ(ЕЧИСЛО(НАЙТИ("/";T{r}:AI{r}));'
+            f'ЕСЛИОШИБКА(ЗНАЧЕН(ПОДСТАВИТЬ(ПСТР(T{r}:AI{r};НАЙТИ("/";T{r}:AI{r})+1;100);".";"," ));0);0))'
         )
         formula_ak = (
-            f'=(VALUE(LEFT(S{r};FIND("/";S{r})-1))+VALUE(LEFT(AJ{r};FIND("/";AJ{r})-1)))'
+            f'=(ЗНАЧЕН(ЛЕВСИМВ(S{r};НАЙТИ("/";S{r})-1))+ЗНАЧЕН(ЛЕВСИМВ(AJ{r};НАЙТИ("/";AJ{r})-1)))'
             f'&"/"&'
-            f'(VALUE(MID(S{r};FIND("/";S{r})+1;100))+VALUE(MID(AJ{r};FIND("/";AJ{r})+1;100)))'
+            f'(ЗНАЧЕН(ПСТР(S{r};НАЙТИ("/";S{r})+1;100))+ЗНАЧЕН(ПСТР(AJ{r};НАЙТИ("/";AJ{r})+1;100)))'
         )
     return formula_s, formula_aj, formula_ak
 
@@ -261,6 +267,32 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 "switch_month: не удалось переместить лист '%s' в конец: %s",
                 next_name, move_err,
             )
+
+        # Установить Plain text формат для D-AK — предотвращает интерпретацию "8.5" как даты
+        logger.info("switch_month: устанавливаем Plain text формат для D-AK в '%s'", next_name)
+        try:
+            format_request = {
+                "requests": [{
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": new_ws.id,
+                            "startRowIndex": 4,   # строки 5+ (заголовки 1-4 пропускаем)
+                            "startColumnIndex": 3,  # D
+                            "endColumnIndex": 37,   # AK+1
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {"type": "TEXT"}
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                }]
+            }
+            sheets_client._spreadsheet.batch_update(format_request)
+            logger.info("switch_month: Plain text формат установлен для D-AK")
+        except Exception as e:
+            logger.error("switch_month: ошибка установки формата D-AK: %s", e, exc_info=True)
 
         # Step c: Update C2 (month name) and T2 (year)
         new_ws.update_cell(2, 3, MONTH_NAMES_RU[next_month])

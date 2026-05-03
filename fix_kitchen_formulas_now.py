@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 KITCHEN_START = 6
-KITCHEN_END   = 29
+KITCHEN_END   = 33  # включая Коренной цех (строки 32-33)
 # Любая кухонная позиция — все они дают простую формулу без "/"
 _KITCHEN_POSITION = "Горячий цех"
 

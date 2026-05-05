@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
-from config import DB_PATH
+from config import DB_PATH, SUPERADMIN_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -440,15 +440,15 @@ async def get_all_users_rates(db_path: str) -> list[dict]:
 
 async def get_admins_by_department(db_path: str, department: str) -> list[int]:
     """
-    Возвращает список telegram_id всех админов отдела.
+    Возвращает список telegram_id админов отдела + суперадминов.
 
     Args:
         db_path: путь к SQLite БД
         department: "Зал", "Бар", "Кухня" или "МОП"
 
     Returns:
-        Список telegram_id админов (например [123456789, 987654321])
-        Пустой список если отдел неизвестен или админов нет
+        Список telegram_id (админы отдела + SUPERADMIN_IDS)
+        Пустой список если отдел неизвестен или получателей нет
     """
     async with aiosqlite.connect(db_path) as db:
         role_map = {
@@ -466,4 +466,12 @@ async def get_admins_by_department(db_path: str, department: str) -> list[int]:
             (role,)
         )
         rows = await cursor.fetchall()
-        return [row[0] for row in rows]
+        dept_admins = [row[0] for row in rows]
+
+        seen = set(dept_admins)
+        for sid in SUPERADMIN_IDS:
+            if sid not in seen:
+                dept_admins.append(sid)
+                seen.add(sid)
+
+        return dept_admins

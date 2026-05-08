@@ -119,7 +119,7 @@ def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None
     else:
         if ah > 0:
             lines.append(f"Доп. часы: {_fmt(ah)} ч")
-        earnings = h * base
+        earnings = (h + ah) * base
         lines.append(f"💰 Заработок: {_fmt_money(earnings)} р")
 
     return lines
@@ -167,8 +167,8 @@ def _build_hours_second_lines(data: dict, position: str | None, rate: dict | Non
         lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
         lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
     else:
-        earnings_second = h2 * base
-        earnings_total = h_tot * base
+        earnings_second = (h2 + ah2) * base
+        earnings_total = (h_tot + ah_tot) * base
         lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
         lines.append("")
         lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")

@@ -747,6 +747,7 @@ async def _send_loyalty_cards_report(
     _pending_loyalty[callback_key] = {
         "tg_id": tg_id,
         "shift_date": shift_date,
+        "shift_hours": data.get("shift_hours", 0.0),
         "full_name": full_name,
         "photo_ids": photo_ids,
     }
@@ -908,6 +909,7 @@ async def _send_check_filling_report(
     _pending_filling[callback_key] = {
         "tg_id": tg_id,
         "shift_date": shift_date,
+        "shift_hours": data.get("shift_hours", 0.0),
         "full_name": full_name,
         "photo_ids": photo_ids,
     }

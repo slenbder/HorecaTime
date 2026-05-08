@@ -1,10 +1,11 @@
 import asyncio
 import html
 import logging
+import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -107,6 +108,22 @@ _mg_scheduled: set[str] = set()
 # asyncio.Lock per mgid — защита от race condition при параллельной доставке фото
 _mg_locks: dict[str, asyncio.Lock] = {}
 
+# Буферы для карт лояльности
+_mg_loyalty_photos: dict[str, list[str]] = {}
+_mg_loyalty_context: dict[str, dict] = {}
+_mg_loyalty_scheduled: set[str] = set()
+_mg_loyalty_locks: dict[str, asyncio.Lock] = {}
+
+# Буферы для наполняемости чеков
+_mg_filling_photos: dict[str, list[str]] = {}
+_mg_filling_context: dict[str, dict] = {}
+_mg_filling_scheduled: set[str] = set()
+_mg_filling_locks: dict[str, asyncio.Lock] = {}
+
+# Pending контексты для апрува
+_pending_loyalty: dict[str, dict] = {}
+_pending_filling: dict[str, dict] = {}
+
 
 # ---------------------------------------------------------------------------
 # Шаг 1 — /shift
@@ -156,7 +173,7 @@ async def cmd_shift(message: Message, state: FSMContext):
         await message.answer(
             "Введите смену:\n\n"
             f"<code>{example}</code>\n\n"
-            "📎 Прикрепите фото чеков/карт (если есть)"
+            "Можно отменить ввод командой /cancel"
         )
         await state.set_state(ShiftStates.waiting_shift_input)
     else:
@@ -179,12 +196,30 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         return
 
     # Edge case: Официант с медиагруппой в обработке.
-    # mgid не хранится в FSM state — ищем по user_id в глобальном буфере.
+    # mgid не хранится в FSM state — ищем по user_id в глобальных буферах.
     for mgid, ctx in list(_mg_context.items()):
         if ctx["message"].from_user.id == user_id:
             ctx["cancelled"] = True
             logger.info(
                 "cmd_cancel: установлен флаг отмены для mgid=%s (user_id=%s)",
+                mgid, user_id,
+            )
+            break
+
+    for mgid, ctx in list(_mg_loyalty_context.items()):
+        if ctx["message"].from_user.id == user_id:
+            ctx["cancelled"] = True
+            logger.info(
+                "cmd_cancel: установлен флаг отмены для loyalty mgid=%s (user_id=%s)",
+                mgid, user_id,
+            )
+            break
+
+    for mgid, ctx in list(_mg_filling_context.items()):
+        if ctx["message"].from_user.id == user_id:
+            ctx["cancelled"] = True
+            logger.info(
+                "cmd_cancel: установлен флаг отмены для filling mgid=%s (user_id=%s)",
                 mgid, user_id,
             )
             break
@@ -218,7 +253,36 @@ async def process_shift_input(message: Message, state: FSMContext):
         return
 
     if position == "Официант":
-        await _process_waiter_shift_input(message, state)
+        result = parse_shift(message.text or "", "Официант")
+        if result is None:
+            await message.answer(
+                "❌ Не удалось распознать формат смены. Попробуйте ещё раз:\n\n"
+                "<code>13.03 10:00-20:00</code>"
+            )
+            return
+
+        tg_id = message.from_user.id
+        if sheets_client is None:
+            await message.answer("❌ Ошибка подключения к таблице. Попробуйте позже.")
+            await state.clear()
+            return
+
+        try:
+            sheets_client.write_shift(tg_id, result["day"], result["month"], result["year"], result["h"], 0.0)
+        except Exception:
+            error_logger.exception("process_shift_input: ошибка записи смены для %s", tg_id)
+            await message.answer("❌ Ошибка записи. Попробуйте позже.")
+            await state.clear()
+            return
+
+        date = _date_str(result["day"], result["month"], result["year"])
+        logger.info(
+            "Смена записана: user=%s, date=%s, H=%s, position=Официант",
+            tg_id, date, _fmt_h(result["h"]),
+        )
+        await state.update_data(shift_date=date, shift_hours=result["h"])
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(result['h'])} ч")
+        await _ask_about_loyalty_cards(message, state)
         return
 
     # --- Раннер: одна смена, затем AH ---
@@ -556,6 +620,325 @@ async def _send_waiter_report(
             error_logger.error(
                 "_send_waiter_report: не удалось уведомить %s: %s", admin_id, e
             )
+
+
+# ---------------------------------------------------------------------------
+# Официант — карты лояльности
+# ---------------------------------------------------------------------------
+
+async def _ask_about_loyalty_cards(message: Message, state: FSMContext) -> None:
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📸 Да, есть фото", callback_data="has_loyalty_cards"),
+        InlineKeyboardButton(text="❌ Нет", callback_data="no_loyalty_cards"),
+    ]])
+    await message.answer(
+        "🎴 Оформлялись карты лояльности?\n\nМожно отменить ввод командой /cancel",
+        reply_markup=keyboard,
+    )
+    await state.set_state(ShiftStates.waiting_loyalty_cards)
+
+
+@userhours_router.callback_query(F.data == "has_loyalty_cards")
+async def cb_has_loyalty_cards(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_text("🎴 Жду фото карт лояльности (можно несколько)")
+    await callback.answer()
+
+
+@userhours_router.callback_query(F.data == "no_loyalty_cards")
+async def cb_no_loyalty_cards(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_text("🎴 Карты лояльности: нет")
+    await _ask_about_check_filling(callback.message, state)
+    await callback.answer()
+
+
+@userhours_router.message(ShiftStates.waiting_loyalty_cards, F.photo)
+async def process_loyalty_photo(message: Message, state: FSMContext) -> None:
+    photo_file_id = message.photo[-1].file_id
+    mgid = message.media_group_id
+
+    if mgid:
+        lock = _mg_loyalty_locks.setdefault(mgid, asyncio.Lock())
+        async with lock:
+            if mgid not in _mg_loyalty_photos:
+                _mg_loyalty_photos[mgid] = []
+                _mg_loyalty_context[mgid] = {"message": message, "state": state}
+
+            if _mg_loyalty_photos[mgid] is None:
+                return
+
+            _mg_loyalty_photos[mgid].append(photo_file_id)
+
+            if mgid not in _mg_loyalty_scheduled:
+                _mg_loyalty_scheduled.add(mgid)
+                asyncio.create_task(_delayed_process_loyalty(mgid))
+    else:
+        await _send_loyalty_cards_report(message, state, [photo_file_id])
+        await _ask_about_check_filling(message, state)
+
+
+async def _delayed_process_loyalty(mgid: str) -> None:
+    try:
+        await asyncio.sleep(1.0)
+
+        lock = _mg_loyalty_locks.setdefault(mgid, asyncio.Lock())
+        async with lock:
+            photo_ids = _mg_loyalty_photos.get(mgid)
+            if not photo_ids:
+                _mg_loyalty_photos.pop(mgid, None)
+                _mg_loyalty_context.pop(mgid, None)
+                _mg_loyalty_scheduled.discard(mgid)
+                _mg_loyalty_locks.pop(mgid, None)
+                return
+
+            ctx = _mg_loyalty_context.pop(mgid)
+            _mg_loyalty_photos.pop(mgid)
+            _mg_loyalty_scheduled.discard(mgid)
+            _mg_loyalty_locks.pop(mgid, None)
+
+        message = ctx["message"]
+        state = ctx["state"]
+
+        if ctx.get("cancelled"):
+            logger.info("_delayed_process_loyalty: mgid=%s отменён пользователем", mgid)
+            await state.clear()
+            return
+
+        logger.info("_delayed_process_loyalty: mgid=%s, photos=%d", mgid, len(photo_ids))
+        await _send_loyalty_cards_report(message, state, photo_ids)
+        await _ask_about_check_filling(message, state)
+
+    except Exception as e:
+        error_logger.exception("_delayed_process_loyalty: ошибка mgid=%s: %s", mgid, e)
+        ctx = _mg_loyalty_context.get(mgid)
+        if ctx:
+            try:
+                await ctx["message"].answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
+                await ctx["state"].clear()
+            except Exception:
+                error_logger.exception("_delayed_process_loyalty: не удалось уведомить пользователя mgid=%s", mgid)
+        lock = _mg_loyalty_locks.get(mgid)
+        if lock:
+            async with lock:
+                _mg_loyalty_photos.pop(mgid, None)
+                _mg_loyalty_context.pop(mgid, None)
+                _mg_loyalty_scheduled.discard(mgid)
+            _mg_loyalty_locks.pop(mgid, None)
+        else:
+            _mg_loyalty_photos.pop(mgid, None)
+            _mg_loyalty_context.pop(mgid, None)
+            _mg_loyalty_scheduled.discard(mgid)
+
+
+async def _send_loyalty_cards_report(
+    message: Message,
+    state: FSMContext,
+    photo_ids: list[str],
+) -> None:
+    tg_id = message.from_user.id
+    data = await state.get_data()
+    shift_date = data.get("shift_date", "—")
+    N = len(photo_ids)
+
+    user_data = get_user(tg_id)
+    full_name = user_data["full_name"] if user_data else str(tg_id)
+    mention = make_mention(message.from_user.username, full_name)
+
+    callback_key = str(uuid.uuid4())[:8]
+    _pending_loyalty[callback_key] = {
+        "tg_id": tg_id,
+        "shift_date": shift_date,
+        "full_name": full_name,
+        "photo_ids": photo_ids,
+    }
+
+    report_text = (
+        f"🎴 Карты лояльности от {mention}\n"
+        f"📅 {shift_date}\n"
+        f"📸 Фото: {N} шт"
+    )
+    buttons = [
+        InlineKeyboardButton(
+            text=str(i),
+            callback_data=f"approve_loyalty:{callback_key}:{i}",
+        )
+        for i in range(N + 1)
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+    hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+    for admin_id in hall_admin_ids:
+        try:
+            media = [InputMediaPhoto(media=fid) for fid in photo_ids]
+            await message.bot.send_media_group(chat_id=admin_id, media=media)
+            await message.bot.send_message(
+                chat_id=admin_id, text=report_text, parse_mode="HTML",
+                reply_markup=keyboard,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+            logger.info("_send_loyalty_cards_report: уведомлен %s", admin_id)
+        except Exception as e:
+            error_logger.error("_send_loyalty_cards_report: не удалось уведомить %s: %s", admin_id, e)
+
+
+# ---------------------------------------------------------------------------
+# Официант — наполняемость чеков
+# ---------------------------------------------------------------------------
+
+async def _ask_about_check_filling(message: Message, state: FSMContext) -> None:
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📸 Да, есть фото", callback_data="has_check_filling"),
+        InlineKeyboardButton(text="❌ Нет", callback_data="no_check_filling"),
+    ]])
+    await message.answer(
+        "💳 Были наполняемости чеков?\n\nМожно отменить ввод командой /cancel",
+        reply_markup=keyboard,
+    )
+    await state.set_state(ShiftStates.waiting_check_filling)
+
+
+@userhours_router.callback_query(F.data == "has_check_filling")
+async def cb_has_check_filling(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_text("💳 Жду фото наполняемости чеков (можно несколько)")
+    await callback.answer()
+
+
+@userhours_router.callback_query(F.data == "no_check_filling")
+async def cb_no_check_filling(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.message.edit_text("💳 Наполняемость чеков: нет")
+    await state.clear()
+    await callback.message.answer("✅ Смена записана!")
+    await callback.answer()
+
+
+@userhours_router.message(ShiftStates.waiting_check_filling, F.photo)
+async def process_check_filling_photo(message: Message, state: FSMContext) -> None:
+    photo_file_id = message.photo[-1].file_id
+    mgid = message.media_group_id
+
+    if mgid:
+        lock = _mg_filling_locks.setdefault(mgid, asyncio.Lock())
+        async with lock:
+            if mgid not in _mg_filling_photos:
+                _mg_filling_photos[mgid] = []
+                _mg_filling_context[mgid] = {"message": message, "state": state}
+
+            if _mg_filling_photos[mgid] is None:
+                return
+
+            _mg_filling_photos[mgid].append(photo_file_id)
+
+            if mgid not in _mg_filling_scheduled:
+                _mg_filling_scheduled.add(mgid)
+                asyncio.create_task(_delayed_process_filling(mgid))
+    else:
+        await _send_check_filling_report(message, state, [photo_file_id])
+        await state.clear()
+        await message.answer("✅ Смена записана!")
+
+
+async def _delayed_process_filling(mgid: str) -> None:
+    try:
+        await asyncio.sleep(1.0)
+
+        lock = _mg_filling_locks.setdefault(mgid, asyncio.Lock())
+        async with lock:
+            photo_ids = _mg_filling_photos.get(mgid)
+            if not photo_ids:
+                _mg_filling_photos.pop(mgid, None)
+                _mg_filling_context.pop(mgid, None)
+                _mg_filling_scheduled.discard(mgid)
+                _mg_filling_locks.pop(mgid, None)
+                return
+
+            ctx = _mg_filling_context.pop(mgid)
+            _mg_filling_photos.pop(mgid)
+            _mg_filling_scheduled.discard(mgid)
+            _mg_filling_locks.pop(mgid, None)
+
+        message = ctx["message"]
+        state = ctx["state"]
+
+        if ctx.get("cancelled"):
+            logger.info("_delayed_process_filling: mgid=%s отменён пользователем", mgid)
+            await state.clear()
+            return
+
+        logger.info("_delayed_process_filling: mgid=%s, photos=%d", mgid, len(photo_ids))
+        await _send_check_filling_report(message, state, photo_ids)
+        await state.clear()
+        await message.answer("✅ Смена записана!")
+
+    except Exception as e:
+        error_logger.exception("_delayed_process_filling: ошибка mgid=%s: %s", mgid, e)
+        ctx = _mg_filling_context.get(mgid)
+        if ctx:
+            try:
+                await ctx["message"].answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
+                await ctx["state"].clear()
+            except Exception:
+                error_logger.exception("_delayed_process_filling: не удалось уведомить пользователя mgid=%s", mgid)
+        lock = _mg_filling_locks.get(mgid)
+        if lock:
+            async with lock:
+                _mg_filling_photos.pop(mgid, None)
+                _mg_filling_context.pop(mgid, None)
+                _mg_filling_scheduled.discard(mgid)
+            _mg_filling_locks.pop(mgid, None)
+        else:
+            _mg_filling_photos.pop(mgid, None)
+            _mg_filling_context.pop(mgid, None)
+            _mg_filling_scheduled.discard(mgid)
+
+
+async def _send_check_filling_report(
+    message: Message,
+    state: FSMContext,
+    photo_ids: list[str],
+) -> None:
+    tg_id = message.from_user.id
+    data = await state.get_data()
+    shift_date = data.get("shift_date", "—")
+    N = len(photo_ids)
+
+    user_data = get_user(tg_id)
+    full_name = user_data["full_name"] if user_data else str(tg_id)
+    mention = make_mention(message.from_user.username, full_name)
+
+    callback_key = str(uuid.uuid4())[:8]
+    _pending_filling[callback_key] = {
+        "tg_id": tg_id,
+        "shift_date": shift_date,
+        "full_name": full_name,
+        "photo_ids": photo_ids,
+    }
+
+    report_text = (
+        f"💳 Наполняемость чеков от {mention}\n"
+        f"📅 {shift_date}\n"
+        f"📸 Фото: {N} шт"
+    )
+    buttons = [
+        InlineKeyboardButton(
+            text=str(i),
+            callback_data=f"approve_filling:{callback_key}:{i}",
+        )
+        for i in range(N + 1)
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+    hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+    for admin_id in hall_admin_ids:
+        try:
+            media = [InputMediaPhoto(media=fid) for fid in photo_ids]
+            await message.bot.send_media_group(chat_id=admin_id, media=media)
+            await message.bot.send_message(
+                chat_id=admin_id, text=report_text, parse_mode="HTML",
+                reply_markup=keyboard,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+            logger.info("_send_check_filling_report: уведомлен %s", admin_id)
+        except Exception as e:
+            error_logger.error("_send_check_filling_report: не удалось уведомить %s: %s", admin_id, e)
 
 
 # ---------------------------------------------------------------------------

@@ -43,3 +43,8 @@ TECH_SHEET_NAME = "Техлист"
 
 # Ссылка на таблицу (отправляется пользователям после апрува)
 SHEET_URL = os.getenv("SHEET_URL", "")
+
+# Фантомный сотрудник для наполняемости чеков
+PHANTOM_CHECK_FILLING_ID = 1984002026
+PHANTOM_CHECK_FILLING_NAME = "Наполняемость чека"
+PHANTOM_HOURLY_RATE = 1500

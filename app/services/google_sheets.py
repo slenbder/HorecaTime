@@ -836,13 +836,16 @@ class GoogleSheetsClient:
             else:          # "last"
                 col = 37   # AK
 
-            value = ws.cell(phantom_row, col).value or "0"
+            phantom_data_row = all_values[phantom_row - 1]
+            raw = phantom_data_row[col - 1].strip() if len(phantom_data_row) >= col else ""
+            # Value may be "H/AH" (complex formula) or plain number; extract H part only
+            value = raw.split("/")[0].replace(",", ".") if raw else "0"
             try:
                 checks = int(float(value))
             except (ValueError, TypeError):
                 logger.warning(
                     "get_phantom_checks_summary: не удалось распарсить '%s' в листе '%s'",
-                    value, sheet_name,
+                    raw, sheet_name,
                 )
                 checks = 0
 

@@ -9,7 +9,7 @@ from aiogram.types import Message, BufferedInputFile
 from app.db.models import get_user, get_user_rate, get_user_rate_history
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
-from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL, POSITIONS_WITH_EXTRA
+from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, PHANTOM_HOURLY_RATE, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL, POSITIONS_WITH_EXTRA
 
 reports_router = Router()
 logger = logging.getLogger(__name__)
@@ -86,7 +86,7 @@ def _build_runner_earnings_lines(
     return lines
 
 
-def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None) -> list[str]:
+async def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None) -> list[str]:
     h = data["h_first"]
     ah = data["ah_first"]
     lines = [
@@ -119,14 +119,19 @@ def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None
     else:
         if ah > 0:
             lines.append(f"Доп. часы: {_fmt(ah)} ч")
-        earnings = h * base
+        if position == "Официант" and sheets_client is not None:
+            phantom_checks = sheets_client.get_phantom_checks_summary("first")
+            phantom_total_rub = phantom_checks * PHANTOM_HOURLY_RATE
+            lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({_fmt_money(phantom_total_rub)} р)")
+        earnings = (h + ah) * base
         lines.append(f"💰 Заработок: {_fmt_money(earnings)} р")
 
     return lines
 
 
-def _build_hours_second_lines(data: dict, position: str | None, rate: dict | None,
-                               sheet_label: str = "Вторая половина месяца (16–конец)") -> list[str]:
+async def _build_hours_second_lines(data: dict, position: str | None, rate: dict | None,
+                                     sheet_label: str = "Вторая половина месяца (16–конец)",
+                                     phantom_period: str = "second") -> list[str]:
     h2 = data["h_second"]
     ah2 = data["ah_second"]
     h_tot = data["h_total"]
@@ -167,13 +172,17 @@ def _build_hours_second_lines(data: dict, position: str | None, rate: dict | Non
         lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
         lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
     else:
-        earnings_second = h2 * base
-        earnings_total = h_tot * base
+        earnings_second = (h2 + ah2) * base
+        earnings_total = (h_tot + ah_tot) * base
         lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
         lines.append("")
         lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
         if ah_tot > 0:
             lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+        if position == "Официант" and sheets_client is not None:
+            phantom_checks = sheets_client.get_phantom_checks_summary(phantom_period)
+            phantom_total_rub = phantom_checks * PHANTOM_HOURLY_RATE
+            lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({_fmt_money(phantom_total_rub)} р)")
         lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
 
     return lines
@@ -206,7 +215,7 @@ async def cmd_hours_first(message: Message):
         )
         return
 
-    lines = _build_hours_first_lines(data, position, rate)
+    lines = await _build_hours_first_lines(data, position, rate)
     await message.answer("\n".join(lines))
 
 
@@ -237,7 +246,7 @@ async def cmd_hours_second(message: Message):
         )
         return
 
-    lines = _build_hours_second_lines(data, position, rate)
+    lines = await _build_hours_second_lines(data, position, rate)
     await message.answer("\n".join(lines))
 
 
@@ -280,7 +289,7 @@ async def cmd_hours_last(message: Message):
         )
         return
 
-    lines = _build_hours_second_lines(data, position, rate, sheet_label=sheet_name)
+    lines = await _build_hours_second_lines(data, position, rate, sheet_label=sheet_name, phantom_period="last")
     await message.answer("\n".join(lines))
 
 

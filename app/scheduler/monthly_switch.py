@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 
-from config import SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
+from config import PHANTOM_CHECK_FILLING_ID, SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
 from app.services.google_sheets import MONTH_NAMES_RU
 from app.db.models import (
     get_all_users,
@@ -149,6 +149,106 @@ async def apply_future_rates(db_path: str, target_month: int, target_year: int) 
         logger.info(
             "apply_future_rates: применена ставка для telegram_id=%d: base=%.2f, extra=%s",
             telegram_id, base_rate, extra_rate if extra_rate is not None else "None",
+        )
+
+
+async def _transfer_phantom_to_new_month(
+    sheets_client,
+    old_sheet_name: str,
+    new_sheet_name: str,
+) -> None:
+    """Переносит фантомного сотрудника из старого листа в новый.
+
+    Фантом не в Техлисте, поэтому switch_month удаляет его как аномалию.
+    Эта функция читает данные фантома из оригинального листа и вставляет
+    новую строку в начало секции "Официанты" нового листа с обнулёнными сменами.
+    """
+    try:
+        # Читаем старый лист
+        try:
+            old_ws = sheets_client._spreadsheet.worksheet(old_sheet_name)
+            old_values = old_ws.get_all_values()
+        except Exception as e:
+            logger.error(
+                "_transfer_phantom_to_new_month: ошибка чтения листа '%s': %s",
+                old_sheet_name, e,
+            )
+            return
+
+        # Ищем фантома по TG_ID в колонке B
+        phantom_row_data = None
+        for row in old_values:
+            if len(row) > 1 and str(row[1]).strip() == str(PHANTOM_CHECK_FILLING_ID):
+                phantom_row_data = row
+                break
+
+        if phantom_row_data is None:
+            logger.warning(
+                "_transfer_phantom_to_new_month: фантом %s не найден в '%s'",
+                PHANTOM_CHECK_FILLING_ID, old_sheet_name,
+            )
+            return
+
+        full_name = phantom_row_data[0] if len(phantom_row_data) > 0 else "Наполняемость чека"
+        telegram_id = phantom_row_data[1]
+        position = phantom_row_data[2] if len(phantom_row_data) > 2 else ""
+
+        # Читаем новый лист
+        try:
+            new_ws = sheets_client._spreadsheet.worksheet(new_sheet_name)
+            new_values = new_ws.get_all_values()
+        except Exception as e:
+            logger.error(
+                "_transfer_phantom_to_new_month: ошибка чтения листа '%s': %s",
+                new_sheet_name, e,
+            )
+            return
+
+        # Ищем заголовок секции "Официанты"
+        section_start = None
+        for i, row in enumerate(new_values, start=1):
+            if len(row) > 0 and "официант" in str(row[0]).lower():
+                section_start = i
+                break
+
+        if section_start is None:
+            logger.error(
+                "_transfer_phantom_to_new_month: секция 'Официанты' не найдена в '%s'",
+                new_sheet_name,
+            )
+            return
+
+        insert_row = section_start + 1
+
+        # Вставляем строку фантома с данными
+        new_ws.insert_rows(
+            [[full_name, telegram_id, position]],
+            row=insert_row,
+            value_input_option="RAW",
+        )
+
+        # Вставляем простые SUM формулы (чеки не H/AH, только счётчик)
+        formula_s = f"=SUM(D{insert_row}:R{insert_row})"
+        formula_aj = f"=SUM(T{insert_row}:AI{insert_row})"
+        formula_ak = f"=S{insert_row}+AJ{insert_row}"
+        new_ws.batch_update(
+            [
+                {"range": f"S{insert_row}", "values": [[formula_s]]},
+                {"range": f"AJ{insert_row}", "values": [[formula_aj]]},
+                {"range": f"AK{insert_row}", "values": [[formula_ak]]},
+            ],
+            value_input_option="USER_ENTERED",
+        )
+
+        logger.info(
+            "_transfer_phantom_to_new_month: фантом перенесён в '%s', строка %d",
+            new_sheet_name, insert_row,
+        )
+
+    except Exception:
+        logger.exception(
+            "_transfer_phantom_to_new_month: необработанная ошибка ('%s' → '%s')",
+            old_sheet_name, new_sheet_name,
         )
 
 
@@ -393,6 +493,9 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 logger.error(
                     "switch_month: ошибка удаления строки %d: %s", row_idx, e
                 )
+
+        # Переносим фантома (он не в Техлисте, поэтому удаляется как аномалия выше)
+        await _transfer_phantom_to_new_month(sheets_client, current_name, next_name)
 
         result = {
             "old_sheet": current_name,

@@ -28,8 +28,9 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email
-from config import DEVELOPER_ID, SUPERADMIN_IDS, DB_PATH, SHEET_URL
+from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, SHEET_URL
 from app.db.models import get_admins_by_department
+from app.bot.handlers.userhours import _pending_loyalty, _pending_filling
 
 auth_router = Router()
 logger = logging.getLogger(__name__)
@@ -556,6 +557,217 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
             "approve_ah: смена записана но уведомление официанту %s не отправлено: %s",
             telegram_id, e,
         )
+
+
+@auth_router.callback_query(F.data.startswith("approve_loyalty:"))
+async def approve_loyalty_callback(callback: CallbackQuery) -> None:
+    """Апрув карт лояльности официанта администратором зала.
+
+    Формат callback_data: approve_loyalty:{callback_key}:{approved_count}
+    """
+    try:
+        if "✅" in (callback.message.text or ""):
+            await callback.answer("Уже обработано.")
+            return
+
+        parts = (callback.data or "").split(":")
+        if len(parts) != 3:
+            await callback.answer("❌ Некорректные данные.", show_alert=True)
+            return
+
+        callback_key = parts[1]
+        approved_count = int(parts[2])
+
+        data = _pending_loyalty.get(callback_key)
+        if data is None:
+            await callback.answer("Данные устарели.", show_alert=True)
+            return
+
+        caller_id = callback.from_user.id
+        hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+        allowed = set(hall_admin_ids) | set(SUPERADMIN_IDS) | {DEVELOPER_ID}
+        if caller_id not in allowed:
+            await callback.answer("❌ Нет прав.", show_alert=True)
+            return
+
+        telegram_id = data["tg_id"]
+        shift_date = data["shift_date"]
+        h = data.get("shift_hours", 10.0)
+        ah = approved_count * 0.5
+
+        # Парсим дату из "DD.MM.YY"
+        try:
+            day_s, month_s, year_s = shift_date.split(".")
+            day, month, year = int(day_s), int(month_s), 2000 + int(year_s)
+        except (ValueError, AttributeError):
+            logger.error(
+                "approve_loyalty_callback: не удалось распарсить дату '%s'", shift_date
+            )
+            await callback.answer("❌ Некорректный формат даты.", show_alert=True)
+            return
+
+        if sheets_client is None:
+            await callback.answer("❌ Ошибка подключения к таблице.", show_alert=True)
+            return
+
+        try:
+            sheets_client.write_shift(telegram_id, day, month, year, h, ah)
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_loyalty_callback: ошибка записи для user=%s date=%s",
+                telegram_id, shift_date,
+            )
+            await callback.answer("❌ Ошибка записи.", show_alert=True)
+            return
+
+        logger.info(
+            "approve_loyalty_callback: user=%s date=%s H=%.1f AH=%.1f (%d карт), admin=%s",
+            telegram_id, shift_date, h, ah, approved_count, caller_id,
+        )
+
+        def _fmt(v: float) -> str:
+            return str(int(v)) if v == int(v) else f"{v:.1f}"
+
+        original_text = callback.message.text or ""
+        new_text = original_text + f"\n✅ Одобрено {approved_count} фото → {_fmt(ah)} ч"
+        try:
+            await callback.message.edit_text(
+                new_text, parse_mode="HTML", reply_markup=None,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+        except Exception as e:
+            logging.getLogger("errors").error(
+                "approve_loyalty_callback: не удалось отредактировать сообщение: %s", e
+            )
+
+        del _pending_loyalty[callback_key]
+        await callback.answer()
+
+        waiter_text = (
+            f"✅ Смена одобрена\n"
+            f"📅 {shift_date}: {_fmt(h)} ч\n"
+            f"🎴 Карты лояльности: {approved_count} шт (+{_fmt(ah)} ч)"
+        )
+        try:
+            await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
+        except Exception as e:
+            logging.getLogger("errors").error(
+                "approve_loyalty_callback: уведомление официанту %s не отправлено: %s",
+                telegram_id, e,
+            )
+
+    except Exception:
+        logging.getLogger("errors").exception("approve_loyalty_callback: необработанная ошибка")
+        await callback.answer("Ошибка, см. логи.", show_alert=True)
+
+
+@auth_router.callback_query(F.data.startswith("approve_filling:"))
+async def approve_filling_callback(callback: CallbackQuery) -> None:
+    """Апрув наполняемости чеков официанта администратором зала.
+
+    Формат callback_data: approve_filling:{callback_key}:{approved_count}
+    """
+    try:
+        if "✅" in (callback.message.text or ""):
+            await callback.answer("Уже обработано.")
+            return
+
+        parts = (callback.data or "").split(":")
+        if len(parts) != 3:
+            await callback.answer("❌ Некорректные данные.", show_alert=True)
+            return
+
+        callback_key = parts[1]
+        approved_count = int(parts[2])
+
+        data = _pending_filling.get(callback_key)
+        if data is None:
+            await callback.answer("Данные устарели.", show_alert=True)
+            return
+
+        caller_id = callback.from_user.id
+        hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+        allowed = set(hall_admin_ids) | set(SUPERADMIN_IDS) | {DEVELOPER_ID}
+        if caller_id not in allowed:
+            await callback.answer("❌ Нет прав.", show_alert=True)
+            return
+
+        telegram_id = data["tg_id"]
+        shift_date = data["shift_date"]
+
+        # Парсим дату из "DD.MM.YY"
+        try:
+            day_s, month_s, year_s = shift_date.split(".")
+            day = int(day_s)
+        except (ValueError, AttributeError):
+            logger.error(
+                "approve_filling_callback: не удалось распарсить дату '%s'", shift_date
+            )
+            await callback.answer("❌ Некорректный формат даты.", show_alert=True)
+            return
+
+        if sheets_client is None:
+            await callback.answer("❌ Ошибка подключения к таблице.", show_alert=True)
+            return
+
+        success = sheets_client.write_check_filling_to_phantom(shift_date, approved_count)
+        if not success:
+            await callback.answer("❌ Ошибка записи.", show_alert=True)
+            return
+
+        period = "first" if day <= 15 else "second"
+        phantom_checks = sheets_client.get_phantom_checks_summary(period)
+
+        logger.info(
+            "approve_filling_callback: user=%s date=%s checks=%d, admin=%s",
+            telegram_id, shift_date, approved_count, caller_id,
+        )
+
+        original_text = callback.message.text or ""
+        new_text = original_text + f"\n✅ Одобрено {approved_count} чека"
+        try:
+            await callback.message.edit_text(
+                new_text, parse_mode="HTML", reply_markup=None,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+        except Exception as e:
+            logging.getLogger("errors").error(
+                "approve_filling_callback: не удалось отредактировать сообщение: %s", e
+            )
+
+        period_text = "первую" if period == "first" else "вторую"
+        admin_text = (
+            f"✅ Наполняемость записана\n"
+            f"Дата: {shift_date}\n"
+            f"Добавлено: {approved_count} чека\n"
+            f"Всего за {period_text} половину: {phantom_checks} чеков"
+            f" ({phantom_checks * PHANTOM_HOURLY_RATE} р)"
+        )
+        try:
+            await callback.message.answer(admin_text)
+        except Exception as e:
+            logging.getLogger("errors").error(
+                "approve_filling_callback: не удалось отправить баланс: %s", e
+            )
+
+        del _pending_filling[callback_key]
+        await callback.answer()
+
+        waiter_text = (
+            f"💳 Наполняемость учтена\n"
+            f"📅 {shift_date}: {approved_count} чека добавлены в общий пул"
+        )
+        try:
+            await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
+        except Exception as e:
+            logging.getLogger("errors").error(
+                "approve_filling_callback: уведомление официанту %s не отправлено: %s",
+                telegram_id, e,
+            )
+
+    except Exception:
+        logging.getLogger("errors").exception("approve_filling_callback: необработанная ошибка")
+        await callback.answer("Ошибка, см. логи.", show_alert=True)
 
 
 def _parse_approve_callback(callback_data: str) -> tuple[int, int] | None:

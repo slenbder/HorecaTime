@@ -8,7 +8,7 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
-from config import GOOGLE_CREDENTIALS_PATH, SPREADSHEET_ID, TECH_SHEET_NAME
+from config import GOOGLE_CREDENTIALS_PATH, PHANTOM_CHECK_FILLING_ID, SPREADSHEET_ID, TECH_SHEET_NAME
 
 logger = logging.getLogger("google_api")
 
@@ -702,6 +702,156 @@ class GoogleSheetsClient:
                 )
 
         self._auto_resize_columns(ws)
+
+    def write_check_filling_to_phantom(
+        self,
+        date_str: str,
+        approved_count: int,
+    ) -> bool:
+        """Суммирует approved_count чеков в ячейку фантома за дату date_str."""
+        try:
+            if "-" in date_str:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+            else:
+                dt = datetime.strptime(date_str, "%d.%m.%y")
+            day, month, year = dt.day, dt.month, dt.year
+            sheet_name = f"{MONTH_NAMES_RU[month]} {year}"
+
+            try:
+                ws = self._spreadsheet.worksheet(sheet_name)
+                all_values = ws.get_all_values()
+            except WorksheetNotFound:
+                logger.error(
+                    "write_check_filling_to_phantom: лист '%s' не найден", sheet_name
+                )
+                return False
+            except Exception as e:
+                logger.error(
+                    "write_check_filling_to_phantom: ошибка доступа к листу, реконнект: %s", e
+                )
+                self._reconnect()
+                try:
+                    ws = self._spreadsheet.worksheet(sheet_name)
+                    all_values = ws.get_all_values()
+                except WorksheetNotFound:
+                    logger.error(
+                        "write_check_filling_to_phantom: лист '%s' не найден после реконнекта",
+                        sheet_name,
+                    )
+                    return False
+
+            phantom_row = None
+            for i, row in enumerate(all_values, start=1):
+                if len(row) > 1 and str(row[1]).strip() == str(PHANTOM_CHECK_FILLING_ID):
+                    phantom_row = i
+                    break
+
+            if phantom_row is None:
+                logger.error(
+                    "write_check_filling_to_phantom: фантом %s не найден в листе '%s'",
+                    PHANTOM_CHECK_FILLING_ID, sheet_name,
+                )
+                return False
+
+            col = 3 + day if day <= 15 else 19 + (day - 15)
+
+            current_value = ws.cell(phantom_row, col).value or ""
+            try:
+                current_checks = int(current_value.strip()) if current_value.strip() else 0
+            except (ValueError, TypeError):
+                current_checks = 0
+
+            new_checks = current_checks + approved_count
+            ws.update_cell(phantom_row, col, str(new_checks), value_input_option="RAW")
+            logger.info(
+                "write_check_filling_to_phantom: %d чеков добавлено, итого: %d, дата: %s",
+                approved_count, new_checks, date_str,
+            )
+            return True
+
+        except Exception:
+            logger.exception(
+                "write_check_filling_to_phantom: необработанная ошибка, date=%s", date_str
+            )
+            return False
+
+    def get_phantom_checks_summary(self, period: str) -> int:
+        """
+        Читает суммарное кол-во чеков фантома за период.
+        period: "first" → S (col 19), "second" → AJ (col 36), "last" → AK (col 37) прошлого месяца.
+        """
+        try:
+            now = datetime.now(ZoneInfo("Europe/Moscow"))
+
+            if period == "last":
+                if now.month == 1:
+                    last_month, last_year = 12, now.year - 1
+                else:
+                    last_month, last_year = now.month - 1, now.year
+                sheet_name = f"{MONTH_NAMES_RU[last_month]} {last_year}"
+            else:
+                sheet_name = f"{MONTH_NAMES_RU[now.month]} {now.year}"
+
+            try:
+                ws = self._spreadsheet.worksheet(sheet_name)
+                all_values = ws.get_all_values()
+            except WorksheetNotFound:
+                logger.warning(
+                    "get_phantom_checks_summary: лист '%s' не найден", sheet_name
+                )
+                return 0
+            except Exception as e:
+                logger.error(
+                    "get_phantom_checks_summary: ошибка доступа к листу, реконнект: %s", e
+                )
+                self._reconnect()
+                try:
+                    ws = self._spreadsheet.worksheet(sheet_name)
+                    all_values = ws.get_all_values()
+                except WorksheetNotFound:
+                    logger.warning(
+                        "get_phantom_checks_summary: лист '%s' не найден после реконнекта",
+                        sheet_name,
+                    )
+                    return 0
+
+            phantom_row = None
+            for i, row in enumerate(all_values, start=1):
+                if len(row) > 1 and str(row[1]).strip() == str(PHANTOM_CHECK_FILLING_ID):
+                    phantom_row = i
+                    break
+
+            if phantom_row is None:
+                logger.warning(
+                    "get_phantom_checks_summary: фантом %s не найден в листе '%s'",
+                    PHANTOM_CHECK_FILLING_ID, sheet_name,
+                )
+                return 0
+
+            if period == "first":
+                col = 19   # S
+            elif period == "second":
+                col = 36   # AJ
+            else:          # "last"
+                col = 37   # AK
+
+            value = ws.cell(phantom_row, col).value or "0"
+            try:
+                checks = int(float(value))
+            except (ValueError, TypeError):
+                logger.warning(
+                    "get_phantom_checks_summary: не удалось распарсить '%s' в листе '%s'",
+                    value, sheet_name,
+                )
+                checks = 0
+
+            return checks
+
+        except Exception:
+            logger.exception(
+                "get_phantom_checks_summary: необработанная ошибка, period=%s", period
+            )
+            return 0
 
     # --- Отчёты ---
 

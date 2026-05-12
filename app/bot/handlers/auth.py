@@ -583,6 +583,15 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
             await callback.answer("Данные устарели.", show_alert=True)
             return
 
+        photo_count = len(data.get("photo_ids", []))
+        if not (0 <= approved_count <= photo_count):
+            await callback.answer("❌ Недопустимое значение.", show_alert=True)
+            logger.warning(
+                "Invalid approved_count in loyalty: %d > %d (admin %s)",
+                approved_count, photo_count, callback.from_user.id,
+            )
+            return
+
         caller_id = callback.from_user.id
         hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
         allowed = set(hall_admin_ids) | set(SUPERADMIN_IDS) | {DEVELOPER_ID}
@@ -683,6 +692,15 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         data = _pending_filling.get(callback_key)
         if data is None:
             await callback.answer("Данные устарели.", show_alert=True)
+            return
+
+        photo_count = len(data.get("photo_ids", []))
+        if not (0 <= approved_count <= photo_count):
+            await callback.answer("❌ Недопустимое значение.", show_alert=True)
+            logger.warning(
+                "Invalid approved_count in filling: %d > %d (admin %s)",
+                approved_count, photo_count, callback.from_user.id,
+            )
             return
 
         caller_id = callback.from_user.id

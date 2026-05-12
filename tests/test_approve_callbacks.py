@@ -164,7 +164,7 @@ class TestApproveFilllingCallback:
             "full_name": "Фейл Тестов",
             "photo_ids": ["p1"],
         }
-        cb = _make_callback(f"approve_filling:{callback_key}:2", caller_id=999)
+        cb = _make_callback(f"approve_filling:{callback_key}:1", caller_id=999)
 
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
@@ -202,3 +202,54 @@ class TestApproveFilllingCallback:
             await approve_filling_callback(cb)
 
         mock_sc.get_phantom_checks_summary.assert_called_once_with("second")
+
+
+# ---------------------------------------------------------------------------
+# Tests: approved_count validation
+# ---------------------------------------------------------------------------
+
+class TestApprovalCountValidation:
+
+    @pytest.mark.asyncio
+    async def test_approve_loyalty_exceeds_photo_count(self):
+        """approved_count > len(photo_ids) → ❌ алерт, write_shift НЕ вызван."""
+        from app.bot.handlers.auth import approve_loyalty_callback
+        import app.bot.handlers.auth as auth_module
+
+        callback_key = "loy_forged"
+        auth_module._pending_loyalty[callback_key] = {
+            "tg_id": 11111,
+            "shift_date": "01.05.26",
+            "shift_hours": 10.0,
+            "full_name": "Тест Тестов",
+            "photo_ids": ["p1", "p2"],  # только 2 фото
+        }
+        cb = _make_callback(f"approve_loyalty:{callback_key}:99")
+
+        with patch("app.bot.handlers.auth.sheets_client") as mock_sc:
+            await approve_loyalty_callback(cb)
+
+        cb.answer.assert_called_once_with("❌ Недопустимое значение.", show_alert=True)
+        mock_sc.write_shift.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_approve_filling_exceeds_photo_count(self):
+        """approved_count > len(photo_ids) → ❌ алерт, write_check_filling НЕ вызван."""
+        from app.bot.handlers.auth import approve_filling_callback
+        import app.bot.handlers.auth as auth_module
+
+        callback_key = "fill_forged"
+        auth_module._pending_filling[callback_key] = {
+            "tg_id": 22222,
+            "shift_date": "05.05.26",
+            "shift_hours": 8.0,
+            "full_name": "Фейк Тестов",
+            "photo_ids": ["p1"],  # только 1 фото
+        }
+        cb = _make_callback(f"approve_filling:{callback_key}:99")
+
+        with patch("app.bot.handlers.auth.sheets_client") as mock_sc:
+            await approve_filling_callback(cb)
+
+        cb.answer.assert_called_once_with("❌ Недопустимое значение.", show_alert=True)
+        mock_sc.write_check_filling_to_phantom.assert_not_called()

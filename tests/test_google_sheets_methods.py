@@ -143,3 +143,65 @@ class TestGetSheetIdByName:
         result = client.get_sheet_id_by_name("Март 2026")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_summary_hours — _parse_cell locale handling
+# ---------------------------------------------------------------------------
+
+def _make_summary_row(s_val: str, aj_val: str = "0", ak_val: str = "0") -> list[str]:
+    """Строка листа: B=telegram_id, S(19)=s_val, AJ(36)=aj_val, AK(37)=ak_val."""
+    row = [""] * 43
+    row[1] = "99999"    # telegram_id
+    row[18] = s_val     # S (col 19, index 18)
+    row[35] = aj_val    # AJ (col 36, index 35)
+    row[36] = ak_val    # AK (col 37, index 36)
+    return row
+
+
+class TestGetSummaryHoursParseCell:
+
+    def _run(self, s_val: str, aj_val: str = "0", ak_val: str = "0"):
+        client = _make_client()
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [
+            _make_summary_row(s_val, aj_val, ak_val)
+        ]
+        client._spreadsheet.worksheet.return_value = mock_ws
+        return client.get_summary_hours(99999, "Май 2026")
+
+    def test_parse_cell_dot_decimal(self):
+        """'8/1.5' (точка) → h_first=8.0, ah_first=1.5."""
+        result = self._run("8/1.5")
+        assert result["h_first"] == 8.0
+        assert result["ah_first"] == 1.5
+
+    def test_parse_cell_comma_decimal_russian_locale(self):
+        """'8/1,5' (запятая, русская локаль) → h_first=8.0, ah_first=1.5."""
+        result = self._run("8/1,5")
+        assert result["h_first"] == 8.0
+        assert result["ah_first"] == 1.5
+
+    def test_parse_cell_zero_ah(self):
+        """'8/0' → h_first=8.0, ah_first=0.0."""
+        result = self._run("8/0")
+        assert result["h_first"] == 8.0
+        assert result["ah_first"] == 0.0
+
+    def test_parse_cell_plain_number(self):
+        """'8' (без слэша) → h_first=8.0, ah_first=0.0."""
+        result = self._run("8")
+        assert result["h_first"] == 8.0
+        assert result["ah_first"] == 0.0
+
+    def test_parse_cell_empty(self):
+        """Пустая ячейка → h_first=0.0, ah_first=0.0."""
+        result = self._run("")
+        assert result["h_first"] == 0.0
+        assert result["ah_first"] == 0.0
+
+    def test_parse_cell_comma_both_parts(self):
+        """'8,5/1,5' → h_first=8.5, ah_first=1.5."""
+        result = self._run("8,5/1,5")
+        assert result["h_first"] == 8.5
+        assert result["ah_first"] == 1.5

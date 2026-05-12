@@ -898,16 +898,17 @@ class GoogleSheetsClient:
             if "/" in val:
                 parts = val.split("/", 1)
                 try:
-                    h = float(parts[0])
+                    # Russian locale: formula returns "8/1,5" — normalise comma→dot
+                    h = float(parts[0].replace(",", "."))
                 except ValueError:
                     h = 0.0
                 try:
-                    ah = float(parts[1])
+                    ah = float(parts[1].replace(",", "."))
                 except ValueError:
                     ah = 0.0
                 return h, ah
             try:
-                return float(val), 0.0
+                return float(val.replace(",", ".")), 0.0
             except ValueError:
                 return 0.0, 0.0
 
@@ -917,7 +918,7 @@ class GoogleSheetsClient:
             if not val:
                 return 0.0
             try:
-                return float(val)
+                return float(val.replace(",", "."))
             except ValueError:
                 return 0.0
 

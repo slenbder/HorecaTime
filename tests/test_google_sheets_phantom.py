@@ -52,7 +52,7 @@ class TestWriteCheckFillingToPhantom:
         assert result is True
         mock_ws.update.assert_called_once()
         args = mock_ws.update.call_args
-        assert args[0][0] == [["3"]]
+        assert args[0][0] == [[3]]
 
     def test_write_check_filling_summation(self):
         """Ячейка уже содержит '2', добавляем 3 → записывает '5'."""
@@ -65,7 +65,7 @@ class TestWriteCheckFillingToPhantom:
 
         assert result is True
         args = mock_ws.update.call_args
-        assert args[0][0] == [["5"]]
+        assert args[0][0] == [[5]]
 
     def test_write_check_filling_not_found(self):
         """Фантом не найден в листе → возвращает False."""

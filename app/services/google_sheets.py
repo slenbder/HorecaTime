@@ -757,13 +757,13 @@ class GoogleSheetsClient:
 
             current_value = ws.cell(phantom_row, col).value or ""
             try:
-                current_checks = int(current_value.strip()) if current_value.strip() else 0
+                current_checks = int(float(str(current_value).strip().replace(",", "."))) if str(current_value).strip() else 0
             except (ValueError, TypeError):
                 current_checks = 0
 
             new_checks = current_checks + approved_count
             cell = gspread.utils.rowcol_to_a1(phantom_row, col)
-            ws.update([[str(new_checks)]], cell, value_input_option="RAW")
+            ws.update([[new_checks]], cell, value_input_option="RAW")
             logger.info(
                 "write_check_filling_to_phantom: %d чеков добавлено, итого: %d, дата: %s",
                 approved_count, new_checks, date_str,

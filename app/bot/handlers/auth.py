@@ -628,6 +628,14 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
                 telegram_id, shift_date,
             )
             await callback.answer("❌ Ошибка записи.", show_alert=True)
+            try:
+                await callback.bot.send_message(
+                    telegram_id,
+                    "⚠️ Не удалось записать смену с картами лояльности.\n"
+                    "Обратитесь к администратору."
+                )
+            except Exception:
+                pass
             return
 
         logger.info(
@@ -732,6 +740,14 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         success = sheets_client.write_check_filling_to_phantom(shift_date, approved_count)
         if not success:
             await callback.answer("❌ Ошибка записи.", show_alert=True)
+            try:
+                await callback.bot.send_message(
+                    telegram_id,
+                    "⚠️ Не удалось записать наполняемость чеков.\n"
+                    "Обратитесь к администратору."
+                )
+            except Exception:
+                pass
             return
 
         period = "first" if day <= 15 else "second"

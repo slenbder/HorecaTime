@@ -712,6 +712,10 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
             )
             return
 
+        if approved_count == 0:
+            await callback.answer("Нельзя одобрить 0 чеков.", show_alert=True)
+            return
+
         caller_id = callback.from_user.id
         hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
         allowed = set(hall_admin_ids) | set(SUPERADMIN_IDS) | {DEVELOPER_ID}

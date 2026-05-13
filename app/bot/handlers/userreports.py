@@ -215,6 +215,13 @@ async def cmd_hours_first(message: Message):
         )
         return
 
+    if position in POSITIONS_WITH_EXTRA and rate.get("extra_rate") is None:
+        await message.answer(
+            "⚠️ Повышенная ставка ещё не установлена.\n"
+            "Обратитесь к администратору вашего отдела для установки ставки."
+        )
+        return
+
     lines = await _build_hours_first_lines(data, position, rate)
     await message.answer("\n".join(lines))
 
@@ -242,6 +249,13 @@ async def cmd_hours_second(message: Message):
     if rate is None:
         await message.answer(
             "⚠️ Ваша ставка ещё не установлена.\n"
+            "Обратитесь к администратору вашего отдела для установки ставки."
+        )
+        return
+
+    if position in POSITIONS_WITH_EXTRA and rate.get("extra_rate") is None:
+        await message.answer(
+            "⚠️ Повышенная ставка ещё не установлена.\n"
             "Обратитесь к администратору вашего отдела для установки ставки."
         )
         return
@@ -285,6 +299,13 @@ async def cmd_hours_last(message: Message):
         )
         await message.answer(
             "⚠️ Ваша ставка ещё не установлена.\n"
+            "Обратитесь к администратору вашего отдела для установки ставки."
+        )
+        return
+
+    if position in POSITIONS_WITH_EXTRA and rate.get("extra_rate") is None:
+        await message.answer(
+            "⚠️ Повышенная ставка ещё не установлена.\n"
             "Обратитесь к администратору вашего отдела для установки ставки."
         )
         return

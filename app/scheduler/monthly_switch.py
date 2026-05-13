@@ -240,6 +240,17 @@ async def _transfer_phantom_to_new_month(
             value_input_option="USER_ENTERED",
         )
 
+        try:
+            new_ws.format(
+                f"B{insert_row}",
+                {"numberFormat": {"type": "TEXT"}},
+            )
+        except Exception as e:
+            logger.warning(
+                "_transfer_phantom: не удалось установить TEXT формат для B%s: %s",
+                insert_row, e,
+            )
+
         logger.info(
             "_transfer_phantom_to_new_month: фантом перенесён в '%s', строка %d",
             new_sheet_name, insert_row,

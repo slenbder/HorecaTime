@@ -156,6 +156,7 @@ async def _transfer_phantom_to_new_month(
     sheets_client,
     old_sheet_name: str,
     new_sheet_name: str,
+    bot: Bot,
 ) -> None:
     """Переносит фантомного сотрудника из старого листа в новый.
 
@@ -187,6 +188,16 @@ async def _transfer_phantom_to_new_month(
                 "_transfer_phantom_to_new_month: фантом %s не найден в '%s'",
                 PHANTOM_CHECK_FILLING_ID, old_sheet_name,
             )
+            for sid in SUPERADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        sid,
+                        f"⚠️ switch_month: фантом наполняемости чеков не найден "
+                        f"в листе '{old_sheet_name}'.\n"
+                        "Создайте фантома вручную в новом листе.",
+                    )
+                except Exception:
+                    pass
             return
 
         full_name = phantom_row_data[0] if len(phantom_row_data) > 0 else "Наполняемость чека"
@@ -324,6 +335,15 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 "switch_month: не удалось применить future ставки %d/%d: %s",
                 next_month, next_year, future_err, exc_info=True,
             )
+            for sid in SUPERADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        sid,
+                        "⚠️ switch_month: ошибка при применении будущих ставок.\n"
+                        "Проверьте user_rates вручную.",
+                    )
+                except Exception:
+                    pass
 
         # Проверка: лист следующего месяца уже существует
         existing_titles = {ws.title for ws in sheets_client._spreadsheet.worksheets()}
@@ -510,7 +530,7 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 )
 
         # Переносим фантома (он не в Техлисте, поэтому удаляется как аномалия выше)
-        await _transfer_phantom_to_new_month(sheets_client, current_name, next_name)
+        await _transfer_phantom_to_new_month(sheets_client, current_name, next_name, bot)
 
         result = {
             "old_sheet": current_name,

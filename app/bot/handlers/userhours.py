@@ -640,7 +640,7 @@ async def _ask_about_loyalty_cards(message: Message, state: FSMContext) -> None:
 
 @userhours_router.callback_query(F.data == "has_loyalty_cards")
 async def cb_has_loyalty_cards(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_text("🎴 Жду фото карт лояльности (можно несколько)")
+    await callback.message.edit_text("🎴 Жду фото карт лояльности (можно несколько)\n\nДля отмены нажмите /cancel")
     await callback.answer()
 
 
@@ -800,7 +800,7 @@ async def _ask_about_check_filling(message: Message, state: FSMContext) -> None:
 
 @userhours_router.callback_query(F.data == "has_check_filling")
 async def cb_has_check_filling(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_text("💳 Жду фото наполняемости чеков (можно несколько)")
+    await callback.message.edit_text("💳 Жду фото наполняемости чеков (можно несколько)\n\nДля отмены нажмите /cancel")
     await callback.answer()
 
 

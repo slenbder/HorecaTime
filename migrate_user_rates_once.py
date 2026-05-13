@@ -11,6 +11,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config import DB_PATH
 from app.db.models import get_all_users, get_rate, set_user_rate
 
+raise RuntimeError(
+    "Migration already completed on 2026-03-28. "
+    "This script is kept for documentation purposes only. "
+    "Remove this line only if you know what you are doing."
+)
+
 logging.basicConfig(
     filename="logs/app.log",
     level=logging.INFO,

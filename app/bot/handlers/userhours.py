@@ -680,6 +680,7 @@ async def _delayed_process_loyalty(mgid: str) -> None:
     try:
         await asyncio.sleep(1.0)
 
+        ctx_for_error = _mg_loyalty_context.get(mgid)
         lock = _mg_loyalty_locks.setdefault(mgid, asyncio.Lock())
         async with lock:
             photo_ids = _mg_loyalty_photos.get(mgid)
@@ -709,7 +710,7 @@ async def _delayed_process_loyalty(mgid: str) -> None:
 
     except Exception as e:
         error_logger.exception("_delayed_process_loyalty: ошибка mgid=%s: %s", mgid, e)
-        ctx = _mg_loyalty_context.get(mgid)
+        ctx = ctx_for_error
         if ctx:
             try:
                 await ctx["message"].answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
@@ -841,6 +842,7 @@ async def _delayed_process_filling(mgid: str) -> None:
     try:
         await asyncio.sleep(1.0)
 
+        ctx_for_error = _mg_filling_context.get(mgid)
         lock = _mg_filling_locks.setdefault(mgid, asyncio.Lock())
         async with lock:
             photo_ids = _mg_filling_photos.get(mgid)
@@ -871,7 +873,7 @@ async def _delayed_process_filling(mgid: str) -> None:
 
     except Exception as e:
         error_logger.exception("_delayed_process_filling: ошибка mgid=%s: %s", mgid, e)
-        ctx = _mg_filling_context.get(mgid)
+        ctx = ctx_for_error
         if ctx:
             try:
                 await ctx["message"].answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")

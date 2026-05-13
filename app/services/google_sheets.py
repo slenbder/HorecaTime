@@ -505,12 +505,16 @@ class GoogleSheetsClient:
         # AL/AM/AN — служебные числовые колонки Раннера, TEXT им не нужен.
         try:
             month_ws.format(
+                f"B{new_row}:B{new_row}",
+                {"numberFormat": {"type": "TEXT"}},
+            )
+            month_ws.format(
                 f"D{new_row}:AK{new_row}",
                 {"numberFormat": {"type": "TEXT"}},
             )
             logger.info(
-                "ensure_user: TEXT-формат задан для D%s:AK%s листа '%s'",
-                new_row, new_row, month_ws.title,
+                "ensure_user: TEXT-формат задан для B%s и D%s:AK%s листа '%s'",
+                new_row, new_row, new_row, month_ws.title,
             )
         except Exception as e:
             logger.warning(

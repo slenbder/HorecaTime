@@ -118,11 +118,15 @@ def test_ensure_user_sets_plain_text_for_new_row():
 
     assert result is True
 
-    mock_ws.format.assert_called_once()
-    range_arg, format_arg = mock_ws.format.call_args[0]
+    calls = mock_ws.format.call_args_list
+    assert len(calls) == 2, f"Ожидалось 2 вызова format, получено {len(calls)}"
 
-    assert range_arg == "D4:AK4", f"Ожидался D4:AK4, получен '{range_arg}'"
-    assert format_arg["numberFormat"]["type"] == "TEXT"
+    ranges_called = [c[0][0] for c in calls]
+    assert "B4:B4" in ranges_called, f"Ожидался вызов format('B4:B4', ...), вызовы: {ranges_called}"
+    assert "D4:AK4" in ranges_called, f"Ожидался вызов format('D4:AK4', ...), вызовы: {ranges_called}"
+
+    for c in calls:
+        assert c[0][1]["numberFormat"]["type"] == "TEXT"
 
 
 # ---------------------------------------------------------------------------

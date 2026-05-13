@@ -695,7 +695,7 @@ class GoogleSheetsClient:
                     else ""
                 )
                 try:
-                    cur_val = float(raw) if raw else 0.0
+                    cur_val = float(raw.replace(",", ".")) if raw else 0.0
                 except (ValueError, TypeError):
                     cur_val = 0.0
                 new_val = round(cur_val + h, 1)
@@ -759,7 +759,8 @@ class GoogleSheetsClient:
 
             col = 3 + day if day <= 15 else 19 + (day - 15)
 
-            current_value = ws.cell(phantom_row, col).value or ""
+            row_data = all_values[phantom_row - 1]
+            current_value = row_data[col - 1] if len(row_data) >= col else ""
             try:
                 current_checks = int(float(str(current_value).strip().replace(",", "."))) if str(current_value).strip() else 0
             except (ValueError, TypeError):

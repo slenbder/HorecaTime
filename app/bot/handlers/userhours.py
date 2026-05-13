@@ -450,8 +450,8 @@ async def _write_waiter_no_photo(
         return
 
     logger.info(
-        "Смена записана: user=%s (%s), date=%s, H=%s, position=Официант (без фото)",
-        tg_id, full_name, date, _fmt_h(h),
+        "Смена записана: user=%s, date=%s, H=%s, position=Официант (без фото)",
+        tg_id, date, _fmt_h(h),
     )
 
     await state.clear()
@@ -1067,8 +1067,8 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     logger.info(
-        "Смена записана: user=%s (%s), date=%s, H=%s, AH=%s, position=%s",
-        tg_id, full_name, date, _fmt_h(h), _fmt_h(ah), position,
+        "Смена записана: user=%s, date=%s, H=%s, AH=%s, position=%s",
+        tg_id, date, _fmt_h(h), _fmt_h(ah), position,
     )
 
     # Ответ пользователю
@@ -1171,8 +1171,8 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
             return
 
         logger.info(
-            "Смена записана: user=%s (%s), date=%s, H=%s, position=%s",
-            tg_id, full_name, date, _fmt_h(h), position,
+            "Смена записана: user=%s, date=%s, H=%s, position=%s",
+            tg_id, date, _fmt_h(h), position,
         )
         written.append((date, h))
 
@@ -1237,8 +1237,8 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     logger.info(
-        "Смена записана: user=%s (%s), date=%s, H=%s, AH=%s",
-        tg_id, full_name, date, h, ah,
+        "Смена записана: user=%s, date=%s, H=%s, AH=%s",
+        tg_id, date, h, ah,
     )
 
     # Ответ пользователю

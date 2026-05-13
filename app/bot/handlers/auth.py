@@ -6,6 +6,7 @@ from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
 import aiosqlite
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -649,7 +650,7 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
                 "approve_loyalty_callback: не удалось отредактировать сообщение: %s", e
             )
 
-        del _pending_loyalty[callback_key]
+        _pending_loyalty.pop(callback_key, None)
         await callback.answer()
 
         waiter_text = (
@@ -768,7 +769,7 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
                 "approve_filling_callback: не удалось отправить баланс: %s", e
             )
 
-        del _pending_filling[callback_key]
+        _pending_filling.pop(callback_key, None)
         await callback.answer()
 
         waiter_text = (
@@ -952,13 +953,16 @@ async def _notify_approval(
         )
 
     # Редактируем сообщение админа
-    await callback.message.edit_text(
-        text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
-        f"\n✅ Одобрено администратором {html.escape(admin_full_name)}",
-        parse_mode="HTML",
-        reply_markup=None,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
-    )
+    try:
+        await callback.message.edit_text(
+            text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
+            f"\n✅ Одобрено администратором {html.escape(admin_full_name)}",
+            parse_mode="HTML",
+            reply_markup=None,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+    except TelegramBadRequest:
+        pass  # Сообщение уже обновлено другим администратором
 
 
 @auth_router.callback_query(F.data.startswith("approve_"))

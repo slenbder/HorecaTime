@@ -416,9 +416,13 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
         employee_rows: list[tuple[int, int, str]] = []
         for i, row in enumerate(all_values, start=1):
             if len(row) < 2 or not str(row[1]).strip():
+                logger.warning("switch_month: строка %d пропущена — нет TG_ID в колонке B", i)
                 continue
             tg_id_str = str(row[1]).strip()
             if not tg_id_str.lstrip("-").isdigit():
+                logger.warning(
+                    "switch_month: строка %d пропущена — нечисловой TG_ID='%s'", i, tg_id_str
+                )
                 continue
             tg_id = int(tg_id_str)
             position = str(row[2]).strip() if len(row) >= 3 else ""
@@ -447,8 +451,8 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             elif not is_red and not in_techlist:
                 # Anomaly: not red but missing from techlist
                 logger.warning(
-                    "switch_month: аномалия — telegram_id=%s не в Техлисте, но ячейка не красная. Удаляем.",
-                    tg_id,
+                    "switch_month: строка %d аномалия — telegram_id=%s не в Техлисте, но ячейка не красная. Удаляем.",
+                    row_idx, tg_id,
                 )
                 anomalies += 1
                 rows_to_delete.append(row_idx)

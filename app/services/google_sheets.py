@@ -672,7 +672,13 @@ class GoogleSheetsClient:
         cell_value = f"{_fmt(h)}/{_fmt(ah)}" if ah > 0 else _fmt(h)
 
         cell_addr = gspread.utils.rowcol_to_a1(user_row, day_col)
-        ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
+        try:
+            ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
+        except Exception as e:
+            logger.warning("write_shift: ошибка записи смены, реконнект: %s", e)
+            self._reconnect()
+            ws = self._spreadsheet.worksheet(sheet_name)
+            ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
         logger.info(
             "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
             cell_value, user_row, day_col, sheet_name,
@@ -768,7 +774,15 @@ class GoogleSheetsClient:
 
             new_checks = current_checks + approved_count
             cell = gspread.utils.rowcol_to_a1(phantom_row, col)
-            ws.update([[new_checks]], cell, value_input_option="RAW")
+            try:
+                ws.update([[new_checks]], cell, value_input_option="RAW")
+            except Exception as e:
+                logger.warning(
+                    "write_check_filling_to_phantom: ошибка записи, реконнект: %s", e
+                )
+                self._reconnect()
+                ws = self._spreadsheet.worksheet(sheet_name)
+                ws.update([[new_checks]], cell, value_input_option="RAW")
             logger.info(
                 "write_check_filling_to_phantom: %d чеков добавлено, итого: %d, дата: %s",
                 approved_count, new_checks, date_str,

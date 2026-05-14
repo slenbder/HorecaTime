@@ -364,8 +364,7 @@ async def process_fio(message: Message, state: FSMContext):
         return
 
     # Вычисляем отображаемые позицию и должность
-    DOP_POSITIONS = ["Грузчик", "Закупщик"]
-    if position in DOP_POSITIONS:
+    if position in VALID_DOP_POSITIONS:
         position_display = "Дополнительные сотрудники"
         display_title = position
     elif position == "Руководящий состав" and custom_position:

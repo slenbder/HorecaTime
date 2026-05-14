@@ -866,7 +866,8 @@ async def _register_user_in_sheets(
     user_tg_id: int,
     row_index: int,
     custom_position: str | None,
-    admin_id: int
+    admin_id: int,
+    user_data: dict | None = None,
 ) -> None:
     """
     Регистрирует пользователя в Google Sheets: одобрение + добавление в график.
@@ -896,7 +897,8 @@ async def _register_user_in_sheets(
     # Добавляем в месячный лист (может упасть → raise наверх)
     sheets_client.ensure_user_in_current_month_hours(
         user_tg_id,
-        custom_position=custom_position if custom_position else None
+        custom_position=custom_position if custom_position else None,
+        user_info=user_data,
     )
 
 
@@ -1034,7 +1036,8 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
                 user_tg_id,
                 row_index,
                 custom_position,
-                callback.from_user.id
+                callback.from_user.id,
+                user_data=user_data,
             )
         except Exception:
             logger.exception(f"approve: ошибка добавления в график для {user_tg_id}")

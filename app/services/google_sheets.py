@@ -379,16 +379,22 @@ class GoogleSheetsClient:
 
         return last_employee_row
 
-    def ensure_user_in_current_month_hours(self, telegram_id: int, custom_position: Optional[str] = None) -> bool:
+    def ensure_user_in_current_month_hours(
+        self,
+        telegram_id: int,
+        custom_position: Optional[str] = None,
+        user_info: Optional[dict] = None,
+    ) -> bool:
         logger.info("Добавление пользователя %s в график текущего месяца", telegram_id)
-        user_info = self.get_user_by_telegram_id(telegram_id)
+        if user_info is None:
+            user_info = self.get_user_by_telegram_id(telegram_id)
         if not user_info:
             logger.error("Пользователь %s не найден в Техлисте при добавлении в график", telegram_id)
             raise ValueError(f"Пользователь {telegram_id} не найден в Техлисте")
 
         month_ws = self._get_current_month_worksheet()
 
-        full_name = str(user_info.get("fio_from_user", "")).strip()
+        full_name = str(user_info.get("fio_from_user") or user_info.get("fio", "")).strip()
         department = str(user_info.get("department", "")).strip()
         position = str(user_info.get("position", "")).strip()
 

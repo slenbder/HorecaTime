@@ -9,6 +9,7 @@ from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
 from config import GOOGLE_CREDENTIALS_PATH, PHANTOM_CHECK_FILLING_ID, SPREADSHEET_ID, TECH_SHEET_NAME
+from app.utils.text_utils import format_alert
 
 logger = logging.getLogger("google_api")
 
@@ -389,7 +390,17 @@ class GoogleSheetsClient:
         if user_info is None:
             user_info = self.get_user_by_telegram_id(telegram_id)
         if not user_info:
-            logger.error("Пользователь %s не найден в Техлисте при добавлении в график", telegram_id)
+            dept = (user_info or {}).get("department", "?")
+            pos = (user_info or {}).get("position", "?")
+            logger.error(
+                format_alert(
+                    "ensure_user",
+                    error="Пользователь не найден в Техлисте",
+                    tg_id=telegram_id,
+                    position=pos,
+                    department=dept,
+                )
+            )
             raise ValueError(f"Пользователь {telegram_id} не найден в Техлисте")
 
         month_ws = self._get_current_month_worksheet()
@@ -634,7 +645,16 @@ class GoogleSheetsClient:
         except WorksheetNotFound:
             raise ValueError(f"Лист '{sheet_name}' не найден")
         except Exception as e:
-            logger.error("write_shift: ошибка доступа к листу, реконнект: %s", e, exc_info=True)
+            logger.error(
+                format_alert(
+                    "write_shift",
+                    error=e,
+                    tg_id=telegram_id,
+                    date=f"{day:02d}.{month:02d}.{year}",
+                    extra=f"лист: {sheet_name} | H={h} AH={ah}",
+                ),
+                exc_info=True,
+            )
             self._reconnect()
             try:
                 ws = self._spreadsheet.worksheet(sheet_name)
@@ -743,12 +763,22 @@ class GoogleSheetsClient:
                 all_values = ws.get_all_values()
             except WorksheetNotFound:
                 logger.error(
-                    "write_check_filling_to_phantom: лист '%s' не найден", sheet_name
+                    format_alert(
+                        "write_check_filling",
+                        error=f"лист '{sheet_name}' не найден",
+                        date=date_str,
+                        extra=f"чеков: {approved_count}",
+                    )
                 )
                 return False
             except Exception as e:
                 logger.error(
-                    "write_check_filling_to_phantom: ошибка доступа к листу, реконнект: %s", e
+                    format_alert(
+                        "write_check_filling",
+                        error=e,
+                        date=date_str,
+                        extra=f"лист: {sheet_name} | чеков: {approved_count}",
+                    )
                 )
                 self._reconnect()
                 try:
@@ -756,8 +786,12 @@ class GoogleSheetsClient:
                     all_values = ws.get_all_values()
                 except WorksheetNotFound:
                     logger.error(
-                        "write_check_filling_to_phantom: лист '%s' не найден после реконнекта",
-                        sheet_name,
+                        format_alert(
+                            "write_check_filling",
+                            error=f"лист '{sheet_name}' не найден после реконнекта",
+                            date=date_str,
+                            extra=f"чеков: {approved_count}",
+                        )
                     )
                     return False
 
@@ -769,8 +803,12 @@ class GoogleSheetsClient:
 
             if phantom_row is None:
                 logger.error(
-                    "write_check_filling_to_phantom: фантом %s не найден в листе '%s'",
-                    PHANTOM_CHECK_FILLING_ID, sheet_name,
+                    format_alert(
+                        "write_check_filling",
+                        error=f"фантом {PHANTOM_CHECK_FILLING_ID} не найден в '{sheet_name}'",
+                        date=date_str,
+                        extra=f"чеков: {approved_count}",
+                    )
                 )
                 return False
 
@@ -802,7 +840,12 @@ class GoogleSheetsClient:
 
         except Exception:
             logger.exception(
-                "write_check_filling_to_phantom: необработанная ошибка, date=%s", date_str
+                format_alert(
+                    "write_check_filling",
+                    error="необработанная ошибка",
+                    date=date_str,
+                    extra=f"чеков: {approved_count}",
+                )
             )
             return False
 

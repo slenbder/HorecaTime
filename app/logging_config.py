@@ -1,5 +1,6 @@
 import logging
 import logging.handlers
+import traceback
 from pathlib import Path
 
 LOGS_DIR = Path("logs")
@@ -53,6 +54,42 @@ def setup_logging() -> None:
     google_api_logger.propagate = False  # Не дублировать в root (app.log)
 
     _init_sentry()
+    _init_telegram_handler()
+
+
+class TelegramHandler(logging.Handler):
+    def __init__(self, bot_token: str, chat_id: int):
+        super().__init__()
+        self._bot_token = bot_token
+        self._chat_id = chat_id
+        self._url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            import requests
+            msg = record.getMessage()
+            tb = ""
+            if record.exc_info:
+                tb = "\n\n" + "".join(traceback.format_exception(*record.exc_info))
+            text = f"🚨 HorecaTime ERROR\n\n{msg}{tb}"
+            if len(text) > 4000:
+                text = text[:4000] + "...[обрезано]"
+            requests.post(
+                self._url,
+                json={"chat_id": self._chat_id, "text": text},
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+
+def _init_telegram_handler() -> None:
+    from config import BOT_TOKEN, DEVELOPER_ID
+    if not BOT_TOKEN:
+        return
+    handler = TelegramHandler(BOT_TOKEN, DEVELOPER_ID)
+    handler.setLevel(logging.ERROR)
+    logging.getLogger().addHandler(handler)
 
 
 def _init_sentry() -> None:

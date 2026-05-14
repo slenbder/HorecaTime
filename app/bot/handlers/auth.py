@@ -6,6 +6,7 @@ from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
 import aiosqlite
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -363,8 +364,7 @@ async def process_fio(message: Message, state: FSMContext):
         return
 
     # Вычисляем отображаемые позицию и должность
-    DOP_POSITIONS = ["Грузчик", "Закупщик"]
-    if position in DOP_POSITIONS:
+    if position in VALID_DOP_POSITIONS:
         position_display = "Дополнительные сотрудники"
         display_title = position
     elif position == "Руководящий состав" and custom_position:
@@ -627,6 +627,14 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
                 telegram_id, shift_date,
             )
             await callback.answer("❌ Ошибка записи.", show_alert=True)
+            try:
+                await callback.bot.send_message(
+                    telegram_id,
+                    "⚠️ Не удалось записать смену с картами лояльности.\n"
+                    "Обратитесь к администратору."
+                )
+            except Exception:
+                pass
             return
 
         logger.info(
@@ -649,7 +657,7 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
                 "approve_loyalty_callback: не удалось отредактировать сообщение: %s", e
             )
 
-        del _pending_loyalty[callback_key]
+        _pending_loyalty.pop(callback_key, None)
         await callback.answer()
 
         waiter_text = (
@@ -703,6 +711,10 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
             )
             return
 
+        if approved_count == 0:
+            await callback.answer("Нельзя одобрить 0 чеков.", show_alert=True)
+            return
+
         caller_id = callback.from_user.id
         hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
         allowed = set(hall_admin_ids) | set(SUPERADMIN_IDS) | {DEVELOPER_ID}
@@ -731,6 +743,14 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         success = sheets_client.write_check_filling_to_phantom(shift_date, approved_count)
         if not success:
             await callback.answer("❌ Ошибка записи.", show_alert=True)
+            try:
+                await callback.bot.send_message(
+                    telegram_id,
+                    "⚠️ Не удалось записать наполняемость чеков.\n"
+                    "Обратитесь к администратору."
+                )
+            except Exception:
+                pass
             return
 
         period = "first" if day <= 15 else "second"
@@ -768,7 +788,7 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
                 "approve_filling_callback: не удалось отправить баланс: %s", e
             )
 
-        del _pending_filling[callback_key]
+        _pending_filling.pop(callback_key, None)
         await callback.answer()
 
         waiter_text = (
@@ -846,7 +866,8 @@ async def _register_user_in_sheets(
     user_tg_id: int,
     row_index: int,
     custom_position: str | None,
-    admin_id: int
+    admin_id: int,
+    user_data: dict | None = None,
 ) -> None:
     """
     Регистрирует пользователя в Google Sheets: одобрение + добавление в график.
@@ -876,7 +897,8 @@ async def _register_user_in_sheets(
     # Добавляем в месячный лист (может упасть → raise наверх)
     sheets_client.ensure_user_in_current_month_hours(
         user_tg_id,
-        custom_position=custom_position if custom_position else None
+        custom_position=custom_position if custom_position else None,
+        user_info=user_data,
     )
 
 
@@ -952,13 +974,16 @@ async def _notify_approval(
         )
 
     # Редактируем сообщение админа
-    await callback.message.edit_text(
-        text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
-        f"\n✅ Одобрено администратором {html.escape(admin_full_name)}",
-        parse_mode="HTML",
-        reply_markup=None,
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
-    )
+    try:
+        await callback.message.edit_text(
+            text=original_text + f"\n\n✅ {mention} одобрен. Роль: user"
+            f"\n✅ Одобрено администратором {html.escape(admin_full_name)}",
+            parse_mode="HTML",
+            reply_markup=None,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+    except TelegramBadRequest:
+        pass  # Сообщение уже обновлено другим администратором
 
 
 @auth_router.callback_query(F.data.startswith("approve_"))
@@ -1011,7 +1036,8 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
                 user_tg_id,
                 row_index,
                 custom_position,
-                callback.from_user.id
+                callback.from_user.id,
+                user_data=user_data,
             )
         except Exception:
             logger.exception(f"approve: ошибка добавления в график для {user_tg_id}")

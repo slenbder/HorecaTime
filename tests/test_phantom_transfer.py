@@ -48,6 +48,12 @@ def _make_sheets_client(old_values, new_values):
     return client, old_ws, new_ws
 
 
+def _make_bot() -> AsyncMock:
+    bot = AsyncMock()
+    bot.send_message = AsyncMock()
+    return bot
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -61,7 +67,7 @@ class TestPhantomTransfer:
         new_vals = _make_new_values(section_row=5)
         client, old_ws, new_ws = _make_sheets_client(old_vals, new_vals)
 
-        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026")
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
 
         new_ws.insert_rows.assert_called_once()
 
@@ -73,7 +79,7 @@ class TestPhantomTransfer:
         new_vals = _make_new_values(section_row=7)
         client, _, new_ws = _make_sheets_client(old_vals, new_vals)
 
-        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026")
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
 
         call_kwargs = new_ws.insert_rows.call_args
         row_arg = call_kwargs[1].get("row") or call_kwargs[0][1]
@@ -86,7 +92,7 @@ class TestPhantomTransfer:
         new_vals = _make_new_values(section_row=5)
         client, _, new_ws = _make_sheets_client(old_vals, new_vals)
 
-        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026")
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
 
         inserted_data = new_ws.insert_rows.call_args[0][0]
         row = inserted_data[0]
@@ -101,7 +107,7 @@ class TestPhantomTransfer:
         new_vals = _make_new_values(section_row=5)
         client, _, new_ws = _make_sheets_client(old_vals, new_vals)
 
-        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026")
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
 
         new_ws.batch_update.assert_called_once()
         bu_args, bu_kwargs = new_ws.batch_update.call_args
@@ -128,6 +134,6 @@ class TestPhantomTransfer:
         client, _, new_ws = _make_sheets_client(old_vals, new_vals)
 
         # Не должно бросать исключение
-        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026")
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
 
         new_ws.insert_rows.assert_not_called()

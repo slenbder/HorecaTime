@@ -51,3 +51,31 @@ def setup_logging() -> None:
     google_api_logger.addHandler(google_handler)
     google_api_logger.addHandler(console_handler)
     google_api_logger.propagate = False  # Не дублировать в root (app.log)
+
+    _init_sentry()
+
+
+def _init_sentry() -> None:
+    from config import SENTRY_DSN
+    if not SENTRY_DSN:
+        return
+    import sentry_sdk
+    from sentry_sdk.integrations.logging import LoggingIntegration
+    from sentry_sdk.integrations.asyncio import AsyncioIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            LoggingIntegration(
+                level=logging.ERROR,
+                event_level=logging.ERROR,
+            ),
+            AsyncioIntegration(),
+        ],
+        traces_sample_rate=0.0,
+        ignore_errors=[
+            "TelegramBadRequest",
+            "TelegramNetworkError",
+            "TelegramConnectionError",
+        ],
+    )

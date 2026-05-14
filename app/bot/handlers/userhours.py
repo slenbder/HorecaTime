@@ -450,8 +450,8 @@ async def _write_waiter_no_photo(
         return
 
     logger.info(
-        "Смена записана: user=%s (%s), date=%s, H=%s, position=Официант (без фото)",
-        tg_id, full_name, date, _fmt_h(h),
+        "Смена записана: user=%s, date=%s, H=%s, position=Официант (без фото)",
+        tg_id, date, _fmt_h(h),
     )
 
     await state.clear()
@@ -640,7 +640,7 @@ async def _ask_about_loyalty_cards(message: Message, state: FSMContext) -> None:
 
 @userhours_router.callback_query(F.data == "has_loyalty_cards")
 async def cb_has_loyalty_cards(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_text("🎴 Жду фото карт лояльности (можно несколько)")
+    await callback.message.edit_text("🎴 Жду фото карт лояльности (можно несколько)\n\nДля отмены нажмите /cancel")
     await callback.answer()
 
 
@@ -676,10 +676,31 @@ async def process_loyalty_photo(message: Message, state: FSMContext) -> None:
         await _ask_about_check_filling(message, state)
 
 
+async def _cleanup_mg_buffers(
+    mgid: str,
+    photos: dict,
+    context: dict,
+    scheduled: set,
+    locks: dict,
+) -> None:
+    lock = locks.get(mgid)
+    if lock:
+        async with lock:
+            photos.pop(mgid, None)
+            context.pop(mgid, None)
+            scheduled.discard(mgid)
+        locks.pop(mgid, None)
+    else:
+        photos.pop(mgid, None)
+        context.pop(mgid, None)
+        scheduled.discard(mgid)
+
+
 async def _delayed_process_loyalty(mgid: str) -> None:
     try:
         await asyncio.sleep(1.0)
 
+        ctx_for_error = _mg_loyalty_context.get(mgid)
         lock = _mg_loyalty_locks.setdefault(mgid, asyncio.Lock())
         async with lock:
             photo_ids = _mg_loyalty_photos.get(mgid)
@@ -709,24 +730,20 @@ async def _delayed_process_loyalty(mgid: str) -> None:
 
     except Exception as e:
         error_logger.exception("_delayed_process_loyalty: ошибка mgid=%s: %s", mgid, e)
-        ctx = _mg_loyalty_context.get(mgid)
+        ctx = ctx_for_error
         if ctx:
             try:
                 await ctx["message"].answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
                 await ctx["state"].clear()
             except Exception:
                 error_logger.exception("_delayed_process_loyalty: не удалось уведомить пользователя mgid=%s", mgid)
-        lock = _mg_loyalty_locks.get(mgid)
-        if lock:
-            async with lock:
-                _mg_loyalty_photos.pop(mgid, None)
-                _mg_loyalty_context.pop(mgid, None)
-                _mg_loyalty_scheduled.discard(mgid)
-            _mg_loyalty_locks.pop(mgid, None)
-        else:
-            _mg_loyalty_photos.pop(mgid, None)
-            _mg_loyalty_context.pop(mgid, None)
-            _mg_loyalty_scheduled.discard(mgid)
+        await _cleanup_mg_buffers(
+            mgid,
+            _mg_loyalty_photos,
+            _mg_loyalty_context,
+            _mg_loyalty_scheduled,
+            _mg_loyalty_locks,
+        )
 
 
 async def _send_loyalty_cards_report(
@@ -799,7 +816,7 @@ async def _ask_about_check_filling(message: Message, state: FSMContext) -> None:
 
 @userhours_router.callback_query(F.data == "has_check_filling")
 async def cb_has_check_filling(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_text("💳 Жду фото наполняемости чеков (можно несколько)")
+    await callback.message.edit_text("💳 Жду фото наполняемости чеков (можно несколько)\n\nДля отмены нажмите /cancel")
     await callback.answer()
 
 
@@ -841,6 +858,7 @@ async def _delayed_process_filling(mgid: str) -> None:
     try:
         await asyncio.sleep(1.0)
 
+        ctx_for_error = _mg_filling_context.get(mgid)
         lock = _mg_filling_locks.setdefault(mgid, asyncio.Lock())
         async with lock:
             photo_ids = _mg_filling_photos.get(mgid)
@@ -871,24 +889,20 @@ async def _delayed_process_filling(mgid: str) -> None:
 
     except Exception as e:
         error_logger.exception("_delayed_process_filling: ошибка mgid=%s: %s", mgid, e)
-        ctx = _mg_filling_context.get(mgid)
+        ctx = ctx_for_error
         if ctx:
             try:
                 await ctx["message"].answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
                 await ctx["state"].clear()
             except Exception:
                 error_logger.exception("_delayed_process_filling: не удалось уведомить пользователя mgid=%s", mgid)
-        lock = _mg_filling_locks.get(mgid)
-        if lock:
-            async with lock:
-                _mg_filling_photos.pop(mgid, None)
-                _mg_filling_context.pop(mgid, None)
-                _mg_filling_scheduled.discard(mgid)
-            _mg_filling_locks.pop(mgid, None)
-        else:
-            _mg_filling_photos.pop(mgid, None)
-            _mg_filling_context.pop(mgid, None)
-            _mg_filling_scheduled.discard(mgid)
+        await _cleanup_mg_buffers(
+            mgid,
+            _mg_filling_photos,
+            _mg_filling_context,
+            _mg_filling_scheduled,
+            _mg_filling_locks,
+        )
 
 
 async def _send_check_filling_report(
@@ -1065,8 +1079,8 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     logger.info(
-        "Смена записана: user=%s (%s), date=%s, H=%s, AH=%s, position=%s",
-        tg_id, full_name, date, _fmt_h(h), _fmt_h(ah), position,
+        "Смена записана: user=%s, date=%s, H=%s, AH=%s, position=%s",
+        tg_id, date, _fmt_h(h), _fmt_h(ah), position,
     )
 
     # Ответ пользователю
@@ -1169,8 +1183,8 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
             return
 
         logger.info(
-            "Смена записана: user=%s (%s), date=%s, H=%s, position=%s",
-            tg_id, full_name, date, _fmt_h(h), position,
+            "Смена записана: user=%s, date=%s, H=%s, position=%s",
+            tg_id, date, _fmt_h(h), position,
         )
         written.append((date, h))
 
@@ -1235,8 +1249,8 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     logger.info(
-        "Смена записана: user=%s (%s), date=%s, H=%s, AH=%s",
-        tg_id, full_name, date, h, ah,
+        "Смена записана: user=%s, date=%s, H=%s, AH=%s",
+        tg_id, date, h, ah,
     )
 
     # Ответ пользователю

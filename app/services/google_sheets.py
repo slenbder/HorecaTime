@@ -172,12 +172,17 @@ class GoogleSheetsClient:
         Возвращает номер строки.
         """
         ws = self._get_techlist_worksheet()
-        existing = self.get_user_by_telegram_id(telegram_id)
+        all_rows = ws.get_all_values()
         nick = nickname if nickname.startswith("@") else f"@{nickname}"
         now_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%y %H:%M")
 
-        if existing:
-            row_idx = existing["row_index"]
+        row_idx = None
+        for i, row in enumerate(all_rows[1:], start=2):
+            if row and str(row[COL_TELEGRAM_ID - 1]).strip() == str(telegram_id):
+                row_idx = i
+                break
+
+        if row_idx is not None:
             ws.batch_update([
                 {"range": f"B{row_idx}", "values": [[nick]]},
                 {"range": f"C{row_idx}", "values": [[fio_from_user]]},
@@ -194,7 +199,7 @@ class GoogleSheetsClient:
             )
             return row_idx
 
-        next_row = len(ws.get_all_values()) + 1
+        next_row = len(all_rows) + 1
         values = [
             str(telegram_id),  # A: Telegram ID
             nick,              # B: @Ник
@@ -374,16 +379,22 @@ class GoogleSheetsClient:
 
         return last_employee_row
 
-    def ensure_user_in_current_month_hours(self, telegram_id: int, custom_position: Optional[str] = None) -> bool:
+    def ensure_user_in_current_month_hours(
+        self,
+        telegram_id: int,
+        custom_position: Optional[str] = None,
+        user_info: Optional[dict] = None,
+    ) -> bool:
         logger.info("Добавление пользователя %s в график текущего месяца", telegram_id)
-        user_info = self.get_user_by_telegram_id(telegram_id)
+        if user_info is None:
+            user_info = self.get_user_by_telegram_id(telegram_id)
         if not user_info:
             logger.error("Пользователь %s не найден в Техлисте при добавлении в график", telegram_id)
             raise ValueError(f"Пользователь {telegram_id} не найден в Техлисте")
 
         month_ws = self._get_current_month_worksheet()
 
-        full_name = str(user_info.get("fio_from_user", "")).strip()
+        full_name = str(user_info.get("fio_from_user") or user_info.get("fio", "")).strip()
         department = str(user_info.get("department", "")).strip()
         position = str(user_info.get("position", "")).strip()
 
@@ -672,7 +683,13 @@ class GoogleSheetsClient:
         cell_value = f"{_fmt(h)}/{_fmt(ah)}" if ah > 0 else _fmt(h)
 
         cell_addr = gspread.utils.rowcol_to_a1(user_row, day_col)
-        ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
+        try:
+            ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
+        except Exception as e:
+            logger.warning("write_shift: ошибка записи смены, реконнект: %s", e)
+            self._reconnect()
+            ws = self._spreadsheet.worksheet(sheet_name)
+            ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
         logger.info(
             "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
             cell_value, user_row, day_col, sheet_name,
@@ -695,7 +712,7 @@ class GoogleSheetsClient:
                     else ""
                 )
                 try:
-                    cur_val = float(raw) if raw else 0.0
+                    cur_val = float(raw.replace(",", ".")) if raw else 0.0
                 except (ValueError, TypeError):
                     cur_val = 0.0
                 new_val = round(cur_val + h, 1)
@@ -759,7 +776,8 @@ class GoogleSheetsClient:
 
             col = 3 + day if day <= 15 else 19 + (day - 15)
 
-            current_value = ws.cell(phantom_row, col).value or ""
+            row_data = all_values[phantom_row - 1]
+            current_value = row_data[col - 1] if len(row_data) >= col else ""
             try:
                 current_checks = int(float(str(current_value).strip().replace(",", "."))) if str(current_value).strip() else 0
             except (ValueError, TypeError):
@@ -767,7 +785,15 @@ class GoogleSheetsClient:
 
             new_checks = current_checks + approved_count
             cell = gspread.utils.rowcol_to_a1(phantom_row, col)
-            ws.update([[new_checks]], cell, value_input_option="RAW")
+            try:
+                ws.update([[new_checks]], cell, value_input_option="RAW")
+            except Exception as e:
+                logger.warning(
+                    "write_check_filling_to_phantom: ошибка записи, реконнект: %s", e
+                )
+                self._reconnect()
+                ws = self._spreadsheet.worksheet(sheet_name)
+                ws.update([[new_checks]], cell, value_input_option="RAW")
             logger.info(
                 "write_check_filling_to_phantom: %d чеков добавлено, итого: %d, дата: %s",
                 approved_count, new_checks, date_str,

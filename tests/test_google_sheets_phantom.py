@@ -57,8 +57,9 @@ class TestWriteCheckFillingToPhantom:
     def test_write_check_filling_summation(self):
         """Ячейка уже содержит '2', добавляем 3 → записывает '5'."""
         client = _make_client()
-        mock_ws, _ = _make_sheet_with_phantom(phantom_row_idx=5)
-        mock_ws.cell.return_value.value = "2"
+        mock_ws, all_values = _make_sheet_with_phantom(phantom_row_idx=5)
+        # day=1 → col=4; phantom_row_idx=5 → all_values[4][3]
+        all_values[4][3] = "2"
         client._spreadsheet.worksheet.return_value = mock_ws
 
         result = client.write_check_filling_to_phantom("01.05.26", 3)

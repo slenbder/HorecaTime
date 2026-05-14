@@ -37,3 +37,31 @@ def mask_email(email: str) -> str:
     else:
         masked = local[0] + '***' + local[-1]
     return f"{masked}@{domain}"
+
+
+def format_alert(
+    operation: str,
+    error: Exception | str | None = None,
+    tg_id: int | None = None,
+    position: str | None = None,
+    department: str | None = None,
+    date: str | None = None,
+    extra: str | None = None,
+) -> str:
+    """Форматирует алёрт для Telegram с контекстом операции."""
+    lines = [f"🔴 [{operation}]"]
+    if tg_id:
+        lines.append(f"👤 tg_id: {tg_id}")
+    if position or department:
+        parts = [p for p in (position, department) if p]
+        lines.append(f"📋 {' | '.join(parts)}")
+    if date:
+        lines.append(f"📅 {date}")
+    if error:
+        if isinstance(error, Exception):
+            lines.append(f"❌ {type(error).__name__}: {error}")
+        else:
+            lines.append(f"❌ {error}")
+    if extra:
+        lines.append(f"ℹ️ {extra}")
+    return "\n".join(lines)

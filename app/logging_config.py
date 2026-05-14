@@ -57,6 +57,13 @@ def setup_logging() -> None:
     _init_telegram_handler()
 
 
+IGNORED_ERRORS = (
+    "TelegramBadRequest",
+    "TelegramNetworkError",
+    "TelegramConnectionError",
+)
+
+
 class TelegramHandler(logging.Handler):
     def __init__(self, bot_token: str, chat_id: int):
         super().__init__()
@@ -65,6 +72,10 @@ class TelegramHandler(logging.Handler):
         self._url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
     def emit(self, record: logging.LogRecord) -> None:
+        if record.exc_info:
+            exc_type = record.exc_info[0]
+            if exc_type and exc_type.__name__ in IGNORED_ERRORS:
+                return
         try:
             import requests
             msg = record.getMessage()

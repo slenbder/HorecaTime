@@ -7,6 +7,7 @@ from aiogram import Bot
 
 from config import PHANTOM_CHECK_FILLING_ID, SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
 from app.services.google_sheets import MONTH_NAMES_RU
+from app.utils.text_utils import format_alert
 from app.db.models import (
     get_all_users,
     snapshot_user_rates_history,
@@ -332,8 +333,12 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             await apply_future_rates(db_path, next_month, next_year)
         except Exception as future_err:
             logger.error(
-                "switch_month: не удалось применить future ставки %d/%d: %s",
-                next_month, next_year, future_err, exc_info=True,
+                format_alert(
+                    "switch_month/apply_future_rates",
+                    error=future_err,
+                    extra=f"новый месяц: {next_name}",
+                ),
+                exc_info=True,
             )
             for sid in SUPERADMIN_IDS:
                 try:
@@ -516,7 +521,11 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 )
             except Exception as e:
                 logger.error(
-                    "switch_month: ошибка очистки строки %d: %s", row_idx, e
+                    format_alert(
+                        "switch_month/clear_row",
+                        error=e,
+                        extra=f"строка: {row_idx} | {current_name} → {next_name}",
+                    )
                 )
 
         # Step f (part 2): Delete dismissed rows bottom-up
@@ -526,7 +535,11 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 logger.info("switch_month: удалена строка %d из '%s'", row_idx, next_name)
             except Exception as e:
                 logger.error(
-                    "switch_month: ошибка удаления строки %d: %s", row_idx, e
+                    format_alert(
+                        "switch_month/delete_row",
+                        error=e,
+                        extra=f"строка: {row_idx} | {current_name} → {next_name}",
+                    )
                 )
 
         # Переносим фантома (он не в Техлисте, поэтому удаляется как аномалия выше)

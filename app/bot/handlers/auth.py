@@ -28,7 +28,7 @@ from app.bot.keyboards.common import (
 from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
-from app.utils.text_utils import make_mention, mask_email
+from app.utils.text_utils import make_mention, mask_email, format_alert
 from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, SHEET_URL
 from app.db.models import get_admins_by_department
 from app.bot.handlers.userhours import _pending_loyalty, _pending_filling
@@ -888,18 +888,30 @@ async def _register_user_in_sheets(
     Raises:
         Exception: При ошибке добавления в месячный лист
     """
-    # Одобряем пользователя в Техлисте
-    sheets_client.mark_user_approved(row_index)
-    logger.info(
-        f"Админ {admin_id} одобрил пользователя {user_tg_id} (строка {row_index})"
-    )
+    try:
+        # Одобряем пользователя в Техлисте
+        sheets_client.mark_user_approved(row_index)
+        logger.info(
+            f"Админ {admin_id} одобрил пользователя {user_tg_id} (строка {row_index})"
+        )
 
-    # Добавляем в месячный лист (может упасть → raise наверх)
-    sheets_client.ensure_user_in_current_month_hours(
-        user_tg_id,
-        custom_position=custom_position if custom_position else None,
-        user_info=user_data,
-    )
+        # Добавляем в месячный лист (может упасть → raise наверх)
+        sheets_client.ensure_user_in_current_month_hours(
+            user_tg_id,
+            custom_position=custom_position if custom_position else None,
+            user_info=user_data,
+        )
+    except Exception as e:
+        logger.exception(
+            format_alert(
+                "register_user_in_sheets",
+                error=e,
+                tg_id=user_tg_id,
+                position=user_data.get("position") if user_data else None,
+                department=user_data.get("department") if user_data else None,
+            )
+        )
+        raise
 
 
 async def _setup_user_access(

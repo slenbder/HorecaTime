@@ -172,12 +172,17 @@ class GoogleSheetsClient:
         Возвращает номер строки.
         """
         ws = self._get_techlist_worksheet()
-        existing = self.get_user_by_telegram_id(telegram_id)
+        all_rows = ws.get_all_values()
         nick = nickname if nickname.startswith("@") else f"@{nickname}"
         now_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%y %H:%M")
 
-        if existing:
-            row_idx = existing["row_index"]
+        row_idx = None
+        for i, row in enumerate(all_rows[1:], start=2):
+            if row and str(row[COL_TELEGRAM_ID - 1]).strip() == str(telegram_id):
+                row_idx = i
+                break
+
+        if row_idx is not None:
             ws.batch_update([
                 {"range": f"B{row_idx}", "values": [[nick]]},
                 {"range": f"C{row_idx}", "values": [[fio_from_user]]},
@@ -194,7 +199,7 @@ class GoogleSheetsClient:
             )
             return row_idx
 
-        next_row = len(ws.get_all_values()) + 1
+        next_row = len(all_rows) + 1
         values = [
             str(telegram_id),  # A: Telegram ID
             nick,              # B: @Ник

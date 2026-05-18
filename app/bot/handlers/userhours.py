@@ -1069,6 +1069,17 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
 
     try:
         sheets_client.write_shift(tg_id, day, month, year, h, ah)
+    except ValueError as e:
+        if "не найден в листе" in str(e):
+            await state.clear()
+            await message.answer(
+                "❌ Вы не числитесь в графике за указанный месяц.\n\n"
+                "Смены можно вносить только за текущий месяц.\n"
+                "Если вы уверены, что ошибки нет — обратитесь к администратору или разработчику."
+            )
+            logger.warning("write_shift: user %s not found in sheet: %s", tg_id, e)
+            return
+        raise
     except Exception:
         error_logger.exception("_write_and_finish_bar: ошибка записи смены для %s", tg_id)
         await message.answer("❌ Ошибка записи. Попробуйте позже.")
@@ -1239,6 +1250,17 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
 
     try:
         sheets_client.write_shift(tg_id, day, month, year, h, ah, is_weekend=is_weekend)
+    except ValueError as e:
+        if "не найден в листе" in str(e):
+            await state.clear()
+            await message.answer(
+                "❌ Вы не числитесь в графике за указанный месяц.\n\n"
+                "Смены можно вносить только за текущий месяц.\n"
+                "Если вы уверены, что ошибки нет — обратитесь к администратору или разработчику."
+            )
+            logger.warning("write_shift: user %s not found in sheet: %s", tg_id, e)
+            return
+        raise
     except Exception:
         error_logger.exception("_write_and_finish: ошибка записи смены для %s", tg_id)
         await message.answer("❌ Ошибка записи. Попробуйте позже.")

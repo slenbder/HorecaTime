@@ -269,6 +269,17 @@ async def process_shift_input(message: Message, state: FSMContext):
 
         try:
             sheets_client.write_shift(tg_id, result["day"], result["month"], result["year"], result["h"], 0.0)
+        except ValueError as e:
+            if "не найден в листе" in str(e):
+                await state.clear()
+                await message.answer(
+                    "❌ Вы не числитесь в графике за указанный месяц.\n\n"
+                    "Смены можно вносить только за текущий месяц.\n"
+                    "Если вы уверены, что ошибки нет — обратитесь к администратору или разработчику."
+                )
+                logger.warning("write_shift: user %s not found in sheet: %s", tg_id, e)
+                return
+            raise
         except Exception:
             error_logger.exception("process_shift_input: ошибка записи смены для %s", tg_id)
             await message.answer("❌ Ошибка записи. Попробуйте позже.")
@@ -443,6 +454,17 @@ async def _write_waiter_no_photo(
 
     try:
         sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
+    except ValueError as e:
+        if "не найден в листе" in str(e):
+            await state.clear()
+            await message.answer(
+                "❌ Вы не числитесь в графике за указанный месяц.\n\n"
+                "Смены можно вносить только за текущий месяц.\n"
+                "Если вы уверены, что ошибки нет — обратитесь к администратору или разработчику."
+            )
+            logger.warning("write_shift: user %s not found in sheet: %s", tg_id, e)
+            return
+        raise
     except Exception:
         error_logger.exception("_write_waiter_no_photo: ошибка записи для %s", tg_id)
         await message.answer("❌ Ошибка записи. Попробуйте позже.")
@@ -1185,6 +1207,17 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
 
         try:
             sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
+        except ValueError as e:
+            if "не найден в листе" in str(e):
+                await state.clear()
+                await message.answer(
+                    "❌ Вы не числитесь в графике за указанный месяц.\n\n"
+                    "Смены можно вносить только за текущий месяц.\n"
+                    "Если вы уверены, что ошибки нет — обратитесь к администратору или разработчику."
+                )
+                logger.warning("write_shift: user %s not found in sheet: %s", tg_id, e)
+                return
+            raise
         except Exception:
             error_logger.exception(
                 "_process_simple_h_shifts: ошибка записи %s для %s", date, tg_id

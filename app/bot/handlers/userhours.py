@@ -20,7 +20,7 @@ from aiogram.types import (
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU, _format_shift_value
-from app.services.timeparsing import parse_shift, check_overlap, parse_time, round_to_half
+from app.services.timeparsing import parse_shift, round_to_half
 from app.utils.text_utils import make_mention
 from config import DB_PATH, SUPERADMIN_IDS
 from app.db.models import get_admins_by_department
@@ -1034,73 +1034,73 @@ async def _process_bar_shift_input(message: Message, state: FSMContext, position
     await state.update_data(**result)
 
     h = result["h"]
-    end = result["end"]
     date = _date_str(result["day"], result["month"], result["year"])
 
-    start_hour = int(end) % 24
-    start_min = 30 if (end % 1) >= 0.5 else 0
-    start_str = f"{start_hour:02d}:{start_min:02d}"
-
-    total_half = int(end * 2) + 8
-    end_hour = (total_half // 2) % 24
-    end_min = 30 if total_half % 2 else 0
-    end_str = f"{end_hour:02d}:{end_min:02d}"
-
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да", callback_data="bar_ah:yes"),
+        InlineKeyboardButton(text="❌ Нет", callback_data="bar_ah:no"),
+    ]])
     await message.answer(
-        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\n"
-        f"Были тусовочные часы?\n"
-        f"Введите диапазон или 0:\n\n"
-        f"<code>{start_str}-{end_str}</code>"
+        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\nБыли тусовочные часы?",
+        reply_markup=keyboard,
     )
-    await state.set_state(ShiftStates.waiting_ah_input)
+    await state.set_state(ShiftStates.waiting_ah_choice)
 
 
 # ---------------------------------------------------------------------------
-# Бармен / Барбэк — шаг 3: парсинг тусовочных часов + проверка нахлёста
+# Бармен / Барбэк — шаг 2б: обработка кнопок Да/Нет (тусовочные часы)
+# ---------------------------------------------------------------------------
+
+@userhours_router.callback_query(F.data == "bar_ah:no")
+async def cb_bar_ah_no(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    position = data.get("position", "Бармен")
+    date = _date_str(data["day"], data["month"], data["year"])
+    h = data["h"]
+
+    await callback.message.edit_text(
+        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\n❌ Тусовочных часов нет",
+    )
+    await state.update_data(ah=0.0)
+    await _write_and_finish_bar(callback.message, state, position, from_user=callback.from_user)
+    await callback.answer()
+
+
+@userhours_router.callback_query(F.data == "bar_ah:yes")
+async def cb_bar_ah_yes(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    date = _date_str(data["day"], data["month"], data["year"])
+    h = data["h"]
+
+    await callback.message.edit_text(
+        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\n✅ Тусовочные: да",
+    )
+    await callback.message.answer(
+        "Введите количество тусовочных часов:\n\nНапример: 3 или 2.5"
+    )
+    await state.set_state(ShiftStates.waiting_ah_input)
+    await callback.answer()
+
+
+# ---------------------------------------------------------------------------
+# Бармен / Барбэк — шаг 3: ввод количества тусовочных часов
 # ---------------------------------------------------------------------------
 
 async def _process_bar_ah_input(message: Message, state: FSMContext, position: str) -> None:
-    import re as _re
+    text = (message.text or "").strip().replace(",", ".")
 
-    text = (message.text or "").strip()
-    data = await state.get_data()
-    shift_start: float = data["start"]
-    shift_end: float = data["end"]
-
-    if text == "0":
-        await state.update_data(ah=0.0)
-        await _write_and_finish_bar(message, state, position)
+    try:
+        ah_raw = float(text)
+    except ValueError:
+        await message.answer("❌ Введите число, например: 3 или 2.5")
         return
 
-    # Нормализуем разделитель (en/em dash и пробелы вокруг тире)
-    normalized = _re.sub(r'\s*[–—\-]\s*', '-', text)
-    time_result = parse_time(normalized)
-
-    if time_result is None:
-        await message.answer(
-            "❌ Не удалось распознать формат. "
-            "Введите диапазон (например <code>22:00-02:00</code>) или 0:"
-        )
+    if ah_raw <= 0:
+        await message.answer("❌ Введите число, например: 3 или 2.5")
         return
 
-    ah_start, ah_end = time_result
-
-    if check_overlap(shift_start, shift_end, ah_start, ah_end):
-        s_str = f"{_fmt_time(shift_start)}–{_fmt_time(shift_end)}"
-        await message.answer(
-            f"❌ Тусовочные часы пересекаются с основной сменой ({s_str}).\n"
-            f"Исправьте диапазон:"
-        )
-        return
-
-    if ah_start > ah_end:
-        raw_ah = 24 - ah_start + ah_end
-    else:
-        raw_ah = ah_end - ah_start
-
-    ah = round_to_half(raw_ah)
-
-    await state.update_data(ah=ah, ah_start=ah_start, ah_end=ah_end)
+    ah = round_to_half(ah_raw)
+    await state.update_data(ah=ah)
     await _write_and_finish_bar(message, state, position)
 
 
@@ -1108,8 +1108,15 @@ async def _process_bar_ah_input(message: Message, state: FSMContext, position: s
 # Запись + уведомления для Бармена / Барбэка
 # ---------------------------------------------------------------------------
 
-async def _write_and_finish_bar(message: Message, state: FSMContext, position: str) -> None:
-    tg_id = message.from_user.id
+async def _write_and_finish_bar(
+    message: Message,
+    state: FSMContext,
+    position: str,
+    *,
+    from_user=None,
+) -> None:
+    actual_user = from_user if from_user is not None else message.from_user
+    tg_id = actual_user.id
     data = await state.get_data()
 
     day   = data["day"]
@@ -1164,7 +1171,7 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
         await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
 
     # Уведомление администраторам бара
-    mention = make_mention(message.from_user.username, full_name)
+    mention = make_mention(actual_user.username, full_name)
     time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
     if ah > 0:
         admin_text = (

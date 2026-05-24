@@ -1240,6 +1240,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
     mention = make_mention(message.from_user.username, full_name)
 
     if position in KITCHEN_POSITIONS:
+        dept = "Кухня"
         kitchen_admin_ids = await get_admins_by_department(DB_PATH, "Кухня")
         recipients = kitchen_admin_ids
     else:

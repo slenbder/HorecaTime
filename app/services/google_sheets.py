@@ -73,6 +73,39 @@ DEPARTMENT_TO_HEADER = {
     "МОП": "Моп",
 }
 
+
+def _parse_shift_raw(raw: str) -> tuple[float, float]:
+    val = raw.strip()
+    if not val:
+        return 0.0, 0.0
+    if "/" in val:
+        parts = val.split("/", 1)
+        try:
+            h = float(parts[0].replace(",", "."))
+        except ValueError:
+            h = 0.0
+        try:
+            ah = float(parts[1].replace(",", "."))
+        except ValueError:
+            ah = 0.0
+        return h, ah
+    try:
+        return float(val.replace(",", ".")), 0.0
+    except ValueError:
+        return 0.0, 0.0
+
+
+def _fmt_cell(v: float) -> str:
+    return str(int(v)) if v == int(v) else str(v)
+
+
+def _format_shift_value(raw: str) -> str:
+    h, ah = _parse_shift_raw(raw)
+    if ah > 0:
+        return f"{_fmt_cell(h)} ч (тусовочные: {_fmt_cell(ah)} ч)"
+    return f"{_fmt_cell(h)} ч"
+
+
 class GoogleSheetsClient:
     def __init__(self) -> None:
         self._client = self._create_client()
@@ -624,7 +657,7 @@ class GoogleSheetsClient:
         h: float,
         ah: float,
         is_weekend: bool = False,
-    ) -> None:
+    ) -> str:
         """
         Записывает смену в месячный лист.
         Ищет строку пользователя по telegram_id (колонка B),
@@ -632,6 +665,7 @@ class GoogleSheetsClient:
         Формат: "{h}/{ah}" если ah > 0, иначе str(h).
         Для Раннера в выходной день (is_weekend=True) дополнительно
         накапливает H в AM (первая половина) или AN (вторая половина).
+        Возвращает old_value (str) — предыдущее содержимое ячейки или '' если было пусто.
         """
         sheet_name = f"{MONTH_NAMES_RU[month]} {year}"
         logger.info(
@@ -694,6 +728,12 @@ class GoogleSheetsClient:
                 f"День {day} не найден в строке дат листа '{sheet_name}'"
             )
 
+        old_value = (
+            all_values[user_row - 1][day_col - 1]
+            if day_col - 1 < len(all_values[user_row - 1])
+            else ""
+        )
+
         # Форматируем значение. Точка как десятичный разделитель — визуально предпочтительна.
         # Формулы S/AJ используют ПОДСТАВИТЬ(".";"," ) перед ЗНАЧЕН(), поэтому точка
         # в ячейках не интерпретируется как дата в русской локали Google Sheets.
@@ -743,6 +783,7 @@ class GoogleSheetsClient:
                 )
 
         self._auto_resize_columns(ws)
+        return old_value
 
     def write_check_filling_to_phantom(
         self,

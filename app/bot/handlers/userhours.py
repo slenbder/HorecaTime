@@ -19,10 +19,10 @@ from aiogram.types import (
 
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
-from app.services.google_sheets import GoogleSheetsClient
+from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU, _format_shift_value
 from app.services.timeparsing import parse_shift, check_overlap, parse_time, round_to_half
 from app.utils.text_utils import make_mention
-from config import DB_PATH
+from config import DB_PATH, SUPERADMIN_IDS
 from app.db.models import get_admins_by_department
 
 userhours_router = Router()
@@ -73,6 +73,40 @@ MOP_POSITIONS = {"Клининг", "Котломой"}
 SIMPLE_H_POSITIONS = KITCHEN_POSITIONS | HALL_SIMPLE_POSITIONS | MOP_POSITIONS
 
 BAR_POSITIONS = {"Бармен", "Барбэк"}
+
+
+async def _notify_overwrite(
+    message: Message,
+    tg_id: int,
+    day: int,
+    month: int,
+    old_value: str,
+    new_value: str,
+    dept: str,
+    mention: str,
+) -> None:
+    logger.info(
+        "SHIFT_OVERWRITE: user %s, date %s/%s, old=%r, new=%r",
+        tg_id, day, month, old_value, new_value,
+    )
+    admin_ids = await get_admins_by_department(DB_PATH, dept)
+    notify_ids = list(set(admin_ids + list(SUPERADMIN_IDS)))
+    text = (
+        f"⚠️ Смена перезаписана\n\n"
+        f"👤 {mention}\n"
+        f"📅 {day} {MONTH_NAMES_RU[month]}\n"
+        f"Было: {_format_shift_value(old_value)}\n"
+        f"Стало: {_format_shift_value(new_value)}"
+    )
+    for admin_id in notify_ids:
+        try:
+            await message.bot.send_message(
+                admin_id, text,
+                parse_mode="HTML",
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+        except Exception:
+            pass
 
 
 def _shift_example() -> str:
@@ -453,7 +487,7 @@ async def _write_waiter_no_photo(
         return
 
     try:
-        sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
+        old = sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
     except ValueError as e:
         if "не найден в листе" in str(e):
             await state.clear()
@@ -481,24 +515,28 @@ async def _write_waiter_no_photo(
 
     hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
     recipients = hall_admin_ids
+    mention = make_mention(message.from_user.username, full_name)
+
     if not recipients:
         logger.warning("_write_waiter_no_photo: получатели пустые, уведомление не отправлено")
-        return
+    else:
+        time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+        admin_text = (
+            f"📋 Официант внёс смену\n\n"
+            f"👤 {mention}\n"
+            f"📅 {date}\n"
+            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
+        )
+        for admin_id in recipients:
+            try:
+                await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
+                logger.info("_write_waiter_no_photo: уведомлен %s", admin_id)
+            except Exception as e:
+                error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
 
-    mention = make_mention(message.from_user.username, full_name)
-    time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
-    admin_text = (
-        f"📋 Официант внёс смену\n\n"
-        f"👤 {mention}\n"
-        f"📅 {date}\n"
-        f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
-    )
-    for admin_id in recipients:
-        try:
-            await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
-            logger.info("_write_waiter_no_photo: уведомлен %s", admin_id)
-        except Exception as e:
-            error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
+    new_value = _fmt_h(h)
+    if old and old.strip() and old.strip() != new_value.strip():
+        await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)
 
 
 async def _delayed_process_waiter(mgid: str) -> None:
@@ -1090,7 +1128,7 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
         return
 
     try:
-        sheets_client.write_shift(tg_id, day, month, year, h, ah)
+        old = sheets_client.write_shift(tg_id, day, month, year, h, ah)
     except ValueError as e:
         if "не найден в листе" in str(e):
             await state.clear()
@@ -1153,6 +1191,10 @@ async def _write_and_finish_bar(message: Message, state: FSMContext, position: s
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
+    new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
+    if old and old.strip() and old.strip() != new_value.strip():
+        await _notify_overwrite(message, tg_id, day, month, old, new_value, "Бар", mention)
+
     await state.clear()
 
 
@@ -1206,7 +1248,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
         date = _date_str(day, month, year)
 
         try:
-            sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
+            old = sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
         except ValueError as e:
             if "не найден в листе" in str(e):
                 await state.clear()
@@ -1246,6 +1288,10 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
             except Exception as e:
                 error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
+        new_value = _fmt_h(h)
+        if old and old.strip() and old.strip() != new_value.strip():
+            await _notify_overwrite(message, tg_id, day, month, old, new_value, dept, mention)
+
     if len(written) == 1:
         date, h = written[0]
         await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
@@ -1282,7 +1328,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
         return
 
     try:
-        sheets_client.write_shift(tg_id, day, month, year, h, ah, is_weekend=is_weekend)
+        old = sheets_client.write_shift(tg_id, day, month, year, h, ah, is_weekend=is_weekend)
     except ValueError as e:
         if "не найден в листе" in str(e):
             await state.clear()
@@ -1346,5 +1392,9 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
+
+    new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
+    if old and old.strip() and old.strip() != new_value.strip():
+        await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)
 
     await state.clear()

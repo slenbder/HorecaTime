@@ -13,19 +13,23 @@ class TestFSMStatesNew:
         assert hasattr(ShiftStates, "waiting_check_filling")
 
     def test_states_order(self):
-        """Порядок: shift_input → loyalty_cards → check_filling → ah_input → ah_comment."""
+        """Порядок: shift_input → loyalty_cards → check_filling → ah_choice → ah_input → ah_comment."""
         from aiogram.fsm.state import State
         state_keys = [k for k, v in ShiftStates.__dict__.items() if isinstance(v, State)]
         idx_shift = state_keys.index("waiting_shift_input")
         idx_loyalty = state_keys.index("waiting_loyalty_cards")
         idx_filling = state_keys.index("waiting_check_filling")
+        idx_ah_choice = state_keys.index("waiting_ah_choice")
         idx_ah = state_keys.index("waiting_ah_input")
         idx_comment = state_keys.index("waiting_ah_comment")
 
-        assert idx_shift < idx_loyalty < idx_filling < idx_ah < idx_comment
+        assert idx_shift < idx_loyalty < idx_filling < idx_ah_choice < idx_ah < idx_comment
+
+    def test_waiting_ah_choice_exists(self):
+        assert hasattr(ShiftStates, "waiting_ah_choice")
 
     def test_old_states_preserved(self):
-        """Существующие states waiting_ah_input и waiting_ah_comment не удалены."""
+        """Существующие states не удалены."""
         assert hasattr(ShiftStates, "waiting_ah_input")
         assert hasattr(ShiftStates, "waiting_ah_comment")
         assert hasattr(ShiftStates, "waiting_shift_input")

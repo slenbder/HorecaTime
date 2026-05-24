@@ -1051,7 +1051,7 @@ async def _process_bar_shift_input(message: Message, state: FSMContext, position
 # Бармен / Барбэк — шаг 2б: обработка кнопок Да/Нет (тусовочные часы)
 # ---------------------------------------------------------------------------
 
-@userhours_router.callback_query(F.data == "bar_ah:no")
+@userhours_router.callback_query(ShiftStates.waiting_ah_choice, F.data == "bar_ah:no")
 async def cb_bar_ah_no(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     position = data.get("position", "Бармен")
@@ -1066,7 +1066,7 @@ async def cb_bar_ah_no(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-@userhours_router.callback_query(F.data == "bar_ah:yes")
+@userhours_router.callback_query(ShiftStates.waiting_ah_choice, F.data == "bar_ah:yes")
 async def cb_bar_ah_yes(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     date = _date_str(data["day"], data["month"], data["year"])
@@ -1087,6 +1087,7 @@ async def cb_bar_ah_yes(callback: CallbackQuery, state: FSMContext) -> None:
 # ---------------------------------------------------------------------------
 
 async def _process_bar_ah_input(message: Message, state: FSMContext, position: str) -> None:
+    import math
     text = (message.text or "").strip().replace(",", ".")
 
     try:
@@ -1095,7 +1096,7 @@ async def _process_bar_ah_input(message: Message, state: FSMContext, position: s
         await message.answer("❌ Введите число, например: 3 или 2.5")
         return
 
-    if ah_raw <= 0:
+    if not math.isfinite(ah_raw) or ah_raw <= 0:
         await message.answer("❌ Введите число, например: 3 или 2.5")
         return
 

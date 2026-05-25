@@ -535,7 +535,8 @@ async def _write_waiter_no_photo(
                 error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
 
     new_value = _fmt_h(h)
-    if old and old.strip() and old.strip() != new_value.strip():
+    if old and old.strip() and old.strip() not in ("0", "0.0") \
+            and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)
 
 
@@ -1200,7 +1201,8 @@ async def _write_and_finish_bar(
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
     new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
-    if old and old.strip() and old.strip() != new_value.strip():
+    if old and old.strip() and old.strip() not in ("0", "0.0") \
+            and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Бар", mention)
 
     await state.clear()
@@ -1298,7 +1300,8 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
                 error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
         new_value = _fmt_h(h)
-        if old and old.strip() and old.strip() != new_value.strip():
+        if old and old.strip() and old.strip() not in ("0", "0.0") \
+                and old.strip() != new_value.strip():
             await _notify_overwrite(message, tg_id, day, month, old, new_value, dept, mention)
 
     if len(written) == 1:
@@ -1403,7 +1406,8 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
     new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
-    if old and old.strip() and old.strip() != new_value.strip():
+    if old and old.strip() and old.strip() not in ("0", "0.0") \
+            and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)
 
     await state.clear()

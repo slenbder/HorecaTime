@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
-from config import DB_PATH, SUPERADMIN_IDS
+from config import DB_PATH, SUPERADMIN_IDS, DEPT_TO_ADMIN_ROLE
 
 logger = logging.getLogger(__name__)
 
@@ -425,13 +425,7 @@ async def get_admins_by_department(db_path: str, department: str) -> list[int]:
         Пустой список если отдел неизвестен или получателей нет
     """
     async with aiosqlite.connect(db_path) as db:
-        role_map = {
-            "Зал": "admin_hall",
-            "Бар": "admin_bar",
-            "Кухня": "admin_kitchen",
-            "МОП": "admin_hall",  # МОП подчиняется admin_hall
-        }
-        role = role_map.get(department)
+        role = DEPT_TO_ADMIN_ROLE.get(department)
         if not role:
             return []
 

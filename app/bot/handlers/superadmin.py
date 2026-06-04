@@ -18,7 +18,10 @@ from app.db.models import get_all_users, get_user, get_user_rate, get_user_rate_
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.roles_cache import RolesCacheService
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, EXTRA_RATE_LABELS
+from config import (
+    DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, EXTRA_RATE_LABELS,
+    DEPARTMENTS, DEPT_TO_ADMIN_ROLE, MONTH_NAMES_SHORT,
+)
 
 _sheets_client = GoogleSheetsClient()
 
@@ -30,16 +33,6 @@ def _is_allowed(tg_id: int) -> bool:
     return tg_id in SUPERADMIN_IDS or tg_id == DEVELOPER_ID
 
 _DEPT_EMOJIS = {"Зал": "🍽", "Бар": "🍺", "Кухня": "🔪", "МОП": "🧹"}
-
-_MONTH_NAMES = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
-
-_DEPT_POSITIONS_ORDER: dict[str, list[str]] = {
-    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
-    "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Руководящий состав", "Горячий цех", "Холодный цех", "Кондитерский цех",
-               "Заготовочный цех", "Коренной цех", "Грузчик", "Закупщик"],
-    "МОП":   ["Клининг", "Котломой"],
-}
 
 
 def _fmt_money(v: float) -> str:
@@ -128,7 +121,7 @@ async def cmd_rates_all(message: Message):
             future = await get_user_rate_future(DB_PATH, uid)
             if future:
                 future_base = _fmt_money(future["base_rate"])
-                month_name = _MONTH_NAMES[future["effective_month"]]
+                month_name = MONTH_NAMES_SHORT[future["effective_month"] - 1]
                 rate_text += f"\n    📅 С 1 {month_name}: {future_base} р/ч"
 
             lines.append(f"  • {full_name} ({position}): {rate_text}")
@@ -213,18 +206,11 @@ _PROMOTE_VALID_POSITIONS: dict[str, list[str]] = {
     "МОП":   ["Клининг", "Котломой"],
 }
 
-_DEPT_TO_ADMIN_ROLE: dict[str, str] = {
-    "Зал":   "admin_hall",
-    "Бар":   "admin_bar",
-    "Кухня": "admin_kitchen",
-    "МОП":   "admin_hall",
-}
-
 
 def _promote_dept_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=dept, callback_data=f"promote_dept:{dept}")]
-        for dept in ("Зал", "Бар", "Кухня", "МОП")
+        for dept in DEPARTMENTS
     ]
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="promote_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -396,7 +382,7 @@ async def cb_promote_confirm(callback: CallbackQuery, state: FSMContext):
     dept = employee["department"] or ""
     position = employee["position"]
 
-    new_role = _DEPT_TO_ADMIN_ROLE.get(dept)
+    new_role = DEPT_TO_ADMIN_ROLE.get(dept)
     if not new_role:
         logger.error("promote_confirm: неизвестный отдел '%s' для %s", dept, employee_id)
         await callback.answer("Неизвестный отдел.", show_alert=True)
@@ -451,17 +437,11 @@ async def cb_promote_cancel(callback: CallbackQuery, state: FSMContext):
 # --- /demote ---
 
 _ADMIN_ROLES = {"admin_hall", "admin_bar", "admin_kitchen"}
-_DEPT_TO_ADMIN_ROLES: dict[str, set[str]] = {
-    "Зал":   {"admin_hall"},
-    "Бар":   {"admin_bar"},
-    "Кухня": {"admin_kitchen"},
-    "МОП":   {"admin_hall"},
-}
 
 
 async def _get_admins_for_demote(dept: str) -> list[dict]:
     """Возвращает администраторов (admin_hall/bar/kitchen) из заданного подразделения."""
-    roles = _DEPT_TO_ADMIN_ROLES.get(dept, set())
+    roles = {DEPT_TO_ADMIN_ROLE[dept]} if dept in DEPT_TO_ADMIN_ROLE else set()
     if not roles:
         return []
     placeholders = ",".join("?" * len(roles))
@@ -479,7 +459,7 @@ async def _get_admins_for_demote(dept: str) -> list[dict]:
 def _demote_dept_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=dept, callback_data=f"demote_dept:{dept}")]
-        for dept in ("Зал", "Бар", "Кухня", "МОП")
+        for dept in DEPARTMENTS
     ]
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="demote_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

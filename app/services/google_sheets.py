@@ -8,7 +8,11 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
-from config import GOOGLE_CREDENTIALS_PATH, PHANTOM_CHECK_FILLING_ID, SPREADSHEET_ID, TECH_SHEET_NAME
+from config import (
+    GOOGLE_CREDENTIALS_PATH, PHANTOM_CHECK_FILLING_ID, SPREADSHEET_ID, TECH_SHEET_NAME,
+    COL_S, COL_AJ, COL_AK, COL_AL, COL_AM, COL_AN,
+    COLS_DATA_FIRST, COLS_DATA_SECOND,
+)
 from app.utils.text_utils import format_alert
 
 logger = logging.getLogger("google_api")
@@ -710,7 +714,7 @@ class GoogleSheetsClient:
 
         # Найти столбец дня в строке 3 (индекс 2).
         # Данные хранятся в диапазонах D–R (4–18) и T–AI (20–35); колонка S (19) пропускается.
-        _VALID_DATA_COLS = set(range(4, 19)) | set(range(20, 36))
+        _VALID_DATA_COLS = COLS_DATA_FIRST | COLS_DATA_SECOND
         date_row = all_values[2] if len(all_values) > 2 else []
         day_col = None
         for j, cell in enumerate(date_row, start=1):
@@ -763,8 +767,7 @@ class GoogleSheetsClient:
                 else ""
             )
             if user_position == "Раннер":
-                # AM = col 39 (первая половина), AN = col 40 (вторая половина)
-                weekend_col = 39 if day <= 15 else 40
+                weekend_col = COL_AM if day <= 15 else COL_AN
                 col_letter = "AM" if day <= 15 else "AN"
                 raw = (
                     all_values[user_row - 1][weekend_col - 1]
@@ -944,11 +947,11 @@ class GoogleSheetsClient:
                 return 0
 
             if period == "first":
-                col = 19   # S
+                col = COL_S
             elif period == "second":
-                col = 36   # AJ
+                col = COL_AJ
             else:          # "last"
-                col = 37   # AK
+                col = COL_AK
 
             phantom_data_row = all_values[phantom_row - 1]
             raw = phantom_data_row[col - 1].strip() if len(phantom_data_row) >= col else ""
@@ -1039,14 +1042,13 @@ class GoogleSheetsClient:
             except ValueError:
                 return 0.0
 
-        h_first, ah_first = _parse_cell(19)   # S
-        h_second, ah_second = _parse_cell(36)  # AJ
-        h_total, ah_total = _parse_cell(37)    # AK
+        h_first, ah_first = _parse_cell(COL_S)
+        h_second, ah_second = _parse_cell(COL_AJ)
+        h_total, ah_total = _parse_cell(COL_AK)
 
-        # Служебные колонки Раннера: AL(38)=итог, AM(39)=первая, AN(40)=вторая
-        h_weekend_first = _parse_simple(39)   # AM
-        h_weekend_second = _parse_simple(40)  # AN
-        h_weekend_total = _parse_simple(38)   # AL = AM + AN (формула в таблице)
+        h_weekend_first = _parse_simple(COL_AM)
+        h_weekend_second = _parse_simple(COL_AN)
+        h_weekend_total = _parse_simple(COL_AL)
 
         logger.info(
             "get_summary_hours: %s → h_first=%s ah_first=%s h_second=%s ah_second=%s "

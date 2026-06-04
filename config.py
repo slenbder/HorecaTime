@@ -55,3 +55,38 @@ SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
 PHANTOM_CHECK_FILLING_ID = 1984002026
 PHANTOM_CHECK_FILLING_NAME = "Наполняемость чека"
 PHANTOM_HOURLY_RATE = 1500
+
+# Отделы
+DEPARTMENTS = ["Зал", "Бар", "Кухня", "МОП"]
+
+# Маппинг отдел ↔ роль администратора
+DEPT_TO_ADMIN_ROLE: dict[str, str] = {
+    "Зал":   "admin_hall",
+    "Бар":   "admin_bar",
+    "Кухня": "admin_kitchen",
+    "МОП":   "admin_hall",
+}
+ADMIN_ROLE_TO_DEPT: dict[str, str] = {
+    v: k for k, v in DEPT_TO_ADMIN_ROLE.items() if k != "МОП"
+}
+
+# Коэффициент перевода одобренных фото в доп. часы
+AH_PHOTO_COEFFICIENT = 0.5
+
+# Именованные индексы итоговых колонок месячного листа (1-based)
+COL_S  = 19   # первая половина
+COL_AJ = 36   # вторая половина
+COL_AK = 37   # весь месяц
+COL_AL = 38   # итого выходных Раннера
+COL_AM = 39   # выходные первая половина
+COL_AN = 40   # выходные вторая половина
+
+# Диапазоны колонок данных (дни 1-15: D..R, дни 16+: T..AI)
+COLS_DATA_FIRST:  set[int] = set(range(4, 19))
+COLS_DATA_SECOND: set[int] = set(range(20, 36))
+
+# Сокращения месяцев (0-based: индекс 0 = январь)
+MONTH_NAMES_SHORT = [
+    "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+    "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
+]

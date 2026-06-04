@@ -29,7 +29,7 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
-from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH
+from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, DEPARTMENTS, AH_PHOTO_COEFFICIENT, DEPT_TO_ADMIN_ROLE
 from app.db.models import get_admins_by_department
 from app.bot.handlers.userhours import _pending_loyalty, _pending_filling
 
@@ -187,7 +187,7 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.set_state(AuthStates.choosing_department)
 
 
-@auth_router.message(AuthStates.choosing_department, F.text.in_(["Зал", "Бар", "Кухня", "МОП"]))
+@auth_router.message(AuthStates.choosing_department, F.text.in_(DEPARTMENTS))
 async def process_department(message: Message, state: FSMContext):
     department = message.text
     logger.info(f"Пользователь {message.from_user.id} выбрал отдел: {department}")
@@ -491,7 +491,7 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         await callback.answer("❌ Некорректные данные.", show_alert=True)
         return
 
-    ah = value * 0.5
+    ah = value * AH_PHOTO_COEFFICIENT
 
     # Парсим дату из "DD.MM.YY"
     try:
@@ -601,7 +601,7 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
         telegram_id = data["tg_id"]
         shift_date = data["shift_date"]
         h = data.get("shift_hours", 10.0)
-        ah = approved_count * 0.5
+        ah = approved_count * AH_PHOTO_COEFFICIENT
 
         # Парсим дату из "DD.MM.YY"
         try:
@@ -1286,8 +1286,7 @@ async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
     dismiss_type = data.get("dismiss_type", "user")
 
     if dismiss_type == "admin":
-        dept_to_role = {"Зал": "admin_hall", "Бар": "admin_bar", "Кухня": "admin_kitchen"}
-        admin_role = dept_to_role.get(dept, "")
+        admin_role = DEPT_TO_ADMIN_ROLE.get(dept, "")
         filtered = get_users_by_role(DB_PATH, admin_role) if admin_role else []
         logger.info("dismiss_dept_selected: получено %d администраторов из SQLite для отдела %s", len(filtered), dept)
     else:

@@ -19,7 +19,7 @@ from aiogram.types import (
 
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
-from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU, _format_shift_value
+from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU, _format_shift_value, _parse_shift_raw
 from app.services.timeparsing import parse_shift, round_to_half
 from app.utils.text_utils import make_mention
 from config import DB_PATH, SUPERADMIN_IDS
@@ -535,7 +535,7 @@ async def _write_waiter_no_photo(
                 error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
 
     new_value = _fmt_h(h)
-    if old and old.strip() and old.strip() not in ("0", "0.0") \
+    if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
             and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)
 
@@ -1201,7 +1201,7 @@ async def _write_and_finish_bar(
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
     new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
-    if old and old.strip() and old.strip() not in ("0", "0.0") \
+    if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
             and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Бар", mention)
 
@@ -1300,7 +1300,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
                 error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
         new_value = _fmt_h(h)
-        if old and old.strip() and old.strip() not in ("0", "0.0") \
+        if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
                 and old.strip() != new_value.strip():
             await _notify_overwrite(message, tg_id, day, month, old, new_value, dept, mention)
 
@@ -1406,7 +1406,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
     new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
-    if old and old.strip() and old.strip() not in ("0", "0.0") \
+    if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
             and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)
 

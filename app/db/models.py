@@ -102,7 +102,7 @@ def save_user(telegram_id: int, full_name: str, role: str,
             ''', (telegram_id, full_name, role, department, position, hourly_rate,
                   datetime.now(ZoneInfo("Europe/Moscow")).isoformat()))
             conn.commit()
-        logger.info("Пользователь %s (%s) сохранён в БД с ролью %s", telegram_id, full_name, role)
+        logger.info("Пользователь %s сохранён в БД с ролью %s", telegram_id, role)
     except sqlite3.Error as e:
         logger.error("Ошибка при сохранении пользователя %s в БД: %s", telegram_id, e)
         raise

@@ -1167,7 +1167,7 @@ async def contact_dev_send(message: Message, state: FSMContext):
     else:
         user_mention = escaped_full_name
 
-    logger.info("Пользователь %s (%s) отправляет сообщение разработчику", tg_id, full_name)
+    logger.info("Пользователь %s отправляет сообщение разработчику", tg_id)
 
     dev_text = (
         f"📨 Сообщение от пользователя\n\n"
@@ -1515,7 +1515,7 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
     # i) Логировать
-    logger.info("Сотрудник %s (%s) уволен суперадмином %s", target_id, full_name, admin_id)
+    logger.info("Сотрудник %s уволен суперадмином %s", target_id, admin_id)
 
 
 @auth_router.callback_query(F.data == "dismiss_cancel")

@@ -1351,7 +1351,15 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
     role = user_data.get("role", "user") if user_data else "user"
 
     if sheets_client is not None:
-        tech_info = sheets_client.get_user_from_techlist(target_id)
+        try:
+            tech_info = sheets_client.get_user_from_techlist(target_id)
+        except Exception:
+            logger.exception("dismiss_select: ошибка чтения Техлиста")
+            await state.clear()
+            await callback.message.answer(
+                "⚠️ Ошибка при получении данных. Попробуйте позже или используйте /cancel"
+            )
+            return
     else:
         tech_info = None
     position = (tech_info["position"] if tech_info else "") or (user_data.get("position") if user_data else "") or (user_data.get("role") if user_data else "") or "—"

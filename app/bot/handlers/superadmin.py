@@ -172,7 +172,7 @@ async def cb_switch_month_confirm(callback: CallbackQuery):
     except Exception:
         logger.exception("switch_month_confirm: ошибка переключения")
         await callback.message.edit_text(
-            f"❌ Ошибка при переключении месяца:\n\n{type(e).__name__}: {e}"
+            "⚠️ Ошибка при переключении месяца. Подробности в логах."
         )
 
 

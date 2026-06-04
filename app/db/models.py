@@ -412,32 +412,6 @@ async def get_users_rates_by_department(db_path: str, department: str) -> list[d
     ]
 
 
-async def get_all_users_rates(db_path: str) -> list[dict]:
-    """
-    Возвращает всех сотрудников с персональными ставками (JOIN users + user_rates).
-    Исключает superadmin и developer.
-    """
-    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            'SELECT u.telegram_id, u.full_name, u.department, u.position, ur.base_rate, ur.extra_rate '
-            'FROM users u JOIN user_rates ur ON u.telegram_id = ur.telegram_id '
-            'WHERE u.role NOT IN ("superadmin", "developer")',
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [
-        {
-            "telegram_id": r["telegram_id"],
-            "full_name": r["full_name"],
-            "department": r["department"],
-            "position": r["position"],
-            "base_rate": r["base_rate"],
-            "extra_rate": r["extra_rate"],
-        }
-        for r in rows
-    ]
-
-
 async def get_admins_by_department(db_path: str, department: str) -> list[int]:
     """
     Возвращает список telegram_id админов отдела + суперадминов.

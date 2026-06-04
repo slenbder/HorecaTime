@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 
-from config import PHANTOM_CHECK_FILLING_ID, SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
+from config import PHANTOM_CHECK_FILLING_ID, SUPERADMIN_IDS, DEVELOPER_ID
 from app.services.google_sheets import MONTH_NAMES_RU
 from app.utils.text_utils import format_alert
 from app.db.models import (

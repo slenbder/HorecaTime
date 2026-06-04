@@ -65,29 +65,6 @@ def _format_position_group(pos: str, group: list[dict]) -> list[str]:
     return [f"{emp['full_name']} ({pos}): {_fmt_emp_rate(emp)}" for emp in group]
 
 
-def _format_rates_grouped(employees: list[dict]) -> list[str]:
-    """Форматирует список сотрудников со ставками по схеме: отдел → позиция (схлопывание)."""
-    lines = ["📊 Все ставки"]
-    for dept, emoji in _DEPT_EMOJIS.items():
-        dept_emps = [e for e in employees if e.get("department") == dept]
-        if not dept_emps:
-            continue
-        lines.append(f"{emoji} {dept}")
-        by_pos: dict[str, list] = {}
-        for emp in dept_emps:
-            pos = emp.get("position") or "—"
-            by_pos.setdefault(pos, []).append(emp)
-        ordered = list(_DEPT_POSITIONS_ORDER.get(dept, []))
-        for pos in by_pos:
-            if pos not in ordered:
-                ordered.append(pos)
-        for pos in ordered:
-            group = by_pos.get(pos)
-            if group:
-                lines += _format_position_group(pos, group)
-    return lines
-
-
 @superadmin_router.message(Command("message_all"))
 async def cmd_message_all(message: Message, state: FSMContext):
     tg_id = message.from_user.id

@@ -29,7 +29,7 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
-from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, SHEET_URL
+from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH
 from app.db.models import get_admins_by_department
 from app.bot.handlers.userhours import _pending_loyalty, _pending_filling
 
@@ -329,7 +329,6 @@ async def process_fio(message: Message, state: FSMContext):
 
     tg_id = message.from_user.id
     nickname = message.from_user.username or ""
-    tg_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
 
     logger.info(
         "Пользователь %s ввёл ФИО: %s, отдел: %s",

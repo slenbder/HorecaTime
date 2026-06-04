@@ -189,8 +189,8 @@ async def cb_switch_month_confirm(callback: CallbackQuery):
             result["old_sheet"], result["new_sheet"],
         )
         await notify_switch_done(callback.bot, DB_PATH, result)
-    except Exception as e:
-        logger.error("switch_month_confirm: ошибка переключения: %s", e)
+    except Exception:
+        logger.exception("switch_month_confirm: ошибка переключения")
         await callback.message.edit_text(
             f"❌ Ошибка при переключении месяца:\n\n{type(e).__name__}: {e}"
         )

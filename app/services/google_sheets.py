@@ -1183,10 +1183,10 @@ class GoogleSheetsClient:
                     "окраска пропущена",
                     telegram_id, month_ws.title,
                 )
-        except Exception as e:
-            logger.error(
-                "dismiss_employee: ошибка при окраске ячейки в месячном листе для %s: %s",
-                telegram_id, e,
+        except Exception:
+            logger.exception(
+                "dismiss_employee: ошибка при окраске ячейки в месячном листе для %s",
+                telegram_id,
             )
 
         # Удалить строку из Техлиста
@@ -1209,10 +1209,10 @@ class GoogleSheetsClient:
                     "dismiss_employee: пользователь %s не найден в Техлисте, удаление пропущено",
                     telegram_id,
                 )
-        except Exception as e:
-            logger.error(
-                "dismiss_employee: ошибка при удалении из Техлиста для %s: %s",
-                telegram_id, e,
+        except Exception:
+            logger.exception(
+                "dismiss_employee: ошибка при удалении из Техлиста для %s",
+                telegram_id,
             )
 
     def get_sheet_id_by_name(self, sheet_name: str) -> int | None:

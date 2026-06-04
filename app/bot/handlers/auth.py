@@ -532,9 +532,9 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
     new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
     try:
         await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None, link_preview_options=LinkPreviewOptions(is_disabled=True))
-    except Exception as e:
-        logging.getLogger("errors").error(
-            "approve_ah_callback: не удалось отредактировать сообщение: %s", e,
+    except Exception:
+        logging.getLogger("errors").exception(
+            "approve_ah_callback: не удалось отредактировать сообщение",
         )
 
     await callback.answer()
@@ -551,10 +551,10 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         )
     try:
         await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
-    except Exception as e:
-        logging.getLogger("errors").error(
-            "approve_ah: смена записана но уведомление официанту %s не отправлено: %s",
-            telegram_id, e,
+    except Exception:
+        logging.getLogger("errors").exception(
+            "approve_ah: смена записана но уведомление официанту %s не отправлено",
+            telegram_id,
         )
 
 
@@ -633,7 +633,9 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
                     "Обратитесь к администратору."
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "approve_loyalty_callback: не удалось уведомить пользователя %s", telegram_id
+                )
             return
 
         logger.info(
@@ -651,9 +653,9 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
                 new_text, parse_mode="HTML", reply_markup=None,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_loyalty_callback: не удалось отредактировать сообщение: %s", e
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_loyalty_callback: не удалось отредактировать сообщение"
             )
 
         _pending_loyalty.pop(callback_key, None)
@@ -666,10 +668,10 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
         )
         try:
             await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_loyalty_callback: уведомление официанту %s не отправлено: %s",
-                telegram_id, e,
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_loyalty_callback: уведомление официанту %s не отправлено",
+                telegram_id,
             )
 
     except Exception:
@@ -749,7 +751,9 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
                     "Обратитесь к администратору."
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "approve_filling_callback: не удалось уведомить пользователя %s", telegram_id
+                )
             return
 
         period = "first" if day <= 15 else "second"
@@ -767,9 +771,9 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
                 new_text, parse_mode="HTML", reply_markup=None,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_filling_callback: не удалось отредактировать сообщение: %s", e
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: не удалось отредактировать сообщение"
             )
 
         period_text = "первую" if period == "first" else "вторую"
@@ -782,9 +786,9 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         )
         try:
             await callback.message.answer(admin_text)
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_filling_callback: не удалось отправить баланс: %s", e
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: не удалось отправить баланс"
             )
 
         _pending_filling.pop(callback_key, None)
@@ -796,10 +800,10 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         )
         try:
             await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_filling_callback: уведомление официанту %s не отправлено: %s",
-                telegram_id, e,
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: уведомление официанту %s не отправлено",
+                telegram_id,
             )
 
     except Exception:

@@ -9,6 +9,7 @@ from aiogram.types import Message, BufferedInputFile
 from app.db.models import get_user, get_user_rate, get_user_rate_history
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
+from app.utils.formatting import fmt_hours, fmt_money
 from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, PHANTOM_HOURLY_RATE, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL, POSITIONS_WITH_EXTRA
 
 reports_router = Router()
@@ -47,14 +48,6 @@ def _get_last_month_sheet_name() -> str:
     return f"{MONTH_NAMES_RU[month]} {year}"
 
 
-def _fmt(v: float) -> str:
-    return str(int(v)) if v == int(v) else str(v)
-
-
-def _fmt_money(v: float) -> str:
-    return str(int(v)) if v == int(v) else f"{v:.2f}"
-
-
 def _build_runner_earnings_lines(
     h: float,
     ah: float,
@@ -71,18 +64,18 @@ def _build_runner_earnings_lines(
     lines = []
     if h_weekend > 0:
         lines.append(
-            f"• {_fmt(h_regular)} ч × {_fmt_money(base)} р = {_fmt_money(earnings_regular)} р (обычные дни)"
+            f"• {fmt_hours(h_regular)} ч × {fmt_money(base)} р = {fmt_money(earnings_regular)} р (обычные дни)"
         )
         lines.append(
-            f"• {_fmt(h_weekend)} ч × {_fmt_money(extra or base)} р = {_fmt_money(earnings_weekend)} р (выходные дни)"
+            f"• {fmt_hours(h_weekend)} ч × {fmt_money(extra or base)} р = {fmt_money(earnings_weekend)} р (выходные дни)"
         )
         if ah > 0:
             lines.append(
-                f"• {_fmt(ah)} ч × {_fmt_money(base)} р = {_fmt_money(earnings_ah)} р (доп. часы)"
+                f"• {fmt_hours(ah)} ч × {fmt_money(base)} р = {fmt_money(earnings_ah)} р (доп. часы)"
             )
-        lines.append(f"💰 Итого: {_fmt_money(total)} р")
+        lines.append(f"💰 Итого: {fmt_money(total)} р")
     else:
-        lines.append(f"💰 Заработок: {_fmt_money(total)} р")
+        lines.append(f"💰 Заработок: {fmt_money(total)} р")
     return lines
 
 
@@ -91,14 +84,14 @@ async def _build_hours_first_lines(data: dict, position: str | None, rate: dict 
     ah = data["ah_first"]
     lines = [
         "📊 Первая половина месяца (1–15)",
-        f"Отработано: {_fmt(h)} ч",
+        f"Отработано: {fmt_hours(h)} ч",
     ]
     if position in _BAR_POSITIONS and ah > 0:
-        lines.append(f"Доп. часы: {_fmt(ah)} ч")
+        lines.append(f"Доп. часы: {fmt_hours(ah)} ч")
 
     if rate is None:
         if ah > 0 and position not in _BAR_POSITIONS:
-            lines.append(f"Доп. часы: {_fmt(ah)} ч")
+            lines.append(f"Доп. часы: {fmt_hours(ah)} ч")
         lines.append("(ставка не установлена — обратитесь к администратору)")
         return lines
 
@@ -112,19 +105,19 @@ async def _build_hours_first_lines(data: dict, position: str | None, rate: dict 
         earnings_h = h * base
         earnings_ah = ah * (extra or base)
         total = earnings_h + earnings_ah
-        lines.append(f"• {_fmt(h)} ч × {_fmt_money(base)} р = {_fmt_money(earnings_h)} р")
+        lines.append(f"• {fmt_hours(h)} ч × {fmt_money(base)} р = {fmt_money(earnings_h)} р")
         if ah > 0:
-            lines.append(f"• Доп. часы: {_fmt(ah)} ч × {_fmt_money(extra or base)} р = {_fmt_money(earnings_ah)} р")
-        lines.append(f"💰 Итого: {_fmt_money(total)} р")
+            lines.append(f"• Доп. часы: {fmt_hours(ah)} ч × {fmt_money(extra or base)} р = {fmt_money(earnings_ah)} р")
+        lines.append(f"💰 Итого: {fmt_money(total)} р")
     else:
         if ah > 0:
-            lines.append(f"Доп. часы: {_fmt(ah)} ч")
+            lines.append(f"Доп. часы: {fmt_hours(ah)} ч")
         if position == "Официант" and sheets_client is not None:
             phantom_checks = sheets_client.get_phantom_checks_summary("first")
             phantom_total_rub = phantom_checks * PHANTOM_HOURLY_RATE
-            lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({_fmt_money(phantom_total_rub)} р)")
+            lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({fmt_money(phantom_total_rub)} р)")
         earnings = (h + ah) * base
-        lines.append(f"💰 Заработок: {_fmt_money(earnings)} р")
+        lines.append(f"💰 Заработок: {fmt_money(earnings)} р")
 
     return lines
 
@@ -139,17 +132,17 @@ async def _build_hours_second_lines(data: dict, position: str | None, rate: dict
 
     lines = [
         f"📊 {sheet_label}",
-        f"Отработано: {_fmt(h2)} ч",
+        f"Отработано: {fmt_hours(h2)} ч",
     ]
     if ah2 > 0:
-        lines.append(f"Доп. часы: {_fmt(ah2)} ч")
+        lines.append(f"Доп. часы: {fmt_hours(ah2)} ч")
 
     if rate is None:
         lines.append("(ставка не установлена — обратитесь к администратору)")
         lines.append("")
-        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+        lines.append(f"Всего за месяц: {fmt_hours(h_tot)} ч")
         if ah_tot > 0 and position not in _BAR_POSITIONS:
-            lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+            lines.append(f"Доп. часы за месяц: {fmt_hours(ah_tot)} ч")
         return lines
 
     base = rate["base_rate"]
@@ -160,30 +153,30 @@ async def _build_hours_second_lines(data: dict, position: str | None, rate: dict
         h_weekend_total = data.get("h_weekend_total", 0.0)
         lines += _build_runner_earnings_lines(h2, ah2, h_weekend_second, base, extra or base)
         lines.append("")
-        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+        lines.append(f"Всего за месяц: {fmt_hours(h_tot)} ч")
         if ah_tot > 0:
-            lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+            lines.append(f"Доп. часы за месяц: {fmt_hours(ah_tot)} ч")
         lines += _build_runner_earnings_lines(h_tot, ah_tot, h_weekend_total, base, extra or base)
     elif position in _BAR_POSITIONS:
         earnings_second = h2 * base + ah2 * (extra or base)
         earnings_total = h_tot * base + ah_tot * (extra or base)
-        lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
+        lines.append(f"💰 Заработок: {fmt_money(earnings_second)} р")
         lines.append("")
-        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
-        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
+        lines.append(f"Всего за месяц: {fmt_hours(h_tot)} ч")
+        lines.append(f"💰 Заработок за месяц: {fmt_money(earnings_total)} р")
     else:
         earnings_second = (h2 + ah2) * base
         earnings_total = (h_tot + ah_tot) * base
-        lines.append(f"💰 Заработок: {_fmt_money(earnings_second)} р")
+        lines.append(f"💰 Заработок: {fmt_money(earnings_second)} р")
         lines.append("")
-        lines.append(f"Всего за месяц: {_fmt(h_tot)} ч")
+        lines.append(f"Всего за месяц: {fmt_hours(h_tot)} ч")
         if ah_tot > 0:
-            lines.append(f"Доп. часы за месяц: {_fmt(ah_tot)} ч")
+            lines.append(f"Доп. часы за месяц: {fmt_hours(ah_tot)} ч")
         if position == "Официант" and sheets_client is not None:
             phantom_checks = sheets_client.get_phantom_checks_summary(phantom_period)
             phantom_total_rub = phantom_checks * PHANTOM_HOURLY_RATE
-            lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({_fmt_money(phantom_total_rub)} р)")
-        lines.append(f"💰 Заработок за месяц: {_fmt_money(earnings_total)} р")
+            lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({fmt_money(phantom_total_rub)} р)")
+        lines.append(f"💰 Заработок за месяц: {fmt_money(earnings_total)} р")
 
     return lines
 

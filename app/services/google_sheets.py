@@ -8,6 +8,7 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
+from app.utils.formatting import fmt_hours
 from config import (
     GOOGLE_CREDENTIALS_PATH, PHANTOM_CHECK_FILLING_ID, SPREADSHEET_ID, TECH_SHEET_NAME,
     COL_S, COL_AJ, COL_AK, COL_AL, COL_AM, COL_AN,
@@ -99,15 +100,11 @@ def _parse_shift_raw(raw: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _fmt_cell(v: float) -> str:
-    return str(int(v)) if v == int(v) else str(v)
-
-
 def _format_shift_value(raw: str) -> str:
     h, ah = _parse_shift_raw(raw)
     if ah > 0:
-        return f"{_fmt_cell(h)} ч (тусовочные: {_fmt_cell(ah)} ч)"
-    return f"{_fmt_cell(h)} ч"
+        return f"{fmt_hours(h)} ч (тусовочные: {fmt_hours(ah)} ч)"
+    return f"{fmt_hours(h)} ч"
 
 
 class GoogleSheetsClient:
@@ -741,10 +738,7 @@ class GoogleSheetsClient:
         # Форматируем значение. Точка как десятичный разделитель — визуально предпочтительна.
         # Формулы S/AJ используют ПОДСТАВИТЬ(".";"," ) перед ЗНАЧЕН(), поэтому точка
         # в ячейках не интерпретируется как дата в русской локали Google Sheets.
-        def _fmt(v: float) -> str:
-            return str(int(v)) if v == int(v) else str(v)
-
-        cell_value = f"{_fmt(h)}/{_fmt(ah)}" if ah > 0 else _fmt(h)
+        cell_value = f"{fmt_hours(h)}/{fmt_hours(ah)}" if ah > 0 else fmt_hours(h)
 
         cell_addr = gspread.utils.rowcol_to_a1(user_row, day_col)
         try:

@@ -14,6 +14,7 @@ from aiogram.types import (
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.fsm.shift_states import SetRateStates
 from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, set_user_rate_future, get_user_role, get_user_rate, get_user_rate_future
+from app.utils.formatting import fmt_money, fmt_emp_rate
 from config import (
     DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA, EXTRA_RATE_LABELS,
     DEPARTMENTS, ADMIN_ROLE_TO_DEPT, MONTH_NAMES_SHORT,
@@ -75,21 +76,6 @@ def _hall_dept_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _fmt_money(v: float) -> str:
-    return str(int(v)) if v == int(v) else f"{v:.2f}"
-
-
-# --- /rates ---
-
-def _fmt_emp_rate(emp: dict) -> str:
-    """Форматирует ставку сотрудника: 'base р/ч' или 'base/extra р/ч' или 'не установлена'."""
-    base = emp.get("base_rate")
-    if base is None:
-        return "не установлена"
-    extra = emp.get("extra_rate")
-    if extra is not None:
-        return f"{_fmt_money(base)}/{_fmt_money(extra)} р/ч"
-    return f"{_fmt_money(base)} р/ч"
 
 
 @admin_router.message(Command("rates"))
@@ -123,9 +109,9 @@ async def cmd_rates(message: Message):
 
         rate = await get_user_rate(DB_PATH, uid)
         if rate:
-            base = _fmt_money(rate["base_rate"])
+            base = fmt_money(rate["base_rate"])
             if rate.get("extra_rate"):
-                extra = _fmt_money(rate["extra_rate"])
+                extra = fmt_money(rate["extra_rate"])
                 extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
                 rate_text = f"{base}/{extra} р/ч ({extra_label})"
             else:
@@ -135,7 +121,7 @@ async def cmd_rates(message: Message):
 
         future = await get_user_rate_future(DB_PATH, uid)
         if future:
-            future_base = _fmt_money(future["base_rate"])
+            future_base = fmt_money(future["base_rate"])
             month_name = MONTH_NAMES_SHORT[future["effective_month"] - 1]
             rate_text += f"\n  📅 С 1 {month_name}: {future_base} р/ч"
 
@@ -179,11 +165,11 @@ async def _apply_rate_change(
         if extra_rate is not None:
             extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
             rate_text = (
-                f"Базовая: {_fmt_money(base_rate)} р/ч\n"
-                f"Повышенная ({extra_label}): {_fmt_money(extra_rate)} р/ч"
+                f"Базовая: {fmt_money(base_rate)} р/ч\n"
+                f"Повышенная ({extra_label}): {fmt_money(extra_rate)} р/ч"
             )
         else:
-            rate_text = f"{_fmt_money(base_rate)} р/ч"
+            rate_text = f"{fmt_money(base_rate)} р/ч"
 
         await message.answer(f"✅ Ставка установлена {period_text}:\n{rate_text}")
 

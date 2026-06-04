@@ -18,6 +18,7 @@ from app.db.models import get_all_users, get_user, get_user_rate, get_user_rate_
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.roles_cache import RolesCacheService
+from app.utils.formatting import fmt_money, fmt_emp_rate
 from config import (
     DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, EXTRA_RATE_LABELS,
     DEPARTMENTS, DEPT_TO_ADMIN_ROLE, MONTH_NAMES_SHORT,
@@ -35,27 +36,13 @@ def _is_allowed(tg_id: int) -> bool:
 _DEPT_EMOJIS = {"Зал": "🍽", "Бар": "🍺", "Кухня": "🔪", "МОП": "🧹"}
 
 
-def _fmt_money(v: float) -> str:
-    return str(int(v)) if v == int(v) else f"{v:.2f}"
-
-
-def _fmt_emp_rate(emp: dict) -> str:
-    base = emp.get("base_rate")
-    if base is None:
-        return "не установлена"
-    extra = emp.get("extra_rate")
-    if extra is not None:
-        return f"{_fmt_money(base)}/{_fmt_money(extra)} р/ч"
-    return f"{_fmt_money(base)} р/ч"
-
-
 def _format_position_group(pos: str, group: list[dict]) -> list[str]:
     n = len(group)
     rates_unique = {(emp.get("base_rate"), emp.get("extra_rate")) for emp in group}
     if len(rates_unique) == 1:
-        rate_str = _fmt_emp_rate(group[0])
+        rate_str = fmt_emp_rate(group[0])
         return [f"{pos} ({n} чел.): {rate_str}" if n > 1 else f"{pos}: {rate_str}"]
-    return [f"{emp['full_name']} ({pos}): {_fmt_emp_rate(emp)}" for emp in group]
+    return [f"{emp['full_name']} ({pos}): {fmt_emp_rate(emp)}" for emp in group]
 
 
 @superadmin_router.message(Command("message_all"))
@@ -108,9 +95,9 @@ async def cmd_rates_all(message: Message):
 
             rate = await get_user_rate(DB_PATH, uid)
             if rate:
-                base = _fmt_money(rate["base_rate"])
+                base = fmt_money(rate["base_rate"])
                 if rate.get("extra_rate"):
-                    extra = _fmt_money(rate["extra_rate"])
+                    extra = fmt_money(rate["extra_rate"])
                     extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
                     rate_text = f"{base}/{extra} р/ч ({extra_label})"
                 else:
@@ -120,7 +107,7 @@ async def cmd_rates_all(message: Message):
 
             future = await get_user_rate_future(DB_PATH, uid)
             if future:
-                future_base = _fmt_money(future["base_rate"])
+                future_base = fmt_money(future["base_rate"])
                 month_name = MONTH_NAMES_SHORT[future["effective_month"] - 1]
                 rate_text += f"\n    📅 С 1 {month_name}: {future_base} р/ч"
 

@@ -29,6 +29,7 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
+from app.utils.formatting import fmt_hours
 from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, DEPARTMENTS, AH_PHOTO_COEFFICIENT, DEPT_TO_ADMIN_ROLE
 from app.db.models import get_admins_by_department
 from app.bot.handlers.userhours import _pending_loyalty, _pending_filling
@@ -523,11 +524,8 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         telegram_id, date_str, h, ah, value, N, callback.from_user.id,
     )
 
-    def _fmt(val: float) -> str:
-        return str(int(val)) if val == int(val) else f"{val:.1f}"
-
-    ah_str = _fmt(ah)
-    h_str = _fmt(h)
+    ah_str = fmt_hours(ah)
+    h_str = fmt_hours(h)
     original_text = callback.message.text or ""
     new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
     try:
@@ -643,11 +641,8 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
             telegram_id, shift_date, h, ah, approved_count, caller_id,
         )
 
-        def _fmt(v: float) -> str:
-            return str(int(v)) if v == int(v) else f"{v:.1f}"
-
         original_text = callback.message.text or ""
-        new_text = original_text + f"\n✅ Одобрено {approved_count} фото → {_fmt(ah)} ч"
+        new_text = original_text + f"\n✅ Одобрено {approved_count} фото → {fmt_hours(ah)} ч"
         try:
             await callback.message.edit_text(
                 new_text, parse_mode="HTML", reply_markup=None,
@@ -663,8 +658,8 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
 
         waiter_text = (
             f"✅ Смена одобрена\n"
-            f"📅 {shift_date}: {_fmt(h)} ч\n"
-            f"🎴 Карты лояльности: {approved_count} шт (+{_fmt(ah)} ч)"
+            f"📅 {shift_date}: {fmt_hours(h)} ч\n"
+            f"🎴 Карты лояльности: {approved_count} шт (+{fmt_hours(ah)} ч)"
         )
         try:
             await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)

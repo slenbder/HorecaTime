@@ -29,7 +29,8 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import get_user, delete_user, get_users_by_role
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
-from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, SHEET_URL
+from app.utils.formatting import fmt_hours
+from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, DEPARTMENTS, AH_PHOTO_COEFFICIENT, DEPT_TO_ADMIN_ROLE
 from app.db.models import get_admins_by_department
 from app.bot.handlers.userhours import _pending_loyalty, _pending_filling
 
@@ -187,7 +188,7 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.set_state(AuthStates.choosing_department)
 
 
-@auth_router.message(AuthStates.choosing_department, F.text.in_(["Зал", "Бар", "Кухня", "МОП"]))
+@auth_router.message(AuthStates.choosing_department, F.text.in_(DEPARTMENTS))
 async def process_department(message: Message, state: FSMContext):
     department = message.text
     logger.info(f"Пользователь {message.from_user.id} выбрал отдел: {department}")
@@ -329,7 +330,6 @@ async def process_fio(message: Message, state: FSMContext):
 
     tg_id = message.from_user.id
     nickname = message.from_user.username or ""
-    tg_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
 
     logger.info(
         "Пользователь %s ввёл ФИО: %s, отдел: %s",
@@ -492,7 +492,7 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         await callback.answer("❌ Некорректные данные.", show_alert=True)
         return
 
-    ah = value * 0.5
+    ah = value * AH_PHOTO_COEFFICIENT
 
     # Парсим дату из "DD.MM.YY"
     try:
@@ -524,18 +524,15 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         telegram_id, date_str, h, ah, value, N, callback.from_user.id,
     )
 
-    def _fmt(val: float) -> str:
-        return str(int(val)) if val == int(val) else f"{val:.1f}"
-
-    ah_str = _fmt(ah)
-    h_str = _fmt(h)
+    ah_str = fmt_hours(ah)
+    h_str = fmt_hours(h)
     original_text = callback.message.text or ""
     new_text = original_text + f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
     try:
         await callback.message.edit_text(new_text, parse_mode="HTML", reply_markup=None, link_preview_options=LinkPreviewOptions(is_disabled=True))
-    except Exception as e:
-        logging.getLogger("errors").error(
-            "approve_ah_callback: не удалось отредактировать сообщение: %s", e,
+    except Exception:
+        logging.getLogger("errors").exception(
+            "approve_ah_callback: не удалось отредактировать сообщение",
         )
 
     await callback.answer()
@@ -552,10 +549,10 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         )
     try:
         await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
-    except Exception as e:
-        logging.getLogger("errors").error(
-            "approve_ah: смена записана но уведомление официанту %s не отправлено: %s",
-            telegram_id, e,
+    except Exception:
+        logging.getLogger("errors").exception(
+            "approve_ah: смена записана но уведомление официанту %s не отправлено",
+            telegram_id,
         )
 
 
@@ -602,7 +599,7 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
         telegram_id = data["tg_id"]
         shift_date = data["shift_date"]
         h = data.get("shift_hours", 10.0)
-        ah = approved_count * 0.5
+        ah = approved_count * AH_PHOTO_COEFFICIENT
 
         # Парсим дату из "DD.MM.YY"
         try:
@@ -634,7 +631,9 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
                     "Обратитесь к администратору."
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "approve_loyalty_callback: не удалось уведомить пользователя %s", telegram_id
+                )
             return
 
         logger.info(
@@ -642,19 +641,16 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
             telegram_id, shift_date, h, ah, approved_count, caller_id,
         )
 
-        def _fmt(v: float) -> str:
-            return str(int(v)) if v == int(v) else f"{v:.1f}"
-
         original_text = callback.message.text or ""
-        new_text = original_text + f"\n✅ Одобрено {approved_count} фото → {_fmt(ah)} ч"
+        new_text = original_text + f"\n✅ Одобрено {approved_count} фото → {fmt_hours(ah)} ч"
         try:
             await callback.message.edit_text(
                 new_text, parse_mode="HTML", reply_markup=None,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_loyalty_callback: не удалось отредактировать сообщение: %s", e
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_loyalty_callback: не удалось отредактировать сообщение"
             )
 
         _pending_loyalty.pop(callback_key, None)
@@ -662,15 +658,15 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
 
         waiter_text = (
             f"✅ Смена одобрена\n"
-            f"📅 {shift_date}: {_fmt(h)} ч\n"
-            f"🎴 Карты лояльности: {approved_count} шт (+{_fmt(ah)} ч)"
+            f"📅 {shift_date}: {fmt_hours(h)} ч\n"
+            f"🎴 Карты лояльности: {approved_count} шт (+{fmt_hours(ah)} ч)"
         )
         try:
             await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_loyalty_callback: уведомление официанту %s не отправлено: %s",
-                telegram_id, e,
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_loyalty_callback: уведомление официанту %s не отправлено",
+                telegram_id,
             )
 
     except Exception:
@@ -750,7 +746,9 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
                     "Обратитесь к администратору."
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "approve_filling_callback: не удалось уведомить пользователя %s", telegram_id
+                )
             return
 
         period = "first" if day <= 15 else "second"
@@ -768,9 +766,9 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
                 new_text, parse_mode="HTML", reply_markup=None,
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_filling_callback: не удалось отредактировать сообщение: %s", e
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: не удалось отредактировать сообщение"
             )
 
         period_text = "первую" if period == "first" else "вторую"
@@ -783,9 +781,9 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         )
         try:
             await callback.message.answer(admin_text)
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_filling_callback: не удалось отправить баланс: %s", e
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: не удалось отправить баланс"
             )
 
         _pending_filling.pop(callback_key, None)
@@ -797,10 +795,10 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         )
         try:
             await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
-        except Exception as e:
-            logging.getLogger("errors").error(
-                "approve_filling_callback: уведомление официанту %s не отправлено: %s",
-                telegram_id, e,
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: уведомление официанту %s не отправлено",
+                telegram_id,
             )
 
     except Exception:
@@ -1168,7 +1166,7 @@ async def contact_dev_send(message: Message, state: FSMContext):
     else:
         user_mention = escaped_full_name
 
-    logger.info("Пользователь %s (%s) отправляет сообщение разработчику", tg_id, full_name)
+    logger.info("Пользователь %s отправляет сообщение разработчику", tg_id)
 
     dev_text = (
         f"📨 Сообщение от пользователя\n\n"
@@ -1283,8 +1281,7 @@ async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
     dismiss_type = data.get("dismiss_type", "user")
 
     if dismiss_type == "admin":
-        dept_to_role = {"Зал": "admin_hall", "Бар": "admin_bar", "Кухня": "admin_kitchen"}
-        admin_role = dept_to_role.get(dept, "")
+        admin_role = DEPT_TO_ADMIN_ROLE.get(dept, "")
         filtered = get_users_by_role(DB_PATH, admin_role) if admin_role else []
         logger.info("dismiss_dept_selected: получено %d администраторов из SQLite для отдела %s", len(filtered), dept)
     else:
@@ -1348,7 +1345,15 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
     role = user_data.get("role", "user") if user_data else "user"
 
     if sheets_client is not None:
-        tech_info = sheets_client.get_user_from_techlist(target_id)
+        try:
+            tech_info = sheets_client.get_user_from_techlist(target_id)
+        except Exception:
+            logger.exception("dismiss_select: ошибка чтения Техлиста")
+            await state.clear()
+            await callback.message.answer(
+                "⚠️ Ошибка при получении данных. Попробуйте позже или используйте /cancel"
+            )
+            return
     else:
         tech_info = None
     position = (tech_info["position"] if tech_info else "") or (user_data.get("position") if user_data else "") or (user_data.get("role") if user_data else "") or "—"
@@ -1516,7 +1521,7 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
     # i) Логировать
-    logger.info("Сотрудник %s (%s) уволен суперадмином %s", target_id, full_name, admin_id)
+    logger.info("Сотрудник %s уволен суперадмином %s", target_id, admin_id)
 
 
 @auth_router.callback_query(F.data == "dismiss_cancel")

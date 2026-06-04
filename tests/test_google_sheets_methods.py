@@ -1,20 +1,6 @@
 from unittest.mock import MagicMock, patch
 import pytest
 
-from app.services.google_sheets import GoogleSheetsClient
-
-
-# ---------------------------------------------------------------------------
-# Factory — создаёт GoogleSheetsClient без реального подключения
-# ---------------------------------------------------------------------------
-
-def _make_client() -> GoogleSheetsClient:
-    """Создаёт экземпляр GoogleSheetsClient без вызова __init__."""
-    client = object.__new__(GoogleSheetsClient)
-    client._spreadsheet = MagicMock()
-    client._client = MagicMock()
-    return client
-
 
 # ---------------------------------------------------------------------------
 # Helpers — строим фиктивный лист с заголовками отделов
@@ -49,9 +35,9 @@ def _make_all_values(*dept_rows: tuple[int, str]) -> list[list[str]]:
 
 class TestGetSectionRange:
 
-    def test_get_section_range_found(self):
+    def test_get_section_range_found(self, sheets_client):
         """Заголовок "ЗАЛ" на строке 5 → возвращает диапазон, начинающийся с A5."""
-        client = _make_client()
+        client = sheets_client
 
         # Заголовок "зал" на индексе 4 (1-based = строка 5)
         all_values = _make_all_values((4, "зал"))
@@ -65,9 +51,9 @@ class TestGetSectionRange:
         # Диапазон должен начинаться с A5
         assert result.startswith("A5:")
 
-    def test_get_section_range_not_found(self):
+    def test_get_section_range_not_found(self, sheets_client):
         """Отдел отсутствует → возвращает None."""
-        client = _make_client()
+        client = sheets_client
 
         # Строки содержат данные, но НЕТ заголовка "зал"
         all_values = [["Иванов", "Официант", "8"]] * 15
@@ -79,9 +65,9 @@ class TestGetSectionRange:
 
         assert result is None
 
-    def test_get_section_range_multiple_sections(self):
+    def test_get_section_range_multiple_sections(self, sheets_client):
         """Два отдела: "зал" на строке 5, "бар" на строке 20 → возвращает блок ЗАЛа."""
-        client = _make_client()
+        client = sheets_client
 
         # зал — индекс 4 (строка 5), бар — индекс 19 (строка 20)
         all_values = _make_all_values((4, "зал"), (19, "бар"))
@@ -110,9 +96,9 @@ class TestGetSheetIdByName:
         ws.id = sheet_id
         return ws
 
-    def test_get_sheet_id_found(self):
+    def test_get_sheet_id_found(self, sheets_client):
         """Лист "Март 2026" существует → возвращает его id=123456."""
-        client = _make_client()
+        client = sheets_client
         client._spreadsheet.worksheets.return_value = [
             self._make_worksheet("Февраль 2026", 111),
             self._make_worksheet("Март 2026", 123456),
@@ -123,9 +109,9 @@ class TestGetSheetIdByName:
 
         assert result == 123456
 
-    def test_get_sheet_id_not_found(self):
+    def test_get_sheet_id_not_found(self, sheets_client):
         """Нужного листа нет → возвращает None."""
-        client = _make_client()
+        client = sheets_client
         client._spreadsheet.worksheets.return_value = [
             self._make_worksheet("Февраль 2026", 111),
             self._make_worksheet("Апрель 2026", 999),
@@ -135,9 +121,9 @@ class TestGetSheetIdByName:
 
         assert result is None
 
-    def test_get_sheet_id_empty_list(self):
+    def test_get_sheet_id_empty_list(self, sheets_client):
         """Пустой список листов → возвращает None без исключения."""
-        client = _make_client()
+        client = sheets_client
         client._spreadsheet.worksheets.return_value = []
 
         result = client.get_sheet_id_by_name("Март 2026")
@@ -161,8 +147,7 @@ def _make_summary_row(s_val: str, aj_val: str = "0", ak_val: str = "0") -> list[
 
 class TestGetSummaryHoursParseCell:
 
-    def _run(self, s_val: str, aj_val: str = "0", ak_val: str = "0"):
-        client = _make_client()
+    def _run(self, client, s_val: str, aj_val: str = "0", ak_val: str = "0"):
         mock_ws = MagicMock()
         mock_ws.get_all_values.return_value = [
             _make_summary_row(s_val, aj_val, ak_val)
@@ -170,38 +155,38 @@ class TestGetSummaryHoursParseCell:
         client._spreadsheet.worksheet.return_value = mock_ws
         return client.get_summary_hours(99999, "Май 2026")
 
-    def test_parse_cell_dot_decimal(self):
+    def test_parse_cell_dot_decimal(self, sheets_client):
         """'8/1.5' (точка) → h_first=8.0, ah_first=1.5."""
-        result = self._run("8/1.5")
+        result = self._run(sheets_client, "8/1.5")
         assert result["h_first"] == 8.0
         assert result["ah_first"] == 1.5
 
-    def test_parse_cell_comma_decimal_russian_locale(self):
+    def test_parse_cell_comma_decimal_russian_locale(self, sheets_client):
         """'8/1,5' (запятая, русская локаль) → h_first=8.0, ah_first=1.5."""
-        result = self._run("8/1,5")
+        result = self._run(sheets_client, "8/1,5")
         assert result["h_first"] == 8.0
         assert result["ah_first"] == 1.5
 
-    def test_parse_cell_zero_ah(self):
+    def test_parse_cell_zero_ah(self, sheets_client):
         """'8/0' → h_first=8.0, ah_first=0.0."""
-        result = self._run("8/0")
+        result = self._run(sheets_client, "8/0")
         assert result["h_first"] == 8.0
         assert result["ah_first"] == 0.0
 
-    def test_parse_cell_plain_number(self):
+    def test_parse_cell_plain_number(self, sheets_client):
         """'8' (без слэша) → h_first=8.0, ah_first=0.0."""
-        result = self._run("8")
+        result = self._run(sheets_client, "8")
         assert result["h_first"] == 8.0
         assert result["ah_first"] == 0.0
 
-    def test_parse_cell_empty(self):
+    def test_parse_cell_empty(self, sheets_client):
         """Пустая ячейка → h_first=0.0, ah_first=0.0."""
-        result = self._run("")
+        result = self._run(sheets_client, "")
         assert result["h_first"] == 0.0
         assert result["ah_first"] == 0.0
 
-    def test_parse_cell_comma_both_parts(self):
+    def test_parse_cell_comma_both_parts(self, sheets_client):
         """'8,5/1,5' → h_first=8.5, ah_first=1.5."""
-        result = self._run("8,5/1,5")
+        result = self._run(sheets_client, "8,5/1,5")
         assert result["h_first"] == 8.5
         assert result["ah_first"] == 1.5

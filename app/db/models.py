@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
-from config import DB_PATH, SUPERADMIN_IDS
+from config import DB_PATH, SUPERADMIN_IDS, DEPT_TO_ADMIN_ROLE
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ def save_user(telegram_id: int, full_name: str, role: str,
             ''', (telegram_id, full_name, role, department, position, hourly_rate,
                   datetime.now(ZoneInfo("Europe/Moscow")).isoformat()))
             conn.commit()
-        logger.info("Пользователь %s (%s) сохранён в БД с ролью %s", telegram_id, full_name, role)
+        logger.info("Пользователь %s сохранён в БД с ролью %s", telegram_id, role)
     except sqlite3.Error as e:
         logger.error("Ошибка при сохранении пользователя %s в БД: %s", telegram_id, e)
         raise
@@ -412,32 +412,6 @@ async def get_users_rates_by_department(db_path: str, department: str) -> list[d
     ]
 
 
-async def get_all_users_rates(db_path: str) -> list[dict]:
-    """
-    Возвращает всех сотрудников с персональными ставками (JOIN users + user_rates).
-    Исключает superadmin и developer.
-    """
-    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            'SELECT u.telegram_id, u.full_name, u.department, u.position, ur.base_rate, ur.extra_rate '
-            'FROM users u JOIN user_rates ur ON u.telegram_id = ur.telegram_id '
-            'WHERE u.role NOT IN ("superadmin", "developer")',
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [
-        {
-            "telegram_id": r["telegram_id"],
-            "full_name": r["full_name"],
-            "department": r["department"],
-            "position": r["position"],
-            "base_rate": r["base_rate"],
-            "extra_rate": r["extra_rate"],
-        }
-        for r in rows
-    ]
-
-
 async def get_admins_by_department(db_path: str, department: str) -> list[int]:
     """
     Возвращает список telegram_id админов отдела + суперадминов.
@@ -451,13 +425,7 @@ async def get_admins_by_department(db_path: str, department: str) -> list[int]:
         Пустой список если отдел неизвестен или получателей нет
     """
     async with aiosqlite.connect(db_path) as db:
-        role_map = {
-            "Зал": "admin_hall",
-            "Бар": "admin_bar",
-            "Кухня": "admin_kitchen",
-            "МОП": "admin_hall",  # МОП подчиняется admin_hall
-        }
-        role = role_map.get(department)
+        role = DEPT_TO_ADMIN_ROLE.get(department)
         if not role:
             return []
 

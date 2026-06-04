@@ -1,56 +1,7 @@
 import sqlite3
-import tempfile
-import os
 import pytest
-import pytest_asyncio
 
 from app.db.models import snapshot_user_rates_history
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _create_schema(db_path: str) -> None:
-    """Создаёт минимальную схему для тестов snapshot_user_rates_history."""
-    with sqlite3.connect(db_path) as conn:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                telegram_id INTEGER PRIMARY KEY,
-                full_name   TEXT NOT NULL,
-                role        TEXT NOT NULL,
-                department  TEXT,
-                position    TEXT,
-                hourly_rate REAL,
-                created_at  TEXT NOT NULL
-            )
-        ''')
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_rates (
-                telegram_id INTEGER PRIMARY KEY REFERENCES users(telegram_id),
-                base_rate   REAL NOT NULL,
-                extra_rate  REAL,
-                updated_at  TEXT NOT NULL
-            )
-        ''')
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_rates_history (
-                telegram_id INTEGER NOT NULL,
-                base_rate   REAL    NOT NULL,
-                extra_rate  REAL,
-                month       INTEGER NOT NULL,
-                year        INTEGER NOT NULL,
-                PRIMARY KEY (telegram_id, month, year)
-            )
-        ''')
-        conn.commit()
-
-
-def _insert_user(conn: sqlite3.Connection, telegram_id: int) -> None:
-    conn.execute(
-        'INSERT OR IGNORE INTO users (telegram_id, full_name, role, created_at) VALUES (?, ?, ?, ?)',
-        (telegram_id, f"User {telegram_id}", "user", "2026-01-01T00:00:00"),
-    )
 
 
 def _insert_user_rate(conn: sqlite3.Connection, telegram_id: int,
@@ -81,30 +32,16 @@ def _fetch_history(db_path: str, month: int, year: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def db_path():
-    """Временный SQLite-файл на диске; удаляется после теста."""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    _create_schema(path)
-    yield path
-    os.unlink(path)
-
-
-# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_snapshot_basic(db_path):
+async def test_snapshot_basic(db_path, insert_user):
     """Базовый снимок: записи из user_rates копируются в user_rates_history."""
     with sqlite3.connect(db_path) as conn:
-        _insert_user(conn, 1001)
-        _insert_user(conn, 1002)
-        _insert_user(conn, 1003)
+        insert_user(conn, 1001)
+        insert_user(conn, 1002)
+        insert_user(conn, 1003)
         _insert_user_rate(conn, 1001, 250.0)
         _insert_user_rate(conn, 1002, 350.0, 500.0)
         _insert_user_rate(conn, 1003, 200.0, 300.0)
@@ -125,11 +62,11 @@ async def test_snapshot_basic(db_path):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_idempotency(db_path):
+async def test_snapshot_idempotency(db_path, insert_user):
     """Повторный вызов с теми же месяц/год НЕ дублирует строки (INSERT OR IGNORE)."""
     with sqlite3.connect(db_path) as conn:
-        _insert_user(conn, 2001)
-        _insert_user(conn, 2002)
+        insert_user(conn, 2001)
+        insert_user(conn, 2002)
         _insert_user_rate(conn, 2001, 250.0)
         _insert_user_rate(conn, 2002, 350.0, 500.0)
         conn.commit()
@@ -142,10 +79,10 @@ async def test_snapshot_idempotency(db_path):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_different_months(db_path):
+async def test_snapshot_different_months(db_path, insert_user):
     """Снимки за разные месяцы хранятся независимо."""
     with sqlite3.connect(db_path) as conn:
-        _insert_user(conn, 3001)
+        insert_user(conn, 3001)
         _insert_user_rate(conn, 3001, 280.0)
         conn.commit()
 

@@ -4,8 +4,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
+from gspread.utils import rowcol_to_a1
 
-from config import PHANTOM_CHECK_FILLING_ID, SUPERADMIN_IDS, DEVELOPER_ID, DB_PATH
+from config import PHANTOM_CHECK_FILLING_ID, SUPERADMIN_IDS, DEVELOPER_ID
 from app.services.google_sheets import MONTH_NAMES_RU
 from app.utils.text_utils import format_alert
 from app.db.models import (
@@ -170,10 +171,10 @@ async def _transfer_phantom_to_new_month(
         try:
             old_ws = sheets_client._spreadsheet.worksheet(old_sheet_name)
             old_values = old_ws.get_all_values()
-        except Exception as e:
-            logger.error(
-                "_transfer_phantom_to_new_month: ошибка чтения листа '%s': %s",
-                old_sheet_name, e,
+        except Exception:
+            logger.exception(
+                "_transfer_phantom_to_new_month: ошибка чтения листа '%s'",
+                old_sheet_name,
             )
             return
 
@@ -198,7 +199,9 @@ async def _transfer_phantom_to_new_month(
                         "Создайте фантома вручную в новом листе.",
                     )
                 except Exception:
-                    pass
+                    logger.exception(
+                        "_transfer_phantom_to_new_month: не удалось уведомить суперадмина %s", sid
+                    )
             return
 
         full_name = phantom_row_data[0] if len(phantom_row_data) > 0 else "Наполняемость чека"
@@ -209,10 +212,10 @@ async def _transfer_phantom_to_new_month(
         try:
             new_ws = sheets_client._spreadsheet.worksheet(new_sheet_name)
             new_values = new_ws.get_all_values()
-        except Exception as e:
-            logger.error(
-                "_transfer_phantom_to_new_month: ошибка чтения листа '%s': %s",
-                new_sheet_name, e,
+        except Exception:
+            logger.exception(
+                "_transfer_phantom_to_new_month: ошибка чтения листа '%s'",
+                new_sheet_name,
             )
             return
 
@@ -322,10 +325,10 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 "Снимок ставок сохранён в user_rates_history: %d/%d",
                 current_month, current_year,
             )
-        except Exception as snap_err:
-            logger.error(
-                "switch_month: не удалось сохранить user_rates_history %d/%d: %s",
-                current_month, current_year, snap_err,
+        except Exception:
+            logger.exception(
+                "switch_month: не удалось сохранить user_rates_history %d/%d",
+                current_month, current_year,
             )
 
         # Применяем запланированные будущие ставки
@@ -348,7 +351,9 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                         "Проверьте user_rates вручную.",
                     )
                 except Exception:
-                    pass
+                    logger.exception(
+                        "switch_month: не удалось уведомить суперадмина %s об ошибке future_rates", sid
+                    )
 
         # Проверка: лист следующего месяца уже существует
         existing_titles = {ws.title for ws in sheets_client._spreadsheet.worksheets()}
@@ -431,8 +436,8 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             logger.error("switch_month: ошибка установки формата D-AK: %s", e, exc_info=True)
 
         # Step c: Update C2 (month name) and T2 (year)
-        new_ws.update_cell(2, 3, MONTH_NAMES_RU[next_month])
-        new_ws.update_cell(2, 20, next_year)
+        new_ws.update([[MONTH_NAMES_RU[next_month]]], rowcol_to_a1(2, 3), value_input_option="RAW")
+        new_ws.update([[next_year]], rowcol_to_a1(2, 20), value_input_option="RAW")
         logger.info(
             "switch_month: обновлены C2='%s', T2=%d в листе '%s'",
             MONTH_NAMES_RU[next_month], next_year, next_name,

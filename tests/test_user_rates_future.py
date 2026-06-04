@@ -1,6 +1,4 @@
 import sqlite3
-import tempfile
-import os
 import pytest
 
 from app.db.models import (
@@ -12,67 +10,16 @@ from app.db.models import (
 
 
 # ---------------------------------------------------------------------------
-# Schema helpers
-# ---------------------------------------------------------------------------
-
-def _create_schema(db_path: str) -> None:
-    with sqlite3.connect(db_path) as conn:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                telegram_id INTEGER PRIMARY KEY,
-                full_name   TEXT NOT NULL,
-                role        TEXT NOT NULL,
-                department  TEXT,
-                position    TEXT,
-                hourly_rate REAL,
-                created_at  TEXT NOT NULL
-            )
-        ''')
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_rates_future (
-                telegram_id      INTEGER PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
-                base_rate        REAL NOT NULL,
-                extra_rate       REAL,
-                effective_month  INTEGER NOT NULL,
-                effective_year   INTEGER NOT NULL,
-                created_at       TEXT NOT NULL
-            )
-        ''')
-        conn.commit()
-
-
-def _insert_user(conn: sqlite3.Connection, telegram_id: int) -> None:
-    conn.execute(
-        'INSERT OR IGNORE INTO users (telegram_id, full_name, role, created_at) '
-        'VALUES (?, ?, ?, ?)',
-        (telegram_id, f"User {telegram_id}", "user", "2026-01-01T00:00:00"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Fixture
-# ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def db_path():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    _create_schema(path)
-    yield path
-    os.unlink(path)
-
-
-# ---------------------------------------------------------------------------
 # Tests: set_user_rate_future
 # ---------------------------------------------------------------------------
 
 class TestSetUserRateFuture:
 
     @pytest.mark.asyncio
-    async def test_set_user_rate_future_create(self, db_path):
+    async def test_set_user_rate_future_create(self, db_path, insert_user):
         """Новая запись создаётся с правильными данными."""
         with sqlite3.connect(db_path) as conn:
-            _insert_user(conn, 12345)
+            insert_user(conn, 12345)
             conn.commit()
 
         await set_user_rate_future(db_path, 12345, 400.0, None, 5, 2026)
@@ -86,10 +33,10 @@ class TestSetUserRateFuture:
         assert result["effective_year"] == 2026
 
     @pytest.mark.asyncio
-    async def test_set_user_rate_future_update(self, db_path):
+    async def test_set_user_rate_future_update(self, db_path, insert_user):
         """Повторный вызов обновляет запись, не дублирует её."""
         with sqlite3.connect(db_path) as conn:
-            _insert_user(conn, 12345)
+            insert_user(conn, 12345)
             conn.commit()
 
         await set_user_rate_future(db_path, 12345, 400.0, None, 5, 2026)
@@ -111,10 +58,10 @@ class TestSetUserRateFuture:
         assert count == 1
 
     @pytest.mark.asyncio
-    async def test_set_user_rate_future_with_extra(self, db_path):
+    async def test_set_user_rate_future_with_extra(self, db_path, insert_user):
         """Запись с extra_rate сохраняется корректно."""
         with sqlite3.connect(db_path) as conn:
-            _insert_user(conn, 67890)
+            insert_user(conn, 67890)
             conn.commit()
 
         await set_user_rate_future(db_path, 67890, 300.0, 450.0, 5, 2026)
@@ -147,10 +94,10 @@ class TestGetUserRateFuture:
 class TestDeleteUserRateFuture:
 
     @pytest.mark.asyncio
-    async def test_delete_user_rate_future(self, db_path):
+    async def test_delete_user_rate_future(self, db_path, insert_user):
         """Удаление существующей записи — запись пропадает из БД."""
         with sqlite3.connect(db_path) as conn:
-            _insert_user(conn, 12345)
+            insert_user(conn, 12345)
             conn.commit()
 
         await set_user_rate_future(db_path, 12345, 400.0, None, 5, 2026)
@@ -179,11 +126,11 @@ class TestGetAllFutureRates:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_get_all_future_rates_multiple(self, db_path):
+    async def test_get_all_future_rates_multiple(self, db_path, insert_user):
         """Три записи возвращаются полностью и с корректными данными."""
         with sqlite3.connect(db_path) as conn:
             for tid in (111, 222, 333):
-                _insert_user(conn, tid)
+                insert_user(conn, tid)
             conn.commit()
 
         await set_user_rate_future(db_path, 111, 300.0, None, 5, 2026)

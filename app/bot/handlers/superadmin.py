@@ -18,7 +18,11 @@ from app.db.models import get_all_users, get_user, get_user_rate, get_user_rate_
 from app.scheduler.monthly_switch import switch_month, notify_switch_done, get_next_sheet_name
 from app.services.google_sheets import GoogleSheetsClient
 from app.services.roles_cache import RolesCacheService
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, EXTRA_RATE_LABELS
+from app.utils.formatting import fmt_money, fmt_emp_rate
+from config import (
+    DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, EXTRA_RATE_LABELS,
+    DEPARTMENTS, DEPT_TO_ADMIN_ROLE, MONTH_NAMES_SHORT,
+)
 
 _sheets_client = GoogleSheetsClient()
 
@@ -31,61 +35,14 @@ def _is_allowed(tg_id: int) -> bool:
 
 _DEPT_EMOJIS = {"Зал": "🍽", "Бар": "🍺", "Кухня": "🔪", "МОП": "🧹"}
 
-_MONTH_NAMES = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
-
-_DEPT_POSITIONS_ORDER: dict[str, list[str]] = {
-    "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
-    "Бар":   ["Бармен", "Барбэк"],
-    "Кухня": ["Руководящий состав", "Горячий цех", "Холодный цех", "Кондитерский цех",
-               "Заготовочный цех", "Коренной цех", "Грузчик", "Закупщик"],
-    "МОП":   ["Клининг", "Котломой"],
-}
-
-
-def _fmt_money(v: float) -> str:
-    return str(int(v)) if v == int(v) else f"{v:.2f}"
-
-
-def _fmt_emp_rate(emp: dict) -> str:
-    base = emp.get("base_rate")
-    if base is None:
-        return "не установлена"
-    extra = emp.get("extra_rate")
-    if extra is not None:
-        return f"{_fmt_money(base)}/{_fmt_money(extra)} р/ч"
-    return f"{_fmt_money(base)} р/ч"
-
 
 def _format_position_group(pos: str, group: list[dict]) -> list[str]:
     n = len(group)
     rates_unique = {(emp.get("base_rate"), emp.get("extra_rate")) for emp in group}
     if len(rates_unique) == 1:
-        rate_str = _fmt_emp_rate(group[0])
+        rate_str = fmt_emp_rate(group[0])
         return [f"{pos} ({n} чел.): {rate_str}" if n > 1 else f"{pos}: {rate_str}"]
-    return [f"{emp['full_name']} ({pos}): {_fmt_emp_rate(emp)}" for emp in group]
-
-
-def _format_rates_grouped(employees: list[dict]) -> list[str]:
-    """Форматирует список сотрудников со ставками по схеме: отдел → позиция (схлопывание)."""
-    lines = ["📊 Все ставки"]
-    for dept, emoji in _DEPT_EMOJIS.items():
-        dept_emps = [e for e in employees if e.get("department") == dept]
-        if not dept_emps:
-            continue
-        lines.append(f"{emoji} {dept}")
-        by_pos: dict[str, list] = {}
-        for emp in dept_emps:
-            pos = emp.get("position") or "—"
-            by_pos.setdefault(pos, []).append(emp)
-        ordered = list(_DEPT_POSITIONS_ORDER.get(dept, []))
-        for pos in by_pos:
-            if pos not in ordered:
-                ordered.append(pos)
-        for pos in ordered:
-            group = by_pos.get(pos)
-            if group:
-                lines += _format_position_group(pos, group)
-    return lines
+    return [f"{emp['full_name']} ({pos}): {fmt_emp_rate(emp)}" for emp in group]
 
 
 @superadmin_router.message(Command("message_all"))
@@ -138,9 +95,9 @@ async def cmd_rates_all(message: Message):
 
             rate = await get_user_rate(DB_PATH, uid)
             if rate:
-                base = _fmt_money(rate["base_rate"])
+                base = fmt_money(rate["base_rate"])
                 if rate.get("extra_rate"):
-                    extra = _fmt_money(rate["extra_rate"])
+                    extra = fmt_money(rate["extra_rate"])
                     extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
                     rate_text = f"{base}/{extra} р/ч ({extra_label})"
                 else:
@@ -150,8 +107,8 @@ async def cmd_rates_all(message: Message):
 
             future = await get_user_rate_future(DB_PATH, uid)
             if future:
-                future_base = _fmt_money(future["base_rate"])
-                month_name = _MONTH_NAMES[future["effective_month"]]
+                future_base = fmt_money(future["base_rate"])
+                month_name = MONTH_NAMES_SHORT[future["effective_month"] - 1]
                 rate_text += f"\n    📅 С 1 {month_name}: {future_base} р/ч"
 
             lines.append(f"  • {full_name} ({position}): {rate_text}")
@@ -212,10 +169,10 @@ async def cb_switch_month_confirm(callback: CallbackQuery):
             result["old_sheet"], result["new_sheet"],
         )
         await notify_switch_done(callback.bot, DB_PATH, result)
-    except Exception as e:
-        logger.error("switch_month_confirm: ошибка переключения: %s", e)
+    except Exception:
+        logger.exception("switch_month_confirm: ошибка переключения")
         await callback.message.edit_text(
-            f"❌ Ошибка при переключении месяца:\n\n{type(e).__name__}: {e}"
+            "⚠️ Ошибка при переключении месяца. Подробности в логах."
         )
 
 
@@ -236,18 +193,11 @@ _PROMOTE_VALID_POSITIONS: dict[str, list[str]] = {
     "МОП":   ["Клининг", "Котломой"],
 }
 
-_DEPT_TO_ADMIN_ROLE: dict[str, str] = {
-    "Зал":   "admin_hall",
-    "Бар":   "admin_bar",
-    "Кухня": "admin_kitchen",
-    "МОП":   "admin_hall",
-}
-
 
 def _promote_dept_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=dept, callback_data=f"promote_dept:{dept}")]
-        for dept in ("Зал", "Бар", "Кухня", "МОП")
+        for dept in DEPARTMENTS
     ]
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="promote_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -419,7 +369,7 @@ async def cb_promote_confirm(callback: CallbackQuery, state: FSMContext):
     dept = employee["department"] or ""
     position = employee["position"]
 
-    new_role = _DEPT_TO_ADMIN_ROLE.get(dept)
+    new_role = DEPT_TO_ADMIN_ROLE.get(dept)
     if not new_role:
         logger.error("promote_confirm: неизвестный отдел '%s' для %s", dept, employee_id)
         await callback.answer("Неизвестный отдел.", show_alert=True)
@@ -474,17 +424,11 @@ async def cb_promote_cancel(callback: CallbackQuery, state: FSMContext):
 # --- /demote ---
 
 _ADMIN_ROLES = {"admin_hall", "admin_bar", "admin_kitchen"}
-_DEPT_TO_ADMIN_ROLES: dict[str, set[str]] = {
-    "Зал":   {"admin_hall"},
-    "Бар":   {"admin_bar"},
-    "Кухня": {"admin_kitchen"},
-    "МОП":   {"admin_hall"},
-}
 
 
 async def _get_admins_for_demote(dept: str) -> list[dict]:
     """Возвращает администраторов (admin_hall/bar/kitchen) из заданного подразделения."""
-    roles = _DEPT_TO_ADMIN_ROLES.get(dept, set())
+    roles = {DEPT_TO_ADMIN_ROLE[dept]} if dept in DEPT_TO_ADMIN_ROLE else set()
     if not roles:
         return []
     placeholders = ",".join("?" * len(roles))
@@ -502,7 +446,7 @@ async def _get_admins_for_demote(dept: str) -> list[dict]:
 def _demote_dept_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=dept, callback_data=f"demote_dept:{dept}")]
-        for dept in ("Зал", "Бар", "Кухня", "МОП")
+        for dept in DEPARTMENTS
     ]
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="demote_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

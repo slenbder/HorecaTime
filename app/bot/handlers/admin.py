@@ -14,23 +14,17 @@ from aiogram.types import (
 from app.bot.fsm.auth_states import AuthStates
 from app.bot.fsm.shift_states import SetRateStates
 from app.db.models import get_users_by_department, get_all_users, get_users_rates_by_department, set_user_rate, set_user_rate_future, get_user_role, get_user_rate, get_user_rate_future
-from config import DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA, EXTRA_RATE_LABELS
+from app.utils.formatting import fmt_money, fmt_emp_rate
+from config import (
+    DB_PATH, SUPERADMIN_IDS, DEVELOPER_ID, POSITIONS_WITH_EXTRA, EXTRA_RATE_LABELS,
+    DEPARTMENTS, ADMIN_ROLE_TO_DEPT, MONTH_NAMES_SHORT,
+)
 
 admin_router = Router()
 logger = logging.getLogger(__name__)
 error_logger = logging.getLogger("errors")
 
 _ALLOWED_ROLES = {"admin_hall", "admin_bar", "admin_kitchen", "superadmin", "developer"}
-
-_ROLE_TO_DEPT = {
-    "admin_hall":    "Зал",
-    "admin_bar":     "Бар",
-    "admin_kitchen": "Кухня",
-}
-
-_DEPT_BUTTONS = ["Зал", "Бар", "Кухня", "МОП"]
-
-_MONTH_NAMES = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 _DEPT_POSITIONS = {
     "Зал":   ["Менеджер", "Официант", "Раннер", "Хостесс"],
@@ -67,7 +61,7 @@ def _positions_for_dept(dept: str) -> list[str]:
 def _dept_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=dept, callback_data=f"broadcast_dept:{dept}")]
-        for dept in _DEPT_BUTTONS
+        for dept in DEPARTMENTS
     ]
     buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -82,33 +76,18 @@ def _hall_dept_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _fmt_money(v: float) -> str:
-    return str(int(v)) if v == int(v) else f"{v:.2f}"
-
-
-# --- /rates ---
-
-def _fmt_emp_rate(emp: dict) -> str:
-    """Форматирует ставку сотрудника: 'base р/ч' или 'base/extra р/ч' или 'не установлена'."""
-    base = emp.get("base_rate")
-    if base is None:
-        return "не установлена"
-    extra = emp.get("extra_rate")
-    if extra is not None:
-        return f"{_fmt_money(base)}/{_fmt_money(extra)} р/ч"
-    return f"{_fmt_money(base)} р/ч"
 
 
 @admin_router.message(Command("rates"))
 async def cmd_rates(message: Message):
     tg_id = message.from_user.id
     role = await _resolve_sender_role(tg_id)
-    if role not in _ROLE_TO_DEPT:
+    if role not in ADMIN_ROLE_TO_DEPT:
         logger.warning("/rates: доступ запрещён для %s (role=%s)", tg_id, role)
         await message.answer("⛔️ Недостаточно прав.")
         return
 
-    dept = _ROLE_TO_DEPT[role]
+    dept = ADMIN_ROLE_TO_DEPT[role]
     logger.info("/rates: %s запрашивает ставки отдела %s", tg_id, dept)
 
     all_users = await get_all_users(DB_PATH)
@@ -130,9 +109,9 @@ async def cmd_rates(message: Message):
 
         rate = await get_user_rate(DB_PATH, uid)
         if rate:
-            base = _fmt_money(rate["base_rate"])
+            base = fmt_money(rate["base_rate"])
             if rate.get("extra_rate"):
-                extra = _fmt_money(rate["extra_rate"])
+                extra = fmt_money(rate["extra_rate"])
                 extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
                 rate_text = f"{base}/{extra} р/ч ({extra_label})"
             else:
@@ -142,8 +121,8 @@ async def cmd_rates(message: Message):
 
         future = await get_user_rate_future(DB_PATH, uid)
         if future:
-            future_base = _fmt_money(future["base_rate"])
-            month_name = _MONTH_NAMES[future["effective_month"]]
+            future_base = fmt_money(future["base_rate"])
+            month_name = MONTH_NAMES_SHORT[future["effective_month"] - 1]
             rate_text += f"\n  📅 С 1 {month_name}: {future_base} р/ч"
 
         lines.append(f"• {full_name} ({position}): {rate_text}")
@@ -186,11 +165,11 @@ async def _apply_rate_change(
         if extra_rate is not None:
             extra_label = EXTRA_RATE_LABELS.get(position, "повышенная")
             rate_text = (
-                f"Базовая: {_fmt_money(base_rate)} р/ч\n"
-                f"Повышенная ({extra_label}): {_fmt_money(extra_rate)} р/ч"
+                f"Базовая: {fmt_money(base_rate)} р/ч\n"
+                f"Повышенная ({extra_label}): {fmt_money(extra_rate)} р/ч"
             )
         else:
-            rate_text = f"{_fmt_money(base_rate)} р/ч"
+            rate_text = f"{fmt_money(base_rate)} р/ч"
 
         await message.answer(f"✅ Ставка установлена {period_text}:\n{rate_text}")
 
@@ -214,7 +193,7 @@ async def cmd_set_rate(message: Message, state: FSMContext) -> None:
     logger.info("/set_rate: запрос от %s (role=%s)", user_id, user_role)
 
     if user_role in ("admin_hall", "admin_bar", "admin_kitchen"):
-        dept = _ROLE_TO_DEPT.get(user_role)
+        dept = ADMIN_ROLE_TO_DEPT.get(user_role)
         if not dept:
             await message.answer("⚠️ Не удалось определить ваш отдел.")
             return
@@ -234,7 +213,7 @@ async def cmd_set_rate(message: Message, state: FSMContext) -> None:
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=dept, callback_data=f"setrate_dept:{dept}")]
-            for dept in ["Зал", "Бар", "Кухня", "МОП"]
+            for dept in DEPARTMENTS
         ] + [[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_set_rate")]])
 
         await message.answer("Выберите отдел:", reply_markup=kb)
@@ -399,8 +378,8 @@ async def cmd_message_dept(message: Message, state: FSMContext, user_role: str =
         await state.set_state(AuthStates.waiting_broadcast_dept)
         logger.info("/message_dept: %s (role=admin_hall) → показываю выбор Зал/МОП", tg_id)
         await message.answer("Выберите отдел для рассылки:", reply_markup=_hall_dept_keyboard())
-    elif user_role in _ROLE_TO_DEPT:
-        dept = _ROLE_TO_DEPT[user_role]
+    elif user_role in ADMIN_ROLE_TO_DEPT:
+        dept = ADMIN_ROLE_TO_DEPT[user_role]
         await state.update_data(broadcast_type="dept", broadcast_dept=dept)
         await state.set_state(AuthStates.waiting_broadcast_text)
         logger.info("/message_dept: %s (role=%s) → отдел %s, запрашиваю текст", tg_id, user_role, dept)

@@ -21,6 +21,7 @@ from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import get_user
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU, _format_shift_value, _parse_shift_raw
 from app.services.timeparsing import parse_shift, round_to_half
+from app.utils.formatting import fmt_hours
 from app.utils.text_utils import make_mention
 from config import DB_PATH, SUPERADMIN_IDS
 from app.db.models import get_admins_by_department
@@ -41,12 +42,7 @@ except Exception:
 # Вспомогательные функции
 # ---------------------------------------------------------------------------
 
-def _fmt_h(v: float) -> str:
-    """8.0 → '8', 8.5 → '8.5'"""
-    return str(int(v)) if v == int(v) else str(v)
-
-
-def _fmt_time(t: float) -> str:
+def _hours_hhmm(t: float) -> str:
     """Часы как float → 'HH:MM'"""
     h = int(t)
     m = int(round((t - h) * 60))
@@ -323,10 +319,10 @@ async def process_shift_input(message: Message, state: FSMContext):
         date = _date_str(result["day"], result["month"], result["year"])
         logger.info(
             "Смена записана: user=%s, date=%s, H=%s, position=Официант",
-            tg_id, date, _fmt_h(result["h"]),
+            tg_id, date, fmt_hours(result["h"]),
         )
         await state.update_data(shift_date=date, shift_hours=result["h"])
-        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(result['h'])} ч")
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {fmt_hours(result['h'])} ч")
         await _ask_about_loyalty_cards(message, state)
         return
 
@@ -348,7 +344,7 @@ async def process_shift_input(message: Message, state: FSMContext):
     weekend_note = " (выходной день)" if is_weekend else ""
 
     await message.answer(
-        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч{weekend_note}\n\n"
+        f"⏱ Смена {date}: Часы смены = {fmt_hours(h)} ч{weekend_note}\n\n"
         f"Введите доп. часы или 0:"
     )
     await state.set_state(ShiftStates.waiting_ah_input)
@@ -507,11 +503,11 @@ async def _write_waiter_no_photo(
 
     logger.info(
         "Смена записана: user=%s, date=%s, H=%s, position=Официант (без фото)",
-        tg_id, date, _fmt_h(h),
+        tg_id, date, fmt_hours(h),
     )
 
     await state.clear()
-    await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
+    await message.answer(f"✅ Смена {date} записана\nЧасы смены = {fmt_hours(h)} ч")
 
     hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
     recipients = hall_admin_ids
@@ -520,12 +516,12 @@ async def _write_waiter_no_photo(
     if not recipients:
         logger.warning("_write_waiter_no_photo: получатели пустые, уведомление не отправлено")
     else:
-        time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+        time_range = f"{_hours_hhmm(start)}–{_hours_hhmm(end)}"
         admin_text = (
             f"📋 Официант внёс смену\n\n"
             f"👤 {mention}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
+            f"⏱ {time_range} → Часы смены = {fmt_hours(h)} ч"
         )
         for admin_id in recipients:
             try:
@@ -534,7 +530,7 @@ async def _write_waiter_no_photo(
             except Exception as e:
                 error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
 
-    new_value = _fmt_h(h)
+    new_value = fmt_hours(h)
     if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
             and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)
@@ -649,8 +645,8 @@ async def _send_waiter_report(
         return
 
     mention = make_mention(message.from_user.username, full_name)
-    time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
-    h_str = _fmt_h(h)
+    time_range = f"{_hours_hhmm(start)}–{_hours_hhmm(end)}"
+    h_str = fmt_hours(h)
     approval_text = (
         f"👤 {mention} — Официант\n"
         f"📅 {date}\n"
@@ -1042,7 +1038,7 @@ async def _process_bar_shift_input(message: Message, state: FSMContext, position
         InlineKeyboardButton(text="❌ Нет", callback_data="bar_ah:no"),
     ]])
     await message.answer(
-        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\nБыли тусовочные часы?",
+        f"⏱ Смена {date}: Часы смены = {fmt_hours(h)} ч\n\nБыли тусовочные часы?",
         reply_markup=keyboard,
     )
     await state.set_state(ShiftStates.waiting_ah_choice)
@@ -1060,7 +1056,7 @@ async def cb_bar_ah_no(callback: CallbackQuery, state: FSMContext) -> None:
     h = data["h"]
 
     await callback.message.edit_text(
-        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\n❌ Тусовочных часов нет",
+        f"⏱ Смена {date}: Часы смены = {fmt_hours(h)} ч\n\n❌ Тусовочных часов нет",
     )
     await state.update_data(ah=0.0)
     await _write_and_finish_bar(callback.message, state, position, from_user=callback.from_user)
@@ -1074,7 +1070,7 @@ async def cb_bar_ah_yes(callback: CallbackQuery, state: FSMContext) -> None:
     h = data["h"]
 
     await callback.message.edit_text(
-        f"⏱ Смена {date}: Часы смены = {_fmt_h(h)} ч\n\n✅ Тусовочные: да",
+        f"⏱ Смена {date}: Часы смены = {fmt_hours(h)} ч\n\n✅ Тусовочные: да",
     )
     await callback.message.answer(
         "Введите количество тусовочных часов:\n\nНапример: 3 или 2.5"
@@ -1160,35 +1156,35 @@ async def _write_and_finish_bar(
 
     logger.info(
         "Смена записана: user=%s, date=%s, H=%s, AH=%s, position=%s",
-        tg_id, date, _fmt_h(h), _fmt_h(ah), position,
+        tg_id, date, fmt_hours(h), fmt_hours(ah), position,
     )
 
     # Ответ пользователю
     if ah > 0:
         await message.answer(
             f"✅ Смена {date} записана\n"
-            f"Часы смены = {_fmt_h(h)} ч | Тусовочные = {_fmt_h(ah)} ч"
+            f"Часы смены = {fmt_hours(h)} ч | Тусовочные = {fmt_hours(ah)} ч"
         )
     else:
-        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {fmt_hours(h)} ч")
 
     # Уведомление администраторам бара
     mention = make_mention(actual_user.username, full_name)
-    time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+    time_range = f"{_hours_hhmm(start)}–{_hours_hhmm(end)}"
     if ah > 0:
         admin_text = (
             f"📋 {position} внёс смену\n\n"
             f"👤 {mention}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч\n"
-            f"🎉 Тусовочные = {_fmt_h(ah)} ч"
+            f"⏱ {time_range} → Часы смены = {fmt_hours(h)} ч\n"
+            f"🎉 Тусовочные = {fmt_hours(ah)} ч"
         )
     else:
         admin_text = (
             f"📋 {position} внёс смену\n\n"
             f"👤 {mention}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
+            f"⏱ {time_range} → Часы смены = {fmt_hours(h)} ч"
         )
 
     bar_admin_ids = await get_admins_by_department(DB_PATH, "Бар")
@@ -1200,7 +1196,7 @@ async def _write_and_finish_bar(
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
-    new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
+    new_value = f"{fmt_hours(h)}/{fmt_hours(ah)}" if ah > 0 else fmt_hours(h)
     if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
             and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Бар", mention)
@@ -1281,16 +1277,16 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
 
         logger.info(
             "Смена записана: user=%s, date=%s, H=%s, position=%s",
-            tg_id, date, _fmt_h(h), position,
+            tg_id, date, fmt_hours(h), position,
         )
         written.append((date, h))
 
-        time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+        time_range = f"{_hours_hhmm(start)}–{_hours_hhmm(end)}"
         admin_text = (
             f"📋 {position} внёс смену\n\n"
             f"👤 {mention}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч"
+            f"⏱ {time_range} → Часы смены = {fmt_hours(h)} ч"
         )
         for admin_id in recipients:
             try:
@@ -1299,16 +1295,16 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
             except Exception as e:
                 error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
-        new_value = _fmt_h(h)
+        new_value = fmt_hours(h)
         if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
                 and old.strip() != new_value.strip():
             await _notify_overwrite(message, tg_id, day, month, old, new_value, dept, mention)
 
     if len(written) == 1:
         date, h = written[0]
-        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {fmt_hours(h)} ч")
     else:
-        lines_out = "\n".join(f"{d}: {_fmt_h(h)} ч" for d, h in written)
+        lines_out = "\n".join(f"{d}: {fmt_hours(h)} ч" for d, h in written)
         await message.answer(f"✅ Записано смен: {len(written)}\n{lines_out}")
 
     await state.clear()
@@ -1369,23 +1365,23 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     # Ответ пользователю
     if ah > 0:
         await message.answer(
-            f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч | Доп. часы = {_fmt_h(ah)} ч"
+            f"✅ Смена {date} записана\nЧасы смены = {fmt_hours(h)} ч | Доп. часы = {fmt_hours(ah)} ч"
         )
     else:
-        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {_fmt_h(h)} ч")
+        await message.answer(f"✅ Смена {date} записана\nЧасы смены = {fmt_hours(h)} ч")
 
     # Уведомление admin_hall
     mention = make_mention(message.from_user.username, full_name)
     weekend_mark = " 🌟 (выходной)" if is_weekend else ""
-    time_range = f"{_fmt_time(start)}–{_fmt_time(end)}"
+    time_range = f"{_hours_hhmm(start)}–{_hours_hhmm(end)}"
 
     if ah > 0:
         admin_text = (
             f"📋 Раннер внёс смену\n\n"
             f"👤 {mention}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}\n"
-            f"🔢 Доп. часы = {_fmt_h(ah)} ч\n"
+            f"⏱ {time_range} → Часы смены = {fmt_hours(h)} ч{weekend_mark}\n"
+            f"🔢 Доп. часы = {fmt_hours(ah)} ч\n"
             f"💬 {html.escape(comment)}"
         )
     else:
@@ -1393,7 +1389,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             f"📋 Раннер внёс смену\n\n"
             f"👤 {mention}\n"
             f"📅 {date}\n"
-            f"⏱ {time_range} → Часы смены = {_fmt_h(h)} ч{weekend_mark}"
+            f"⏱ {time_range} → Часы смены = {fmt_hours(h)} ч{weekend_mark}"
         )
 
     hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
@@ -1405,7 +1401,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
         except Exception as e:
             error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
 
-    new_value = f"{_fmt_h(h)}/{_fmt_h(ah)}" if ah > 0 else _fmt_h(h)
+    new_value = f"{fmt_hours(h)}/{fmt_hours(ah)}" if ah > 0 else fmt_hours(h)
     if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
             and old.strip() != new_value.strip():
         await _notify_overwrite(message, tg_id, day, month, old, new_value, "Зал", mention)

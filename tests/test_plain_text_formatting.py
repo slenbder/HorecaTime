@@ -10,18 +10,6 @@ from app.scheduler.monthly_switch import _make_formulas, _SIMPLE_H_POSITIONS
 
 
 # ---------------------------------------------------------------------------
-# Factory: GoogleSheetsClient без реального __init__
-# ---------------------------------------------------------------------------
-
-def _make_client():
-    from app.services.google_sheets import GoogleSheetsClient
-    client = object.__new__(GoogleSheetsClient)
-    client._spreadsheet = MagicMock()
-    client._client = MagicMock()
-    return client
-
-
-# ---------------------------------------------------------------------------
 # Test 1: switch_month устанавливает Plain text формат для D-AK нового листа
 # ---------------------------------------------------------------------------
 
@@ -89,8 +77,8 @@ async def test_switch_month_sets_plain_text_format():
 # Test 2: ensure_user устанавливает TEXT-формат для новой строки
 # ---------------------------------------------------------------------------
 
-def test_ensure_user_sets_plain_text_for_new_row():
-    client = _make_client()
+def test_ensure_user_sets_plain_text_for_new_row(sheets_client):
+    client = sheets_client
 
     client.get_user_by_telegram_id = MagicMock(return_value={
         "fio_from_user": "Петров Петр",

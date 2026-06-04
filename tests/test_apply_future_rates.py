@@ -11,74 +11,17 @@ from app.db.models import (
 
 
 # ---------------------------------------------------------------------------
-# Schema helpers
-# ---------------------------------------------------------------------------
-
-def _create_schema(db_path: str) -> None:
-    with sqlite3.connect(db_path) as conn:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                telegram_id INTEGER PRIMARY KEY,
-                full_name   TEXT NOT NULL,
-                role        TEXT NOT NULL,
-                department  TEXT,
-                position    TEXT,
-                hourly_rate REAL,
-                created_at  TEXT NOT NULL
-            )
-        ''')
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_rates (
-                telegram_id INTEGER PRIMARY KEY REFERENCES users(telegram_id),
-                base_rate   REAL NOT NULL,
-                extra_rate  REAL,
-                updated_at  TEXT NOT NULL
-            )
-        ''')
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_rates_future (
-                telegram_id      INTEGER PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
-                base_rate        REAL NOT NULL,
-                extra_rate       REAL,
-                effective_month  INTEGER NOT NULL,
-                effective_year   INTEGER NOT NULL,
-                created_at       TEXT NOT NULL
-            )
-        ''')
-        conn.commit()
-
-
-def _insert_user(conn: sqlite3.Connection, telegram_id: int) -> None:
-    conn.execute(
-        "INSERT INTO users (telegram_id, full_name, role, department, created_at) "
-        "VALUES (?, 'Test User', 'user', 'Кухня', datetime('now'))",
-        (telegram_id,),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Fixture
-# ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def db_path(tmp_path):
-    path = str(tmp_path / "test.db")
-    _create_schema(path)
-    return path
-
-
-# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 class TestApplyFutureRates:
 
     @pytest.mark.asyncio
-    async def test_apply_future_rates_success(self, db_path):
+    async def test_apply_future_rates_success(self, db_path, insert_user):
         """Две майские future-ставки применяются в user_rates и удаляются из future."""
         with sqlite3.connect(db_path) as conn:
-            _insert_user(conn, 111)
-            _insert_user(conn, 222)
+            insert_user(conn, 111)
+            insert_user(conn, 222)
             conn.commit()
 
         await set_user_rate(db_path, 111, 300.0, None)
@@ -102,11 +45,11 @@ class TestApplyFutureRates:
         assert await get_all_future_rates(db_path) == []
 
     @pytest.mark.asyncio
-    async def test_apply_future_rates_only_target_month(self, db_path):
+    async def test_apply_future_rates_only_target_month(self, db_path, insert_user):
         """Майская future-ставка применяется; июньская остаётся нетронутой."""
         with sqlite3.connect(db_path) as conn:
-            _insert_user(conn, 111)
-            _insert_user(conn, 222)
+            insert_user(conn, 111)
+            insert_user(conn, 222)
             conn.commit()
 
         await set_user_rate(db_path, 111, 300.0, None)
@@ -132,10 +75,10 @@ class TestApplyFutureRates:
         assert remaining[0]["effective_year"] == 2026
 
     @pytest.mark.asyncio
-    async def test_apply_future_rates_no_applicable(self, db_path):
+    async def test_apply_future_rates_no_applicable(self, db_path, insert_user):
         """Нет future-ставок на целевой месяц — user_rates не меняются, ошибки нет."""
         with sqlite3.connect(db_path) as conn:
-            _insert_user(conn, 111)
+            insert_user(conn, 111)
             conn.commit()
 
         await set_user_rate(db_path, 111, 300.0, None)

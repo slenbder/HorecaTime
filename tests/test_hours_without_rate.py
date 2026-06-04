@@ -24,50 +24,23 @@ def _make_message() -> MagicMock:
     return message
 
 
-class TestHoursWithoutRate:
+@pytest.mark.parametrize("cmd_handler,command", [
+    (cmd_hours_first, "/hours_first"),
+    (cmd_hours_second, "/hours_second"),
+    (cmd_hours_last, "/hours_last"),
+])
+@pytest.mark.asyncio
+async def test_hours_no_rate(cmd_handler, command):
+    """Юзер без ставки вызывает команду — получает сообщение с инструкцией."""
+    message = _make_message()
 
-    @pytest.mark.asyncio
-    async def test_hours_first_without_rate(self):
-        """Юзер без ставки вызывает /hours_first — получает сообщение с инструкцией."""
-        message = _make_message()
+    with (
+        patch("app.bot.handlers.userreports.get_user", return_value=_FAKE_USER),
+        patch("app.bot.handlers.userreports.get_user_rate", new=AsyncMock(return_value=None)),
+        patch("app.bot.handlers.userreports.get_user_rate_history", new=AsyncMock(return_value=None)),
+        patch("app.bot.handlers.userreports.sheets_client") as mock_sheets,
+    ):
+        mock_sheets.get_summary_hours.return_value = {"h1": 0}
+        await cmd_handler(message)
 
-        with (
-            patch("app.bot.handlers.userreports.get_user", return_value=_FAKE_USER),
-            patch("app.bot.handlers.userreports.get_user_rate", new=AsyncMock(return_value=None)),
-            patch("app.bot.handlers.userreports.sheets_client") as mock_sheets,
-        ):
-            mock_sheets.get_summary_hours.return_value = {"h1": 0}
-            await cmd_hours_first(message)
-
-        message.answer.assert_called_once_with(_EXPECTED_MSG)
-
-    @pytest.mark.asyncio
-    async def test_hours_second_without_rate(self):
-        """Юзер без ставки вызывает /hours_second — получает сообщение с инструкцией."""
-        message = _make_message()
-
-        with (
-            patch("app.bot.handlers.userreports.get_user", return_value=_FAKE_USER),
-            patch("app.bot.handlers.userreports.get_user_rate", new=AsyncMock(return_value=None)),
-            patch("app.bot.handlers.userreports.sheets_client") as mock_sheets,
-        ):
-            mock_sheets.get_summary_hours.return_value = {"h1": 0}
-            await cmd_hours_second(message)
-
-        message.answer.assert_called_once_with(_EXPECTED_MSG)
-
-    @pytest.mark.asyncio
-    async def test_hours_last_without_rate(self):
-        """Юзер без ставки вызывает /hours_last — получает сообщение с инструкцией."""
-        message = _make_message()
-
-        with (
-            patch("app.bot.handlers.userreports.get_user", return_value=_FAKE_USER),
-            patch("app.bot.handlers.userreports.get_user_rate", new=AsyncMock(return_value=None)),
-            patch("app.bot.handlers.userreports.get_user_rate_history", new=AsyncMock(return_value=None)),
-            patch("app.bot.handlers.userreports.sheets_client") as mock_sheets,
-        ):
-            mock_sheets.get_summary_hours.return_value = {"h1": 0}
-            await cmd_hours_last(message)
-
-        message.answer.assert_called_once_with(_EXPECTED_MSG)
+    message.answer.assert_called_once_with(_EXPECTED_MSG)

@@ -172,7 +172,13 @@ class GoogleSheetsClient:
         """
         logger.debug("Поиск пользователя %s в Техлисте", telegram_id)
         ws = self._get_techlist_worksheet()
-        all_values: List[List[Any]] = ws.get_all_values()
+        try:
+            all_values: List[List[Any]] = ws.get_all_values()
+        except Exception:
+            logger.warning("get_user_by_telegram_id: сетевой сбой, переподключаюсь")
+            self._reconnect()
+            ws = self._get_techlist_worksheet()
+            all_values = ws.get_all_values()
 
         for row_idx, row in enumerate(all_values[1:], start=2):
             if not row:
@@ -207,7 +213,13 @@ class GoogleSheetsClient:
         Возвращает номер строки.
         """
         ws = self._get_techlist_worksheet()
-        all_rows = ws.get_all_values()
+        try:
+            all_rows = ws.get_all_values()
+        except Exception:
+            logger.warning("add_or_update_pending_user: сетевой сбой, переподключаюсь")
+            self._reconnect()
+            ws = self._get_techlist_worksheet()
+            all_rows = ws.get_all_values()
         nick = nickname if nickname.startswith("@") else f"@{nickname}"
         now_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%y %H:%M")
 
@@ -218,14 +230,27 @@ class GoogleSheetsClient:
                 break
 
         if row_idx is not None:
-            ws.batch_update([
-                {"range": f"B{row_idx}", "values": [[nick]]},
-                {"range": f"C{row_idx}", "values": [[fio_from_user]]},
-                {"range": f"D{row_idx}", "values": [[department]]},
-                {"range": f"E{row_idx}", "values": [[position]]},
-                {"range": f"F{row_idx}", "values": [[now_str]]},
-                {"range": f"H{row_idx}", "values": [[custom_position]]},
-            ], value_input_option="RAW")
+            try:
+                ws.batch_update([
+                    {"range": f"B{row_idx}", "values": [[nick]]},
+                    {"range": f"C{row_idx}", "values": [[fio_from_user]]},
+                    {"range": f"D{row_idx}", "values": [[department]]},
+                    {"range": f"E{row_idx}", "values": [[position]]},
+                    {"range": f"F{row_idx}", "values": [[now_str]]},
+                    {"range": f"H{row_idx}", "values": [[custom_position]]},
+                ], value_input_option="RAW")
+            except Exception:
+                logger.warning("add_or_update_pending_user: сетевой сбой, переподключаюсь")
+                self._reconnect()
+                ws = self._get_techlist_worksheet()
+                ws.batch_update([
+                    {"range": f"B{row_idx}", "values": [[nick]]},
+                    {"range": f"C{row_idx}", "values": [[fio_from_user]]},
+                    {"range": f"D{row_idx}", "values": [[department]]},
+                    {"range": f"E{row_idx}", "values": [[position]]},
+                    {"range": f"F{row_idx}", "values": [[now_str]]},
+                    {"range": f"H{row_idx}", "values": [[custom_position]]},
+                ], value_input_option="RAW")
             logger.info(
                 "Обновлена заявка пользователя %s в строке %s, custom_position='%s'",
                 telegram_id,
@@ -246,7 +271,13 @@ class GoogleSheetsClient:
             custom_position,   # H: Должность
         ]
 
-        ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW")
+        try:
+            ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW")
+        except Exception:
+            logger.warning("add_or_update_pending_user: сетевой сбой, переподключаюсь")
+            self._reconnect()
+            ws = self._get_techlist_worksheet()
+            ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW")
         logger.info(
             "Создана новая заявка пользователя %s в строке %s, custom_position='%s'",
             telegram_id,
@@ -325,7 +356,17 @@ class GoogleSheetsClient:
         """
         logger.info("Проверка наличия %s в Техлисте (колонка A)", telegram_id)
         ws = self._get_techlist_worksheet()
-        all_values = ws.get_all_values()
+        try:
+            all_values = ws.get_all_values()
+        except Exception:
+            logger.warning("user_exists_in_techlist: сетевой сбой, переподключаюсь")
+            self._reconnect()
+            ws = self._get_techlist_worksheet()
+            try:
+                all_values = ws.get_all_values()
+            except Exception:
+                logger.warning("user_exists_in_techlist: повтор не удался, возвращаю False")
+                return False
         for row in all_values[1:]:
             if row and str(row[COL_TELEGRAM_ID - 1]).strip() == str(telegram_id):
                 logger.info("Пользователь %s найден в Техлисте", telegram_id)
@@ -443,7 +484,13 @@ class GoogleSheetsClient:
         department = str(user_info.get("department", "")).strip()
         position = str(user_info.get("position", "")).strip()
 
-        all_rows = month_ws.get_all_values()
+        try:
+            all_rows = month_ws.get_all_values()
+        except Exception:
+            logger.warning("ensure_user_in_current_month_hours: сетевой сбой, переподключаюсь")
+            self._reconnect()
+            month_ws = self._get_current_month_worksheet()
+            all_rows = month_ws.get_all_values()
         if not all_rows:
             raise ValueError(f"Лист '{month_ws.title}' пуст")
 
@@ -508,11 +555,21 @@ class GoogleSheetsClient:
 
         new_row = insert_after_row + 1
 
-        month_ws.insert_row(
-            [full_name, str(telegram_id), display_position],
-            index=new_row,
-            value_input_option="RAW",
-        )
+        try:
+            month_ws.insert_row(
+                [full_name, str(telegram_id), display_position],
+                index=new_row,
+                value_input_option="RAW",
+            )
+        except Exception:
+            logger.warning("ensure_user_in_current_month_hours: сетевой сбой, переподключаюсь")
+            self._reconnect()
+            month_ws = self._get_current_month_worksheet()
+            month_ws.insert_row(
+                [full_name, str(telegram_id), display_position],
+                index=new_row,
+                value_input_option="RAW",
+            )
 
         # Явно применяем границы для новой строки
         _solid = {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
@@ -1195,7 +1252,13 @@ class GoogleSheetsClient:
                     tech_row = i
                     break
             if tech_row is not None:
-                ws.delete_rows(tech_row)
+                try:
+                    ws.delete_rows(tech_row)
+                except Exception:
+                    logger.warning("dismiss_employee: сетевой сбой, переподключаюсь")
+                    self._reconnect()
+                    ws = self._get_techlist_worksheet()
+                    ws.delete_rows(tech_row)
                 logger.info(
                     "dismiss_employee: строка %d удалена из Техлиста (telegram_id=%s)",
                     tech_row, telegram_id,

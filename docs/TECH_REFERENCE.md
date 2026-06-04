@@ -552,6 +552,22 @@ SIMPLE_H_POSITIONS = (["Менеджер", "Хостесс"] + KITCHEN_POSITIONS
 LEADERSHIP_POSITION = "Руководящий состав"  # бывший "Шеф/Су-шеф"
 ```
 
+### Новые константы после рефакторинга (2026-05-29)
+
+```python
+DEPARTMENTS = ["Зал", "Бар", "Кухня", "МОП"]
+
+DEPT_TO_ADMIN_ROLE = {"Зал": "admin_hall", "Бар": "admin_bar",
+                       "Кухня": "admin_kitchen", "МОП": "admin_hall"}
+
+AH_PHOTO_COEFFICIENT = 0.5  # часов за одно фото
+
+COL_S=19, COL_AJ=36, COL_AK=37, COL_AL=38, COL_AM=39, COL_AN=40
+COLS_DATA_FIRST = set(range(4,19))   # дни 1-15
+COLS_DATA_SECOND = set(range(20,36)) # дни 16-конец
+MONTH_NAMES_SHORT = ["Янв"..."Дек"]
+```
+
 ---
 
 ## Формулы месячного листа
@@ -787,3 +803,9 @@ git push origin main
 ```
 
 Без `-f` изменения в models.py не попадут в коммит и не задеплоятся на сервер.
+
+---
+
+## Важные файлы
+
+- `app/utils/formatting.py` — общие утилиты форматирования

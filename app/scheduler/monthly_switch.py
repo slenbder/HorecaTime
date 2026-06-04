@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
+from gspread.utils import rowcol_to_a1
 
 from config import PHANTOM_CHECK_FILLING_ID, SUPERADMIN_IDS, DEVELOPER_ID
 from app.services.google_sheets import MONTH_NAMES_RU
@@ -435,8 +436,8 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             logger.error("switch_month: ошибка установки формата D-AK: %s", e, exc_info=True)
 
         # Step c: Update C2 (month name) and T2 (year)
-        new_ws.update_cell(2, 3, MONTH_NAMES_RU[next_month])
-        new_ws.update_cell(2, 20, next_year)
+        new_ws.update([[MONTH_NAMES_RU[next_month]]], rowcol_to_a1(2, 3), value_input_option="RAW")
+        new_ws.update([[next_year]], rowcol_to_a1(2, 20), value_input_option="RAW")
         logger.info(
             "switch_month: обновлены C2='%s', T2=%d в листе '%s'",
             MONTH_NAMES_RU[next_month], next_year, next_name,

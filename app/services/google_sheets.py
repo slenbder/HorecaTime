@@ -303,12 +303,12 @@ class GoogleSheetsClient:
         """
         ws = self._get_techlist_worksheet()
         try:
-            ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
+            ws.update([["ДА"]], gspread.utils.rowcol_to_a1(row_index, COL_IN_STAFF_TABLE), value_input_option="RAW")
         except Exception as e:
             logger.error("mark_user_approved: ошибка, реконнект: %s", e, exc_info=True)
             self._reconnect()
             ws = self._get_techlist_worksheet()
-            ws.update_cell(row_index, COL_IN_STAFF_TABLE, "ДА")
+            ws.update([["ДА"]], gspread.utils.rowcol_to_a1(row_index, COL_IN_STAFF_TABLE), value_input_option="RAW")
         logger.info("Пользователь в строке %s помечен как одобренный", row_index)
 
     def get_user_from_techlist(self, telegram_id: int) -> Optional[Dict[str, Any]]:
@@ -776,7 +776,7 @@ class GoogleSheetsClient:
                 except (ValueError, TypeError):
                     cur_val = 0.0
                 new_val = round(cur_val + h, 1)
-                ws.update_cell(user_row, weekend_col, new_val)
+                ws.update([[new_val]], gspread.utils.rowcol_to_a1(user_row, weekend_col), value_input_option="RAW")
                 logger.info(
                     "write_shift: Раннер выходной — %s%d = %s (лист='%s')",
                     col_letter, user_row, new_val, sheet_name,

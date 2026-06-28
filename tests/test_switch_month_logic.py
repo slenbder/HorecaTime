@@ -251,3 +251,98 @@ class TestBatchClearAndFormulas:
 
         new_ws.batch_clear.assert_not_called()
         new_ws.batch_update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Шаг 3 — батч-удаление строк
+# ---------------------------------------------------------------------------
+
+def _find_delete_call(client):
+    """Находит вызов _spreadsheet.batch_update с deleteDimension запросами."""
+    for c in client._spreadsheet.batch_update.call_args_list:
+        body = c[0][0] if c[0] else {}
+        if any("deleteDimension" in r for r in body.get("requests", [])):
+            return body["requests"]
+    return None
+
+
+class TestBatchRowDeletion:
+
+    @pytest.mark.asyncio
+    async def test_rows_deleted_in_single_batch_update(self):
+        """N строк к удалению → ровно один batch_update с deleteDimension."""
+        all_values = [
+            ["Уволен1", "101", "Официант"],
+            ["Уволен2", "102", "Бармен"],
+            ["Уволен3", "103", "Раннер"],
+        ]
+        client, _ = _make_sheets_client(all_values, dismissed={1, 2, 3}, in_techlist=False)
+
+        await _run_switch_month(client)
+
+        requests = _find_delete_call(client)
+        assert requests is not None, "deleteDimension batch_update не вызван"
+        assert len(requests) == 3
+
+    @pytest.mark.asyncio
+    async def test_delete_indices_descending_order(self):
+        """deleteDimension запросы идут от бо́льших индексов к меньшим — нет сдвига."""
+        # Rows 1 и 3 уволены (красные) + в техлисте → аномалия → удалить.
+        # Row 2 не уволен + в техлисте → перенести.
+        all_values = [
+            ["Уволен1", "101", "Официант"],   # row 1 — dismissed anomaly
+            ["Активный", "102", "Бармен"],    # row 2 — active
+            ["Уволен3", "103", "Раннер"],     # row 3 — dismissed anomaly
+        ]
+        client, _ = _make_sheets_client(all_values, dismissed={1, 3}, in_techlist=True)
+
+        await _run_switch_month(client)
+
+        requests = _find_delete_call(client)
+        assert requests is not None
+        # Индексы должны убывать: row 3 → startIndex=2, row 1 → startIndex=0
+        start_indices = [r["deleteDimension"]["range"]["startIndex"] for r in requests]
+        assert start_indices == sorted(start_indices, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_delete_uses_new_ws_sheet_id(self):
+        """sheetId в deleteDimension совпадает с id нового листа."""
+        all_values = [["Уволен", "101", "Официант"]]
+        client, new_ws = _make_sheets_client(all_values, dismissed={1}, in_techlist=False)
+        new_ws.id = 42  # явно зададим
+
+        await _run_switch_month(client)
+
+        requests = _find_delete_call(client)
+        assert requests is not None
+        for req in requests:
+            assert req["deleteDimension"]["range"]["sheetId"] == 42
+
+    @pytest.mark.asyncio
+    async def test_no_delete_when_no_rows_to_delete(self):
+        """Нет строк к удалению → deleteDimension batch_update не вызывается."""
+        all_values = [["Активный", "101", "Официант"]]
+        client, _ = _make_sheets_client(all_values, dismissed=set(), in_techlist=True)
+
+        await _run_switch_month(client)
+
+        requests = _find_delete_call(client)
+        assert requests is None
+
+    @pytest.mark.asyncio
+    async def test_startindex_is_zero_based(self):
+        """startIndex для строки N (1-based) должен быть N-1 (0-based)."""
+        # Row 1 — active (не уволен, в техлисте). Row 2 — уволен + в техлисте → аномалия → удалить.
+        all_values = [
+            ["Активный", "101", "Официант"],  # row 1 — active
+            ["Уволен",   "102", "Бармен"],    # row 2 — dismissed anomaly
+        ]
+        client, _ = _make_sheets_client(all_values, dismissed={2}, in_techlist=True)
+
+        await _run_switch_month(client)
+
+        requests = _find_delete_call(client)
+        assert requests is not None and len(requests) == 1
+        dim_range = requests[0]["deleteDimension"]["range"]
+        assert dim_range["startIndex"] == 1   # row 2 → 0-based index 1
+        assert dim_range["endIndex"] == 2

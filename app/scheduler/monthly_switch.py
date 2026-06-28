@@ -511,19 +511,27 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 len(rows_to_clear),
             )
 
-        # Step f (part 2): Delete dismissed rows bottom-up
-        for row_idx in sorted(rows_to_delete, reverse=True):
-            try:
-                new_ws.delete_rows(row_idx)
-                logger.info("switch_month: удалена строка %d из '%s'", row_idx, next_name)
-            except Exception as e:
-                logger.error(
-                    format_alert(
-                        "switch_month/delete_row",
-                        error=e,
-                        extra=f"строка: {row_idx} | {current_name} → {next_name}",
-                    )
-                )
+        # Step f (part 2): Delete dismissed rows — all in one API call.
+        # Requests ordered descending so earlier deletions don't shift later indices.
+        if rows_to_delete:
+            delete_requests = [
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": new_ws.id,
+                            "dimension": "ROWS",
+                            "startIndex": row_idx - 1,  # 0-based inclusive
+                            "endIndex": row_idx,         # 0-based exclusive
+                        }
+                    }
+                }
+                for row_idx in sorted(rows_to_delete, reverse=True)
+            ]
+            sheets_client._spreadsheet.batch_update({"requests": delete_requests})
+            logger.info(
+                "switch_month: удалено %d строк из '%s' одним batch_update",
+                len(rows_to_delete), next_name,
+            )
 
         # Переносим фантома (он не в Техлисте, поэтому удаляется как аномалия выше)
         await _transfer_phantom_to_new_month(sheets_client, current_name, next_name, bot)

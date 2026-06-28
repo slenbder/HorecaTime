@@ -374,6 +374,33 @@ class GoogleSheetsClient:
         logger.info("Пользователь %s НЕ найден в Техлисте", telegram_id)
         return False
 
+    def get_techlist_ids(self) -> set:
+        """
+        Reads the Techlist once and returns a set of normalised telegram_id strings (column A).
+        Use in batch operations (e.g. switch_month) to avoid per-row API calls (N+1).
+        """
+        logger.info("get_techlist_ids: читаем Техлист одним запросом")
+        ws = self._get_techlist_worksheet()
+        try:
+            all_values = ws.get_all_values()
+        except Exception:
+            logger.warning("get_techlist_ids: сетевой сбой, переподключаюсь")
+            self._reconnect()
+            ws = self._get_techlist_worksheet()
+            try:
+                all_values = ws.get_all_values()
+            except Exception:
+                logger.warning("get_techlist_ids: повтор не удался, возвращаю пустой set")
+                return set()
+        result = set()
+        for row in all_values[1:]:
+            if row:
+                val = str(row[COL_TELEGRAM_ID - 1]).strip()
+                if val:
+                    result.add(val)
+        logger.info("get_techlist_ids: найдено %d записей в Техлисте", len(result))
+        return result
+
     def _get_month_sheet_name(self) -> str:
         now = datetime.now(ZoneInfo("Europe/Moscow"))
         return f"{MONTH_NAMES_RU[now.month]} {now.year}"

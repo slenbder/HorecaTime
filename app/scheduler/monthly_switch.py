@@ -469,12 +469,15 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             position = str(row[2]).strip() if len(row) >= 3 else ""
             employee_rows.append((i, tg_id, position))
 
+        techlist_ids = sheets_client.get_techlist_ids()
+        logger.info("switch_month: загружено %d ID из Техлиста", len(techlist_ids))
+
         rows_to_delete: list[int] = []
         rows_to_clear: list[tuple[int, str]] = []
 
         for row_idx, tg_id, position in employee_rows:
             is_red = row_idx in dismissed_rows
-            in_techlist = sheets_client.user_exists_in_techlist(tg_id)
+            in_techlist = str(tg_id).strip() in techlist_ids
 
             if is_red and not in_techlist:
                 # Normal dismissal

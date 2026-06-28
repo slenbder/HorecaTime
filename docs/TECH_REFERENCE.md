@@ -792,6 +792,21 @@ LEFT JOIN user_rates ur ON u.telegram_id = ur.telegram_id
 **Реализация:** `get_users_rates_by_department()` в `app/db/models.py` — использует LEFT JOIN.
 Для новых сотрудников `base_rate` и `extra_rate` будут `None`.
 
+### get_techlist_ids() — batch read вместо per-row API
+
+`GoogleSheetsClient.get_techlist_ids()` читает Техлист **один раз** и возвращает `set[str]` нормализованных Telegram ID из колонки A (`str(value).strip()`).
+
+**Зачем:** `switch_month` проверяет принадлежность каждого сотрудника Техлисту. До фикса (`user_exists_in_techlist()` в цикле) это давало N+1 read-запросов — при N≈55 сотрудниках превышался лимит 60 reads/min Google Sheets API → 429 Quota exceeded.
+
+**Как использовать:**
+```python
+techlist_ids = sheets_client.get_techlist_ids()   # 1 read
+for tg_id in employee_ids:
+    in_techlist = str(tg_id).strip() in techlist_ids  # O(1), без API
+```
+
+**user_exists_in_techlist() не удалена** — она используется в auth flow (resync при /start). Для пакетных операций всегда использовать `get_techlist_ids()`.
+
 ### app/db/models.py в .gitignore
 
 `app/db/models.py` добавлен в `.gitignore`. При изменении этого файла требуется force add:

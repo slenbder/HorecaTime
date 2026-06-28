@@ -260,6 +260,7 @@ Commit: "refactor(scope): описание"
   не дублировать в handlers
 - **Константы колонок Sheets** — COL_S/AJ/AK/AL/AM/AN в config.py,
   не хардкодить числа в коде
+- **switch_month читает Техлист один раз** — `get_techlist_ids()` до цикла переноса, проверка `str(tg_id).strip() in techlist_ids` в памяти; `user_exists_in_techlist()` в цикле = N+1 → 429 при N≈55
 
 ---
 

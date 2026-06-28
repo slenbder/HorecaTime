@@ -30,7 +30,10 @@ def _make_sheets_client(all_values: list, dismissed: set = frozenset(), in_techl
     client._spreadsheet.worksheet.return_value = source_ws
     client._spreadsheet.duplicate_sheet.return_value = new_ws
     client.get_dismissed_rows.return_value = set(dismissed)
-    client.user_exists_in_techlist.return_value = in_techlist
+
+    # Build techlist_ids set from all_values (column B, index 1)
+    tg_ids = {str(row[1]).strip() for row in all_values if len(row) > 1 and str(row[1]).strip()}
+    client.get_techlist_ids.return_value = tg_ids if in_techlist else set()
 
     return client, new_ws
 

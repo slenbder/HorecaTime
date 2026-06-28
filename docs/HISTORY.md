@@ -1242,3 +1242,47 @@ except ValueError as e:
   delete_user, _build_runner_earnings_lines, switch_month логика,
   dismiss_employee (19 новых тестов)
 - **Хотфикс:** NameError в cb_switch_month_confirm (security review)
+
+---
+
+## fix(switch_month): batch techlist read — устранён N+1 → 429 ✅ (2026-06-28)
+
+**Ветка:** main  
+**Тесты:** 158 → 170 (+12)
+
+### Проблема
+
+`switch_month` вызывал `user_exists_in_techlist(tg_id)` внутри цикла переноса сотрудников. Каждый вызов выполнял `ws.get_all_values()` (полное чтение Техлиста). При N≈55 сотрудниках = ~63 read-запроса подряд → превышение квоты Google Sheets API (60 reads/min/user) → `APIError: [429] Quota exceeded`.
+
+**Усугубляющий фактор:** `_reconnect()` не различал 429 от обрыва соединения. При 429 он вызывал `open_by_key()` → `fetch_sheet_metadata()` = ещё один read. Второй 429 прерывал операцию без retry.
+
+**Формула до фикса:** `C(≈7 const reads) + N(reads в цикле) + 2(фантом)` — линейный рост с числом сотрудников.
+
+### Решение
+
+1. **`app/services/google_sheets.py`** — добавлен `get_techlist_ids() → set[str]`: читает Техлист **один раз**, возвращает нормализованный `set` ID (`str(value).strip()` для каждой ячейки колонки A).
+
+2. **`app/scheduler/monthly_switch.py`** — до цикла:
+   ```python
+   techlist_ids = sheets_client.get_techlist_ids()   # 1 read
+   ```
+   в цикле:
+   ```python
+   in_techlist = str(tg_id).strip() in techlist_ids  # O(1), 0 API
+   ```
+
+3. `user_exists_in_techlist()` **не удалена** — используется в auth flow.
+
+**Формула после фикса:** `C(≈7 const reads) + 1(techlist batch) + 2(фантом)` = константа, не зависит от N.
+
+### Тесты (+12)
+
+**`tests/test_switch_month_techlist_batch.py`:**
+- `get_techlist_ids` возвращает `set` нормализованных строк (заголовок пропускается, пробелы обрезаются, пустые ID исключаются)
+- Сетевая ошибка при чтении Техлиста → пустой `set` (safe default)
+- `switch_month` вызывает `get_techlist_ids` ровно 1 раз
+- `user_exists_in_techlist` в цикле НЕ вызывается
+- В Техлисте → transferred; не в Техлисте → anomaly/removed
+- Красная строка + не в Техлисте → removed (нормальное увольнение)
+- Смешанный кейс: 2 активных + 1 уволенный
+- Нормализация int и str-с-пробелами (кейс Регины)

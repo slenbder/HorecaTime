@@ -30,6 +30,8 @@ def _make_sheets_client(all_values: list, dismissed: set = frozenset(), in_techl
     client._spreadsheet.worksheet.return_value = source_ws
     client._spreadsheet.duplicate_sheet.return_value = new_ws
     client.get_dismissed_rows.return_value = set(dismissed)
+    # _call passes through to the actual fn so existing assertions remain valid
+    client._call.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
 
     # Build techlist_ids set from all_values (column B, index 1)
     tg_ids = {str(row[1]).strip() for row in all_values if len(row) > 1 and str(row[1]).strip()}

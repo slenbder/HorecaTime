@@ -490,8 +490,8 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 rows_to_clear.append((row_idx, position))
                 transferred += 1
 
-        # Step f (part 1): Clear shift data for active employees, re-insert formulas
-        # All rows collected into two batch requests: one batch_clear + one batch_update.
+        # Step f (part 1): Clear shift data for active employees, re-insert formulas.
+        # Two batch requests: one batch_clear + one batch_update. 429 backoff via _call.
         if rows_to_clear:
             all_clear_ranges: list[str] = []
             all_formula_updates: list[dict] = []
@@ -504,8 +504,17 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                     {"range": f"AJ{row_idx}", "values": [[formula_aj]]},
                     {"range": f"AK{row_idx}", "values": [[formula_ak]]},
                 ])
-            new_ws.batch_clear(all_clear_ranges)
-            new_ws.batch_update(all_formula_updates, value_input_option="USER_ENTERED")
+            try:
+                sheets_client._call(new_ws.batch_clear, all_clear_ranges)
+                sheets_client._call(
+                    new_ws.batch_update, all_formula_updates,
+                    value_input_option="USER_ENTERED",
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"switch_month: этап 'очистка смен' упал для '{next_name}' — "
+                    f"лист в незавершённом состоянии, удалите вручную. Ошибка: {e}"
+                ) from e
             logger.info(
                 "switch_month: очищены смены для %d строк (1 batch_clear + 1 batch_update)",
                 len(rows_to_clear),
@@ -527,7 +536,16 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 }
                 for row_idx in sorted(rows_to_delete, reverse=True)
             ]
-            sheets_client._spreadsheet.batch_update({"requests": delete_requests})
+            try:
+                sheets_client._call(
+                    sheets_client._spreadsheet.batch_update,
+                    {"requests": delete_requests},
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"switch_month: этап 'удаление строк' упал для '{next_name}' — "
+                    f"лист в незавершённом состоянии, удалите вручную. Ошибка: {e}"
+                ) from e
             logger.info(
                 "switch_month: удалено %d строк из '%s' одним batch_update",
                 len(rows_to_delete), next_name,

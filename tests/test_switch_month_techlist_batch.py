@@ -44,6 +44,8 @@ def _make_client_for_batch(
     client._spreadsheet.worksheet.return_value = source_ws
     client._spreadsheet.duplicate_sheet.return_value = new_ws
     client.get_dismissed_rows.return_value = set(dismissed)
+    # _call passes through to the actual fn so existing assertions remain valid
+    client._call.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
 
     if techlist_ids is None:
         # Default: everyone in all_values is in the Techlist

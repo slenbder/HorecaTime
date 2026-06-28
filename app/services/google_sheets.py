@@ -1,11 +1,12 @@
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
 
 import gspread
-from gspread.exceptions import WorksheetNotFound
+from gspread.exceptions import APIError, WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
 from app.utils.formatting import fmt_hours
@@ -145,6 +146,27 @@ class GoogleSheetsClient:
         self._client = self._create_client()
         self._spreadsheet = self._client.open_by_key(SPREADSHEET_ID)
         logger.info("Переподключение к Google Sheets выполнено успешно")
+
+    def _call(self, fn, *args, **kwargs):
+        """
+        Выполняет fn(*args, **kwargs) с 429-aware backoff (3 попытки).
+        - APIError 429: exponential sleep (2s, 4s) перед повтором, без reconnect.
+        - Другие ошибки: propagate немедленно.
+        Используется для всех write-операций switch_month.
+        """
+        _BACKOFF_SECS = [2, 4]
+        for attempt in range(3):
+            try:
+                return fn(*args, **kwargs)
+            except APIError as e:
+                if e.code != 429 or attempt >= 2:
+                    raise
+                sleep_secs = _BACKOFF_SECS[attempt]
+                logger.warning(
+                    "_call: 429 quota exceeded — sleeping %ds before retry %d/2",
+                    sleep_secs, attempt + 1,
+                )
+                time.sleep(sleep_secs)
 
     def _auto_resize_columns(self, worksheet) -> None:
         """Автоподбор ширины всех столбцов листа через Sheets API."""

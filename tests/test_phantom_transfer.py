@@ -23,11 +23,11 @@ def _make_old_values(phantom_row: int = 5) -> list[list[str]]:
 
 
 def _make_new_values(section_row: int = 5) -> list[list[str]]:
-    """Новый лист с заголовком секции ОФИЦИАНТЫ на указанной строке."""
+    """Новый лист с заголовком секции в колонке C на указанной строке (A/B пустые)."""
     rows = []
     for i in range(1, section_row + 5):
         if i == section_row:
-            rows.append(["ОФИЦИАНТЫ", "", ""])
+            rows.append(["", "", "Официанты"])
         else:
             rows.append(["Петров", "67890", "Официант"])
     return rows
@@ -72,9 +72,9 @@ class TestPhantomTransfer:
         new_ws.insert_rows.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_phantom_position_first_in_section(self):
-        """Фантом вставляется сразу после заголовка секции (section_start + 1)."""
-        # Секция 'ОФИЦИАНТЫ' на строке 7 (section_start=7)
+    async def test_phantom_position_end_of_section(self):
+        """Фантом вставляется после последнего сотрудника секции (insert_after_row + 1)."""
+        # Заголовок на строке 7; строки 8-11 — сотрудники (range(1, 12))
         old_vals = _make_old_values(phantom_row=3)
         new_vals = _make_new_values(section_row=7)
         client, _, new_ws = _make_sheets_client(old_vals, new_vals)
@@ -83,7 +83,7 @@ class TestPhantomTransfer:
 
         call_kwargs = new_ws.insert_rows.call_args
         row_arg = call_kwargs[1].get("row") or call_kwargs[0][1]
-        assert row_arg == 8  # section_start + 1
+        assert row_arg == 12  # insert_after_row(11) + 1
 
     @pytest.mark.asyncio
     async def test_phantom_values_inserted(self):
@@ -135,5 +135,59 @@ class TestPhantomTransfer:
 
         # Не должно бросать исключение
         await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
+
+        new_ws.insert_rows.assert_not_called()
+
+    # -----------------------------------------------------------------------
+    # Новые тесты Шага 1: поиск секции через колонку C
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_phantom_finds_section_by_column_c(self):
+        """Секция найдена когда заголовок в колонке C (A/B пустые) — фантом перенесён."""
+        old_vals = _make_old_values(phantom_row=2)
+        # заголовок "Официанты" в C, A и B пустые
+        new_vals = [
+            ["Петров", "67890", "Официант"],
+            ["", "", "Официанты"],   # заголовок в C
+            ["Сидоров", "11111", "Официант"],
+        ]
+        client, _, new_ws = _make_sheets_client(old_vals, new_vals)
+
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
+
+        new_ws.insert_rows.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_phantom_no_false_positive_in_column_a(self):
+        """Заголовок "Официанты" только в колонке A — секция НЕ находится → raise."""
+        old_vals = _make_old_values(phantom_row=2)
+        new_vals = [
+            ["Петров", "67890", "Официант"],
+            ["Официанты", "", ""],   # заголовок в A, не в C
+            ["Сидоров", "11111", "Официант"],
+        ]
+        client, _, new_ws = _make_sheets_client(old_vals, new_vals)
+
+        import pytest as _pytest
+        with _pytest.raises(RuntimeError, match="секция 'Официанты' не найдена"):
+            await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
+
+        new_ws.insert_rows.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_section_not_found_raises(self):
+        """Секция 'Официанты' отсутствует в новом листе → raise RuntimeError, не тихий return."""
+        old_vals = _make_old_values(phantom_row=2)
+        # Нет строки с A=="" и B=="" и C=="Официанты"
+        new_vals = [
+            ["Петров", "67890", "Официант"],
+            ["Сидоров", "11111", "Бармен"],
+        ]
+        client, _, new_ws = _make_sheets_client(old_vals, new_vals)
+
+        import pytest as _pytest
+        with _pytest.raises(RuntimeError, match="секция 'Официанты' не найдена"):
+            await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
 
         new_ws.insert_rows.assert_not_called()

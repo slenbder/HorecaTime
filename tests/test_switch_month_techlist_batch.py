@@ -102,15 +102,12 @@ class TestGetTechlistIds:
         result = sheets_client.get_techlist_ids()
         assert result == set()
 
-    def test_network_error_returns_empty_set(self, sheets_client):
-        """On persistent network failure, return empty set (safe default)."""
-        sheets_client._spreadsheet.worksheet.return_value.get_all_values.side_effect = Exception("network")
-        # _reconnect must not raise
+    def test_persistent_network_error_raises(self, sheets_client):
+        """On persistent network failure (both attempts), must raise — never return empty set."""
+        sheets_client._spreadsheet.worksheet.return_value.get_all_values.side_effect = Exception("network down")
         sheets_client._reconnect = MagicMock()
-        # second call also fails
-        sheets_client._spreadsheet.worksheet.return_value.get_all_values.side_effect = Exception("still down")
-        result = sheets_client.get_techlist_ids()
-        assert result == set()
+        with pytest.raises(Exception, match="network down"):
+            sheets_client.get_techlist_ids()
 
 
 # ---------------------------------------------------------------------------

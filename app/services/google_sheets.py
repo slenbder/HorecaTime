@@ -390,8 +390,8 @@ class GoogleSheetsClient:
             try:
                 all_values = ws.get_all_values()
             except Exception:
-                logger.warning("get_techlist_ids: повтор не удался, возвращаю пустой set")
-                return set()
+                logger.error("get_techlist_ids: повтор не удался после reconnect")
+                raise
         result = set()
         for row in all_values[1:]:
             if row:

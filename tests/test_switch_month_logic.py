@@ -126,7 +126,7 @@ class TestSwitchMonthLogic:
 
     @pytest.mark.asyncio
     async def test_active_rows_transferred(self):
-        """Three active employees (in techlist, not red) are all cleared and counted."""
+        """Three active employees: counted as transferred, cleared via one batch_clear."""
         all_values = [
             ["Иванов", "101", "Официант"],
             ["Петров", "102", "Бармен"],
@@ -137,7 +137,10 @@ class TestSwitchMonthLogic:
         result, _ = await _run_switch_month(client)
 
         assert result["transferred"] == 3
-        assert new_ws.batch_clear.call_count == 3
+        # After batching: exactly 1 batch_clear with 2 ranges per row = 6 total
+        assert new_ws.batch_clear.call_count == 1
+        ranges = new_ws.batch_clear.call_args[0][0]
+        assert len(ranges) == 6
 
     @pytest.mark.asyncio
     async def test_phantom_transferred(self):
@@ -151,3 +154,100 @@ class TestSwitchMonthLogic:
         positional_args = mock_transfer.call_args[0]
         assert positional_args[1] == "Апрель 2026"  # current (old) sheet
         assert positional_args[2] == "Май 2026"     # next (new) sheet
+
+
+# ---------------------------------------------------------------------------
+# Tests: Шаг 2 — батч-очистка смен
+# ---------------------------------------------------------------------------
+
+class TestBatchClearAndFormulas:
+
+    @pytest.mark.asyncio
+    async def test_batch_clear_single_call_with_all_ranges(self):
+        """N активных сотрудников → ровно 1 вызов batch_clear, 2N диапазонов в аргументе."""
+        all_values = [
+            ["Иванов", "101", "Официант"],
+            ["Петров", "102", "Бармен"],
+            ["Сидоров", "103", "Раннер"],
+        ]
+        client, new_ws = _make_sheets_client(all_values, dismissed=set(), in_techlist=True)
+
+        await _run_switch_month(client)
+
+        assert new_ws.batch_clear.call_count == 1
+        ranges = new_ws.batch_clear.call_args[0][0]
+        # 3 сотрудника × 2 диапазона каждый = 6
+        assert len(ranges) == 6
+        # Каждая строка сотрудника (1, 2, 3) должна быть в диапазонах
+        for row_idx in (1, 2, 3):
+            assert f"D{row_idx}:R{row_idx}" in ranges
+            assert f"T{row_idx}:AI{row_idx}" in ranges
+
+    @pytest.mark.asyncio
+    async def test_batch_update_single_call_user_entered(self):
+        """Формулы пишутся одним batch_update с value_input_option=USER_ENTERED."""
+        all_values = [
+            ["Иванов", "101", "Официант"],
+            ["Петров", "102", "Бармен"],
+        ]
+        client, new_ws = _make_sheets_client(all_values, dismissed=set(), in_techlist=True)
+
+        await _run_switch_month(client)
+
+        assert new_ws.batch_update.call_count == 1
+        _, kwargs = new_ws.batch_update.call_args
+        assert kwargs.get("value_input_option") == "USER_ENTERED"
+
+    @pytest.mark.asyncio
+    async def test_formulas_use_ru_sumproduct(self):
+        """Формулы S и AJ содержат СУММПРОИЗВ (не SUM / не английские формулы)."""
+        all_values = [["Иванов", "101", "Официант"]]
+        client, new_ws = _make_sheets_client(all_values, dismissed=set(), in_techlist=True)
+
+        await _run_switch_month(client)
+
+        updates = new_ws.batch_update.call_args[0][0]
+        s_formula = next(item["values"][0][0] for item in updates if item["range"].startswith("S"))
+        aj_formula = next(item["values"][0][0] for item in updates if item["range"].startswith("AJ"))
+        # AK combines S+AJ — не содержит СУММПРОИЗВ, это нормально
+        assert "СУММПРОИЗВ" in s_formula
+        assert "СУММПРОИЗВ" in aj_formula
+
+    @pytest.mark.asyncio
+    async def test_simple_formula_for_kitchen_position(self):
+        """Позиции из _SIMPLE_H_POSITIONS (Горячий цех) получают простую формулу S (без '/')."""
+        all_values = [["Кузнецов", "201", "Горячий цех"]]
+        client, new_ws = _make_sheets_client(all_values, dismissed=set(), in_techlist=True)
+
+        await _run_switch_month(client)
+
+        updates = new_ws.batch_update.call_args[0][0]
+        s_formula = next(item["values"][0][0] for item in updates if item["range"].startswith("S"))
+        # Простая формула: нет конкатенации "/" (только суммирование)
+        assert "&" not in s_formula
+        assert "СУММПРОИЗВ" in s_formula
+
+    @pytest.mark.asyncio
+    async def test_complex_formula_for_hall_position(self):
+        """Официант (Зал) получает сложную формулу S с конкатенацией '/'."""
+        all_values = [["Иванов", "101", "Официант"]]
+        client, new_ws = _make_sheets_client(all_values, dismissed=set(), in_techlist=True)
+
+        await _run_switch_month(client)
+
+        updates = new_ws.batch_update.call_args[0][0]
+        s_formula = next(item["values"][0][0] for item in updates if item["range"].startswith("S"))
+        # Сложная формула: содержит & "/" (конкатенация H/AH)
+        assert '&"/"&' in s_formula
+        assert "СУММПРОИЗВ" in s_formula
+
+    @pytest.mark.asyncio
+    async def test_no_clear_when_no_active_employees(self):
+        """Нет активных сотрудников → batch_clear и batch_update не вызываются."""
+        all_values = [["Уволенный", "999", "Официант"]]
+        client, new_ws = _make_sheets_client(all_values, dismissed={1}, in_techlist=False)
+
+        await _run_switch_month(client)
+
+        new_ws.batch_clear.assert_not_called()
+        new_ws.batch_update.assert_not_called()

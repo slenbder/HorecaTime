@@ -491,34 +491,25 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
                 transferred += 1
 
         # Step f (part 1): Clear shift data for active employees, re-insert formulas
-        # Do this BEFORE deleting rows to preserve correct indices
-        for row_idx, position in rows_to_clear:
-            try:
-                new_ws.batch_clear([
-                    f"D{row_idx}:R{row_idx}",
-                    f"T{row_idx}:AI{row_idx}",
-                ])
+        # All rows collected into two batch requests: one batch_clear + one batch_update.
+        if rows_to_clear:
+            all_clear_ranges: list[str] = []
+            all_formula_updates: list[dict] = []
+            for row_idx, position in rows_to_clear:
+                all_clear_ranges.append(f"D{row_idx}:R{row_idx}")
+                all_clear_ranges.append(f"T{row_idx}:AI{row_idx}")
                 formula_s, formula_aj, formula_ak = _make_formulas(row_idx, position)
-                new_ws.batch_update(
-                    [
-                        {"range": f"S{row_idx}", "values": [[formula_s]]},
-                        {"range": f"AJ{row_idx}", "values": [[formula_aj]]},
-                        {"range": f"AK{row_idx}", "values": [[formula_ak]]},
-                    ],
-                    value_input_option="USER_ENTERED",
-                )
-                logger.info(
-                    "switch_month: очищены смены для строки %d (позиция=%s)",
-                    row_idx, position,
-                )
-            except Exception as e:
-                logger.error(
-                    format_alert(
-                        "switch_month/clear_row",
-                        error=e,
-                        extra=f"строка: {row_idx} | {current_name} → {next_name}",
-                    )
-                )
+                all_formula_updates.extend([
+                    {"range": f"S{row_idx}", "values": [[formula_s]]},
+                    {"range": f"AJ{row_idx}", "values": [[formula_aj]]},
+                    {"range": f"AK{row_idx}", "values": [[formula_ak]]},
+                ])
+            new_ws.batch_clear(all_clear_ranges)
+            new_ws.batch_update(all_formula_updates, value_input_option="USER_ENTERED")
+            logger.info(
+                "switch_month: очищены смены для %d строк (1 batch_clear + 1 batch_update)",
+                len(rows_to_clear),
+            )
 
         # Step f (part 2): Delete dismissed rows bottom-up
         for row_idx in sorted(rows_to_delete, reverse=True):

@@ -111,16 +111,16 @@ async def main():
     sheets_client = GoogleSheetsClient()
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Europe/Moscow"))
 
-    # Уведомление за 6 часов — каждое 1-е число в 12:00 МСК
+    # Уведомление за 6 часов — каждое 25-е число в 12:00 МСК
     scheduler.add_job(
         notify_upcoming_switch,
-        CronTrigger(day=1, hour=12, minute=0, timezone=ZoneInfo("Europe/Moscow")),
+        CronTrigger(day=25, hour=12, minute=0, timezone=ZoneInfo("Europe/Moscow")),
         args=[bot, DB_PATH],
     )
-    # Переключение — каждое 1-е число в 18:00 МСК
+    # Переключение — каждое 25-е число в 18:00 МСК
     scheduler.add_job(
         switch_month,
-        CronTrigger(day=1, hour=18, minute=0, timezone=ZoneInfo("Europe/Moscow")),
+        CronTrigger(day=25, hour=18, minute=0, timezone=ZoneInfo("Europe/Moscow")),
         args=[bot, sheets_client, DB_PATH],
     )
     scheduler.add_job(

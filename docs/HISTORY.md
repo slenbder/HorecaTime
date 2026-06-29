@@ -4,6 +4,61 @@
 
 ---
 
+## chore/scheduler-switch-day-25 ✅ завершён (2026-06-29)
+
+- APScheduler: дата автопереключения сдвинута с 1-го на **25-е** число
+- `notify_upcoming_switch`: `CronTrigger(day=1, hour=12, ...)` → `CronTrigger(day=25, ...)`
+- `switch_month`: `CronTrigger(day=1, hour=18, ...)` → `CronTrigger(day=25, ...)`
+- Мотив: график следующего месяца готовится заранее; вывод переключения из окна 1-го числа
+- Файл: `main.py` (строки 117, 123)
+- Этап 9 (исходное описание шедулера) не изменён — это история
+
+---
+
+## refactor/switch-month-batch-writes ✅ завершён (2026-06-29)
+
+Переработка `switch_month()` для устранения 429 Write quota и fail-loud.
+
+### Диагностика (до фикса)
+При N≈40 сотрудниках: C_w + 2·T + R + 3 ≈ 93 write-запроса построчно без батчинга → 429.
+- `rows_to_clear` loop: 2 write/строка (`batch_clear` + `batch_update` формул)
+- `rows_to_delete` loop: 1 write/строка (`delete_rows` по одной)
+- Ошибки проглатывались в цикле: 40 алертов вместо 1
+- Фантом искал "официант" в колонке A, а заголовок секции в колонке C → "не найдена"
+
+### Шаг 1 — Фантом: правильный поиск секции
+- `_transfer_phantom_to_new_month` теперь использует `GoogleSheetsClient._find_insert_row_for_section(all_data, "Официанты")` — ищет заголовок в колонке C (A/B пустые), как оно и есть в листе
+- Секция не найдена → `raise RuntimeError` (propagates в switch_month → алерт)
+- Убран внешний `try/except` из функции — ошибки вставки теперь не глотаются
+- Тесты: +3 (finds by C, no false positive on A, raises on absent)
+
+### Шаг 2 — Батч-очистка смен: 2·T → 2
+- `rows_to_clear` loop заменён: собираем все диапазоны → один `batch_clear([все])` + один `batch_update([все формулы], USER_ENTERED)`
+- Формулы `_make_formulas()` не тронуты (русские СУММПРОИЗВ, типы по позиции)
+- Тесты: +6
+
+### Шаг 3 — Батч-удаление строк: R → 1
+- `rows_to_delete` loop с `delete_rows()` заменён одним `batch_update({"requests": [deleteDimension…]})`
+- Запросы упорядочены по убыванию (сохранён инвариант `reverse=True`)
+- `sheetId` из `new_ws.id`
+- Тесты: +5
+
+### Шаг 4 — 429 backoff + fail-loud
+- `GoogleSheetsClient._call(fn, *args, **kwargs)`: централизованный wrapper
+  - `APIError(429)` → `sleep(2s)`, `sleep(4s)`, raise после 3-й попытки; **reconnect не вызывается**
+  - Другие ошибки → propagate немедленно
+- Все batch-вызовы в switch_month через `sheets_client._call(...)`
+- Провал батча → `RuntimeError("этап 'X' упал ... удалите вручную")` → один внятный алерт разработчику
+- Тесты: +8
+
+### Итог
+**Было:** ~93 write-запроса, 429 при N≈40, 40 алертов на одну ошибку, фантом не находил секцию  
+**Стало:** ~10 write-запросов (константа), 429-backoff без reconnect, fail-loud с одним алертом  
+**Тесты:** 170 → 192 (22 новых теста, все зелёные)  
+**Ветка:** refactor/switch-month-batch-writes → main
+
+---
+
 ## Этап 0 ✅ завершён
 
 - Полный approve-flow авторизации (FSM AuthStates)

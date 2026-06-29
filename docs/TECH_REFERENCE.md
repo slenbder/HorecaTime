@@ -807,6 +807,28 @@ for tg_id in employee_ids:
 
 **user_exists_in_techlist() не удалена** — она используется в auth flow (resync при /start). Для пакетных операций всегда использовать `get_techlist_ids()`.
 
+---
+
+### switch_month — батч-операции и write-квота
+
+`switch_month()` при N≈40 сотрудниках **не делает построчных write-запросов**. Все write-операции константны по N:
+
+| Этап | Метод | Write-запросов |
+|------|-------|---------------|
+| Копирование, перемещение, формат, заголовки | `duplicate_sheet`, `batch_update` (3×) | ~5 |
+| Очистка смен D:R/T:AI | `batch_clear([все диапазоны])` | **1** |
+| Вставка формул S/AJ/AK | `batch_update([все формулы], USER_ENTERED)` | **1** |
+| Удаление строк | `batch_update({"requests":[deleteDimension…]})` | **1** |
+| Перенос фантома | `insert_rows + batch_update` | ~2 |
+| **Итого** | | **~10, не зависит от N** |
+
+**Секция "Официанты" для фантома** ищется через `GoogleSheetsClient._find_insert_row_for_section(all_data, "Официанты")` — по колонке C (A/B пустые, C = "Официанты"). Старый поиск по колонке A был багом.
+
+**429-aware backoff:** все write-вызовы через `sheets_client._call(fn, *args, **kwargs)`:
+- `APIError(429)` → `sleep(2s)`, `sleep(4s)`, после 3-й попытки `raise`; **reconnect не вызывается** (reconnect сам сжигает квоту)
+- Другие ошибки → propagate немедленно
+- Провал любого batch-этапа → `RuntimeError` с именем этапа → один алерт разработчику
+
 ### app/db/models.py в .gitignore
 
 `app/db/models.py` добавлен в `.gitignore`. При изменении этого файла требуется force add:

@@ -11,6 +11,70 @@ from config import DB_PATH, SUPERADMIN_IDS, DEPT_TO_ADMIN_ROLE
 logger = logging.getLogger(__name__)
 
 
+def create_migration_tables(cursor) -> None:
+    """
+    Таблицы миграции "SQLite = source of truth" (Фаза 1).
+    Схема-приёмник для данных, которые сейчас живут только в Google Sheets.
+    CRUD-функции появятся в Фазе 2 по мере подключения точек записи.
+    Вызывается из init_database() и из import_from_sheets.py (произвольный db_path).
+    """
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS employees (
+            telegram_id     INTEGER PRIMARY KEY,
+            nickname        TEXT,
+            full_name       TEXT NOT NULL,
+            department      TEXT NOT NULL,
+            position        TEXT NOT NULL,
+            custom_position TEXT,
+            role            TEXT NOT NULL DEFAULT 'user',
+            status          TEXT NOT NULL,
+            registered_at   TEXT NOT NULL,
+            approved_at     TEXT,
+            dismissed_at    TEXT
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS shifts (
+            telegram_id INTEGER NOT NULL,
+            shift_date  TEXT NOT NULL,
+            hours       REAL NOT NULL,
+            extra_hours REAL DEFAULT 0,
+            source      TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (telegram_id, shift_date)
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS check_filling (
+            fill_date TEXT PRIMARY KEY,
+            count     INTEGER NOT NULL
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS consents (
+            telegram_id  INTEGER NOT NULL,
+            consent_type TEXT NOT NULL,
+            doc_version  TEXT NOT NULL,
+            given_at     TEXT NOT NULL,
+            PRIMARY KEY (telegram_id, consent_type, doc_version)
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS pending_approvals (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id   INTEGER NOT NULL,
+            approval_type TEXT NOT NULL,
+            shift_date    TEXT NOT NULL,
+            hours         REAL,
+            photo_count   INTEGER,
+            created_at    TEXT NOT NULL,
+            resolved_at   TEXT,
+            resolved_by   INTEGER
+        )
+    ''')
+
+
 def init_database():
     """
     Создаёт таблицы, если их нет.
@@ -82,6 +146,8 @@ def init_database():
                 created_at       TEXT NOT NULL
             )
         ''')
+
+        create_migration_tables(cursor)
         conn.commit()
     logger.info("База данных успешно инициализирована")
 

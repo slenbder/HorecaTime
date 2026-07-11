@@ -1341,3 +1341,11 @@ except ValueError as e:
 - Красная строка + не в Техлисте → removed (нормальное увольнение)
 - Смешанный кейс: 2 активных + 1 уволенный
 - Нормализация int и str-с-пробелами (кейс Регины)
+
+## TODO (Фаза 2c, 2026-07-11)
+- **2026-08-11**: удалить legacy-обработчики старого формата callback_data
+  (`approve_ah_callback`, `approve_loyalty_callback`, `approve_filling_callback`
+  в `app/bot/handlers/auth.py`) и in-memory `_pending_loyalty` / `_pending_filling`
+  в `userhours.py` — оставлены на переходный месяц для кнопок, отправленных до
+  деплоя Фазы 2c (новый формат: `apprv:{id}:{n}` / `rejct:{id}`, данные в
+  таблице `pending_approvals`).

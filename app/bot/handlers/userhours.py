@@ -18,7 +18,10 @@ from aiogram.types import (
 )
 
 from app.bot.fsm.shift_states import ShiftStates
-from app.db.models import get_user, upsert_shift, upsert_shifts_bulk, delete_shift
+from app.db.models import (
+    get_user, upsert_shift, upsert_shifts_bulk, delete_shift,
+    create_pending_approval,
+)
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU, _format_shift_value, _parse_shift_raw
 from app.services.timeparsing import parse_shift, round_to_half, to_iso_date
 from app.utils.formatting import fmt_hours
@@ -52,6 +55,11 @@ def _hours_hhmm(t: float) -> str:
 
 def _date_str(day: int, month: int, year: int) -> str:
     return f"{day:02d}.{month:02d}.{str(year)[2:]}"
+
+
+def _ddmmyy_to_iso(date_str: str) -> str:
+    """'DD.MM.YY' (формат сообщений бота) → 'YYYY-MM-DD' (формат shift_date в БД)."""
+    return datetime.strptime(date_str.strip(), "%d.%m.%y").date().isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +702,19 @@ async def _send_waiter_report(
     user_data = get_user(tg_id)
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
+    # Заявка на апрув — в SQLite (часы/дата/кол-во фото больше не живут
+    # в callback_data). Ошибка БД → отчёт админам не отправляется.
+    try:
+        approval_id = await create_pending_approval(
+            DB_PATH, tg_id, "ah_photos", to_iso_date(day, month, year), h, N,
+        )
+    except Exception:
+        error_logger.exception(
+            "_send_waiter_report: ошибка создания заявки на апрув для %s", tg_id
+        )
+        await message.answer("❌ Ошибка, попробуйте позже.")
+        return
+
     await state.clear()
     await message.answer("✅ Смена принята, ожидайте подтверждения администратора.")
 
@@ -720,7 +741,7 @@ async def _send_waiter_report(
     buttons = [
         InlineKeyboardButton(
             text=str(i),
-            callback_data=f"approve_ah:{tg_id}:{date}:{h:.1f}:{N}:{i}",
+            callback_data=f"apprv:{approval_id}:{i}",
         )
         for i in range(N + 1)
     ]
@@ -879,14 +900,19 @@ async def _send_loyalty_cards_report(
     full_name = user_data["full_name"] if user_data else str(tg_id)
     mention = make_mention(message.from_user.username, full_name)
 
-    callback_key = str(uuid.uuid4())[:8]
-    _pending_loyalty[callback_key] = {
-        "tg_id": tg_id,
-        "shift_date": shift_date,
-        "shift_hours": data.get("shift_hours", 0.0),
-        "full_name": full_name,
-        "photo_ids": photo_ids,
-    }
+    # Заявка на апрув — в SQLite (вместо in-memory _pending_loyalty,
+    # который терялся при рестарте). Ошибка БД → отчёт не отправляется.
+    try:
+        approval_id = await create_pending_approval(
+            DB_PATH, tg_id, "loyalty", _ddmmyy_to_iso(shift_date),
+            data.get("shift_hours", 0.0), N,
+        )
+    except Exception:
+        error_logger.exception(
+            "_send_loyalty_cards_report: ошибка создания заявки на апрув для %s", tg_id
+        )
+        await message.answer("❌ Ошибка, попробуйте позже.")
+        return
 
     report_text = (
         f"🎴 Карты лояльности от {mention}\n"
@@ -896,7 +922,7 @@ async def _send_loyalty_cards_report(
     buttons = [
         InlineKeyboardButton(
             text=str(i),
-            callback_data=f"approve_loyalty:{callback_key}:{i}",
+            callback_data=f"apprv:{approval_id}:{i}",
         )
         for i in range(N + 1)
     ]
@@ -1038,26 +1064,35 @@ async def _send_check_filling_report(
     full_name = user_data["full_name"] if user_data else str(tg_id)
     mention = make_mention(message.from_user.username, full_name)
 
-    callback_key = str(uuid.uuid4())[:8]
-    _pending_filling[callback_key] = {
-        "tg_id": tg_id,
-        "shift_date": shift_date,
-        "shift_hours": data.get("shift_hours", 0.0),
-        "full_name": full_name,
-        "photo_ids": photo_ids,
-    }
+    # Заявка на апрув — в SQLite (вместо in-memory _pending_filling,
+    # который терялся при рестарте). Ошибка БД → отчёт не отправляется.
+    try:
+        approval_id = await create_pending_approval(
+            DB_PATH, tg_id, "filling", _ddmmyy_to_iso(shift_date),
+            data.get("shift_hours", 0.0), N,
+        )
+    except Exception:
+        error_logger.exception(
+            "_send_check_filling_report: ошибка создания заявки на апрув для %s", tg_id
+        )
+        await message.answer("❌ Ошибка, попробуйте позже.")
+        return
 
     report_text = (
         f"💳 Наполняемость чеков от {mention}\n"
         f"📅 {shift_date}\n"
         f"📸 Фото: {N} шт"
     )
+    # «0 чеков» одобрить нельзя (см. approve_filling) — вместо тупиковой
+    # кнопки 0 даём явное отклонение заявки.
     buttons = [
+        InlineKeyboardButton(text="❌", callback_data=f"rejct:{approval_id}")
+    ] + [
         InlineKeyboardButton(
             text=str(i),
-            callback_data=f"approve_filling:{callback_key}:{i}",
+            callback_data=f"apprv:{approval_id}:{i}",
         )
-        for i in range(N + 1)
+        for i in range(1, N + 1)
     ]
     keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
 

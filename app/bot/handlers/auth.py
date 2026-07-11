@@ -32,6 +32,7 @@ from app.db.models import (
     get_user, delete_user, get_users_by_role,
     upsert_employee, approve_employee, dismiss_employee_db, set_employee_role,
     upsert_shift, add_check_filling,
+    get_pending_approval, resolve_pending_approval, reopen_pending_approval,
 )
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
@@ -489,7 +490,12 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
 
     Формат callback_data: approve_ah:{telegram_id}:{date_str}:{h}:{N}:{value}
     Пример:               approve_ah:6073294261:03.03.26:10.0:3:2
+
+    LEGACY (Фаза 2c): новый формат — "apprv:{approval_id}:{n}"
+    (process_approval_callback). Обработчик оставлен для кнопок,
+    отправленных до деплоя. TODO(2026-08-11): удалить.
     """
+    logger.warning("legacy callback: approve_ah старого формата: %s", callback.data)
     # Защита от двойного нажатия: если уже одобрено — игнорируем
     if "✅ Одобрено" in (callback.message.text or ""):
         await callback.answer("Уже обработано другим администратором.")
@@ -600,7 +606,12 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
     """Апрув карт лояльности официанта администратором зала.
 
     Формат callback_data: approve_loyalty:{callback_key}:{approved_count}
+
+    LEGACY (Фаза 2c): новый формат — "apprv:{approval_id}:{n}"
+    (process_approval_callback). Обработчик оставлен для кнопок,
+    отправленных до деплоя. TODO(2026-08-11): удалить.
     """
+    logger.warning("legacy callback: approve_loyalty старого формата: %s", callback.data)
     try:
         if "✅" in (callback.message.text or ""):
             await callback.answer("Уже обработано.")
@@ -723,7 +734,12 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
     """Апрув наполняемости чеков официанта администратором зала.
 
     Формат callback_data: approve_filling:{callback_key}:{approved_count}
+
+    LEGACY (Фаза 2c): новый формат — "apprv:{approval_id}:{n}" / "rejct:{approval_id}"
+    (process_approval_callback / process_reject_approval_callback). Обработчик
+    оставлен для кнопок, отправленных до деплоя. TODO(2026-08-11): удалить.
     """
+    logger.warning("legacy callback: approve_filling старого формата: %s", callback.data)
     try:
         if "✅" in (callback.message.text or ""):
             await callback.answer("Уже обработано.")
@@ -859,6 +875,339 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
 
     except Exception:
         logging.getLogger("errors").exception("approve_filling_callback: необработанная ошибка")
+        await callback.answer("Ошибка, см. логи.", show_alert=True)
+
+
+# ---------------------------------------------------------------------------
+# Апрувы нового формата (Фаза 2c): данные заявки в pending_approvals,
+# в callback_data только id + решение админа: "apprv:{id}:{n}" / "rejct:{id}"
+# ---------------------------------------------------------------------------
+
+def _approval_date_parts(approval: dict) -> tuple[int, int, int, str]:
+    """shift_date 'YYYY-MM-DD' → (day, month, year, 'DD.MM.YY' для сообщений)."""
+    dt = datetime.strptime(approval["shift_date"], "%Y-%m-%d")
+    return dt.day, dt.month, dt.year, dt.strftime("%d.%m.%y")
+
+
+async def _is_hall_approver(caller_id: int) -> bool:
+    """Право апрува отчётов официантов: админы Зала, суперадмины, разработчик."""
+    hall_admin_ids = await get_admins_by_department(DB_PATH, "Зал")
+    return caller_id in (set(hall_admin_ids) | set(SUPERADMIN_IDS) | {DEVELOPER_ID})
+
+
+async def _edit_approval_message(callback: CallbackQuery, suffix: str) -> None:
+    try:
+        await callback.message.edit_text(
+            (callback.message.text or "") + suffix,
+            parse_mode="HTML", reply_markup=None,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
+    except Exception:
+        logging.getLogger("errors").exception(
+            "approval: не удалось отредактировать сообщение"
+        )
+
+
+async def _finalize_ah(callback: CallbackQuery, approval: dict, value: int) -> None:
+    """Решение по доп. часам официанта: пишет смену H+AH (СМЕНА до этого не записана)."""
+    telegram_id = approval["telegram_id"]
+    day, month, year, date_str = _approval_date_parts(approval)
+    h = float(approval["hours"] or 0.0)
+    N = int(approval["photo_count"] or 0)
+    ah = value * AH_PHOTO_COEFFICIENT
+
+    # SQLite — источник правды; ошибка = отказ, заявка снова открыта для повтора
+    try:
+        await upsert_shift(
+            DB_PATH, telegram_id, approval["shift_date"], h, ah, source="admin_approve",
+        )
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_ah: ошибка записи в SQLite user=%s date=%s", telegram_id, date_str,
+        )
+        await reopen_pending_approval(DB_PATH, approval["id"])
+        await callback.answer("❌ Ошибка записи, апрув не выполнен.", show_alert=True)
+        return
+
+    try:
+        if sheets_client is None:
+            raise RuntimeError("sheets_client не инициализирован")
+        sheets_client.write_shift(telegram_id, day, month, year, h, ah)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_ah: зеркало Sheets не обновлено user=%s date=%s", telegram_id, date_str,
+        )
+        await _notify_mirror_failure(
+            callback.bot, f"апрув доп. часов {telegram_id} на {date_str}"
+        )
+
+    logger.info(
+        "_finalize_ah: user=%s date=%s H=%.1f AH=%.1f (%d фото из %d), admin=%s",
+        telegram_id, date_str, h, ah, value, N, callback.from_user.id,
+    )
+
+    ah_str = fmt_hours(ah)
+    h_str = fmt_hours(h)
+    await _edit_approval_message(
+        callback, f"\n✅ Одобрено {value} фото из {N} → Доп. часы = {ah_str} ч"
+    )
+    await callback.answer()
+
+    if value == 0:
+        waiter_text = (
+            f"📋 Смена {date_str} обработана\n"
+            f"Часы смены = {h_str} ч | Доп. часов не засчитано"
+        )
+    else:
+        waiter_text = (
+            f"📋 Смена {date_str} обработана\n"
+            f"Часы смены = {h_str} ч | Доп. часы = {ah_str} ч ({value} фото из {N})"
+        )
+    try:
+        await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_ah: смена записана, но уведомление официанту %s не отправлено",
+            telegram_id,
+        )
+
+
+async def _finalize_loyalty(callback: CallbackQuery, approval: dict, approved_count: int) -> None:
+    """Решение по картам лояльности: смена уже записана без AH, апрув добавляет AH."""
+    telegram_id = approval["telegram_id"]
+    day, month, year, shift_date = _approval_date_parts(approval)
+    h = float(approval["hours"] or 0.0)
+    ah = approved_count * AH_PHOTO_COEFFICIENT
+
+    try:
+        await upsert_shift(
+            DB_PATH, telegram_id, approval["shift_date"], h, ah, source="admin_approve",
+        )
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_loyalty: ошибка записи в SQLite user=%s date=%s",
+            telegram_id, shift_date,
+        )
+        await reopen_pending_approval(DB_PATH, approval["id"])
+        await callback.answer("❌ Ошибка записи, апрув не выполнен.", show_alert=True)
+        return
+
+    try:
+        if sheets_client is None:
+            raise RuntimeError("sheets_client не инициализирован")
+        sheets_client.write_shift(telegram_id, day, month, year, h, ah)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_loyalty: зеркало Sheets не обновлено user=%s date=%s",
+            telegram_id, shift_date,
+        )
+        await _notify_mirror_failure(
+            callback.bot, f"апрув карт лояльности {telegram_id} на {shift_date}"
+        )
+
+    logger.info(
+        "_finalize_loyalty: user=%s date=%s H=%.1f AH=%.1f (%d карт), admin=%s",
+        telegram_id, shift_date, h, ah, approved_count, callback.from_user.id,
+    )
+
+    await _edit_approval_message(
+        callback, f"\n✅ Одобрено {approved_count} фото → {fmt_hours(ah)} ч"
+    )
+    await callback.answer()
+
+    waiter_text = (
+        f"✅ Смена одобрена\n"
+        f"📅 {shift_date}: {fmt_hours(h)} ч\n"
+        f"🎴 Карты лояльности: {approved_count} шт (+{fmt_hours(ah)} ч)"
+    )
+    try:
+        await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_loyalty: уведомление официанту %s не отправлено", telegram_id
+        )
+
+
+async def _finalize_filling(callback: CallbackQuery, approval: dict, approved_count: int) -> None:
+    """Решение по наполняемости чеков: транзакционный инкремент + зеркало суммой из БД."""
+    telegram_id = approval["telegram_id"]
+    day, _month, _year, shift_date = _approval_date_parts(approval)
+
+    try:
+        total = await add_check_filling(DB_PATH, approval["shift_date"], approved_count)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_filling: ошибка записи в SQLite date=%s", shift_date
+        )
+        await reopen_pending_approval(DB_PATH, approval["id"])
+        await callback.answer("❌ Ошибка записи, апрув не выполнен.", show_alert=True)
+        return
+
+    try:
+        if sheets_client is None:
+            raise RuntimeError("sheets_client не инициализирован")
+        success = sheets_client.write_check_filling_to_phantom(
+            shift_date, approved_count, total=total
+        )
+        if not success:
+            raise RuntimeError("write_check_filling_to_phantom вернул False")
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_filling: зеркало Sheets не обновлено date=%s", shift_date
+        )
+        await _notify_mirror_failure(
+            callback.bot,
+            f"наполняемость чеков {shift_date}: +{approved_count} (итого в БД: {total})",
+        )
+
+    period = "first" if day <= 15 else "second"
+    phantom_checks = sheets_client.get_phantom_checks_summary(period) if sheets_client else 0
+
+    logger.info(
+        "_finalize_filling: user=%s date=%s checks=%d, admin=%s",
+        telegram_id, shift_date, approved_count, callback.from_user.id,
+    )
+
+    await _edit_approval_message(callback, f"\n✅ Одобрено {approved_count} чека")
+
+    period_text = "первую" if period == "first" else "вторую"
+    admin_text = (
+        f"✅ Наполняемость записана\n"
+        f"Дата: {shift_date}\n"
+        f"Добавлено: {approved_count} чека\n"
+        f"Всего за {period_text} половину: {phantom_checks} чеков"
+        f" ({phantom_checks * PHANTOM_HOURLY_RATE} р)"
+    )
+    try:
+        await callback.message.answer(admin_text)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_filling: не удалось отправить баланс"
+        )
+
+    await callback.answer()
+
+    waiter_text = (
+        f"💳 Наполняемость учтена\n"
+        f"📅 {shift_date}: {approved_count} чека добавлены в общий пул"
+    )
+    try:
+        await callback.bot.send_message(chat_id=telegram_id, text=waiter_text)
+    except Exception:
+        logging.getLogger("errors").exception(
+            "_finalize_filling: уведомление официанту %s не отправлено", telegram_id
+        )
+
+
+_APPROVAL_FINALIZERS = {
+    "ah_photos": _finalize_ah,
+    "loyalty": _finalize_loyalty,
+    "filling": _finalize_filling,
+}
+
+
+@auth_router.callback_query(F.data.startswith("apprv:"))
+async def process_approval_callback(callback: CallbackQuery) -> None:
+    """Единый апрув заявок официанта: apprv:{approval_id}:{n}."""
+    try:
+        parts = (callback.data or "").split(":")
+        if len(parts) != 3:
+            await callback.answer("❌ Некорректные данные.", show_alert=True)
+            return
+        try:
+            approval_id, n = int(parts[1]), int(parts[2])
+        except ValueError:
+            await callback.answer("❌ Некорректные данные.", show_alert=True)
+            return
+
+        approval = await get_pending_approval(DB_PATH, approval_id)
+        if approval is None:
+            await callback.answer("Заявка не найдена.", show_alert=True)
+            return
+
+        if not await _is_hall_approver(callback.from_user.id):
+            await callback.answer("❌ Нет прав.", show_alert=True)
+            return
+
+        photo_count = int(approval["photo_count"] or 0)
+        if not (0 <= n <= photo_count):
+            await callback.answer("❌ Недопустимое значение.", show_alert=True)
+            logger.warning(
+                "process_approval_callback: недопустимое n=%d (max %d), admin %s",
+                n, photo_count, callback.from_user.id,
+            )
+            return
+        if approval["approval_type"] == "filling" and n == 0:
+            await callback.answer("Нельзя одобрить 0 чеков.", show_alert=True)
+            return
+
+        # Атомарный guard: только первый резолв проходит — фикс двойного
+        # нажатия ("message is not modified") и гонки двух админов.
+        if not await resolve_pending_approval(DB_PATH, approval_id, callback.from_user.id):
+            await callback.answer("Заявка уже обработана")
+            return
+
+        finalizer = _APPROVAL_FINALIZERS.get(approval["approval_type"])
+        if finalizer is None:
+            logging.getLogger("errors").error(
+                "process_approval_callback: неизвестный тип заявки '%s' (id=%s)",
+                approval["approval_type"], approval_id,
+            )
+            await callback.answer("❌ Неизвестный тип заявки.", show_alert=True)
+            return
+        await finalizer(callback, approval, n)
+
+    except Exception:
+        logging.getLogger("errors").exception("process_approval_callback: необработанная ошибка")
+        await callback.answer("Ошибка, см. логи.", show_alert=True)
+
+
+@auth_router.callback_query(F.data.startswith("rejct:"))
+async def process_reject_approval_callback(callback: CallbackQuery) -> None:
+    """Отклонение заявки: rejct:{approval_id}. Данные (смена/чеки) НЕ пишутся."""
+    try:
+        parts = (callback.data or "").split(":")
+        if len(parts) != 2 or not parts[1].isdigit():
+            await callback.answer("❌ Некорректные данные.", show_alert=True)
+            return
+        approval_id = int(parts[1])
+
+        approval = await get_pending_approval(DB_PATH, approval_id)
+        if approval is None:
+            await callback.answer("Заявка не найдена.", show_alert=True)
+            return
+
+        if not await _is_hall_approver(callback.from_user.id):
+            await callback.answer("❌ Нет прав.", show_alert=True)
+            return
+
+        if not await resolve_pending_approval(DB_PATH, approval_id, callback.from_user.id):
+            await callback.answer("Заявка уже обработана")
+            return
+
+        logger.info(
+            "process_reject_approval_callback: заявка id=%s (%s) отклонена админом %s",
+            approval_id, approval["approval_type"], callback.from_user.id,
+        )
+        await _edit_approval_message(callback, "\n❌ Отклонено")
+        await callback.answer("Отклонено")
+
+        _day, _m, _y, shift_date = _approval_date_parts(approval)
+        try:
+            await callback.bot.send_message(
+                chat_id=approval["telegram_id"],
+                text=f"❌ Отчёт за {shift_date} не засчитан администратором.",
+            )
+        except Exception:
+            logging.getLogger("errors").exception(
+                "process_reject_approval_callback: уведомление официанту %s не отправлено",
+                approval["telegram_id"],
+            )
+
+    except Exception:
+        logging.getLogger("errors").exception(
+            "process_reject_approval_callback: необработанная ошибка"
+        )
         await callback.answer("Ошибка, см. логи.", show_alert=True)
 
 

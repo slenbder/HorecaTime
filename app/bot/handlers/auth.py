@@ -31,10 +31,13 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import (
     get_user, delete_user, get_users_by_role,
     upsert_employee, approve_employee, dismiss_employee_db, set_employee_role,
+    upsert_shift,
 )
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
 from app.utils.formatting import fmt_hours
+from app.utils.mirror import notify_mirror_failure as _notify_mirror_failure
+from app.services.timeparsing import to_iso_date
 from config import DEVELOPER_ID, PHANTOM_HOURLY_RATE, SUPERADMIN_IDS, DB_PATH, DEPARTMENTS, AH_PHOTO_COEFFICIENT, DEPT_TO_ADMIN_ROLE
 from app.db.models import get_admins_by_department
 from app.bot.handlers.userhours import _pending_loyalty, _pending_filling
@@ -99,17 +102,6 @@ try:
 except Exception as e:
     logger.exception(f"Ошибка при инициализации GoogleSheetsClient: {e}")
     sheets_client = None
-
-
-async def _notify_mirror_failure(bot, text: str) -> None:
-    """
-    Уведомляет разработчика, что запись в Sheets-зеркало не прошла.
-    SQLite (источник правды) уже записан, операция для пользователя успешна.
-    """
-    try:
-        await bot.send_message(DEVELOPER_ID, f"⚠️ Sheets-зеркало не обновлено: {text}")
-    except Exception:
-        logger.exception("Не удалось уведомить разработчика о рассинхроне зеркала: %s", text)
 
 
 async def _clear_commands(bot, tg_id: int) -> None:
@@ -539,18 +531,32 @@ async def approve_ah_callback(callback: CallbackQuery) -> None:
         await callback.answer("❌ Некорректный формат даты.", show_alert=True)
         return
 
-    if sheets_client is None:
-        await callback.answer("❌ Ошибка подключения к таблице.", show_alert=True)
+    # SQLite — источник правды: итоговые часы H+AH после решения админа.
+    # Ошибка БД = отказ апрува, кнопки не гасим — можно повторить.
+    try:
+        await upsert_shift(
+            DB_PATH, telegram_id, to_iso_date(day, month, year), h, ah,
+            source="admin_approve",
+        )
+    except Exception:
+        logging.getLogger("errors").exception(
+            "approve_ah_callback: ошибка записи в SQLite user=%s date=%s", telegram_id, date_str,
+        )
+        await callback.answer("❌ Ошибка записи, апрув не выполнен.", show_alert=True)
         return
 
+    # Зеркало Sheets: ошибка не отменяет апрув, разработчик уведомлён.
     try:
+        if sheets_client is None:
+            raise RuntimeError("sheets_client не инициализирован")
         sheets_client.write_shift(telegram_id, day, month, year, h, ah)
     except Exception:
         logging.getLogger("errors").exception(
-            "approve_ah_callback: ошибка записи для user=%s date=%s", telegram_id, date_str,
+            "approve_ah_callback: зеркало Sheets не обновлено user=%s date=%s", telegram_id, date_str,
         )
-        await callback.answer("❌ Ошибка записи.", show_alert=True)
-        return
+        await _notify_mirror_failure(
+            callback.bot, f"апрув доп. часов {telegram_id} на {date_str}"
+        )
 
     logger.info(
         "approve_ah_callback: user=%s date=%s H=%.1f AH=%.1f (%d фото из %d), admin=%s",
@@ -645,29 +651,34 @@ async def approve_loyalty_callback(callback: CallbackQuery) -> None:
             await callback.answer("❌ Некорректный формат даты.", show_alert=True)
             return
 
-        if sheets_client is None:
-            await callback.answer("❌ Ошибка подключения к таблице.", show_alert=True)
+        # SQLite — источник правды: итоговые часы H+AH после решения админа.
+        # Ошибка БД = отказ апрува, кнопки не гасим — можно повторить.
+        try:
+            await upsert_shift(
+                DB_PATH, telegram_id, to_iso_date(day, month, year), h, ah,
+                source="admin_approve",
+            )
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_loyalty_callback: ошибка записи в SQLite user=%s date=%s",
+                telegram_id, shift_date,
+            )
+            await callback.answer("❌ Ошибка записи, апрув не выполнен.", show_alert=True)
             return
 
+        # Зеркало Sheets: ошибка не отменяет апрув, разработчик уведомлён.
         try:
+            if sheets_client is None:
+                raise RuntimeError("sheets_client не инициализирован")
             sheets_client.write_shift(telegram_id, day, month, year, h, ah)
         except Exception:
             logging.getLogger("errors").exception(
-                "approve_loyalty_callback: ошибка записи для user=%s date=%s",
+                "approve_loyalty_callback: зеркало Sheets не обновлено user=%s date=%s",
                 telegram_id, shift_date,
             )
-            await callback.answer("❌ Ошибка записи.", show_alert=True)
-            try:
-                await callback.bot.send_message(
-                    telegram_id,
-                    "⚠️ Не удалось записать смену с картами лояльности.\n"
-                    "Обратитесь к администратору."
-                )
-            except Exception:
-                logger.exception(
-                    "approve_loyalty_callback: не удалось уведомить пользователя %s", telegram_id
-                )
-            return
+            await _notify_mirror_failure(
+                callback.bot, f"апрув карт лояльности {telegram_id} на {shift_date}"
+            )
 
         logger.info(
             "approve_loyalty_callback: user=%s date=%s H=%.1f AH=%.1f (%d карт), admin=%s",

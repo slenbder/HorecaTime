@@ -44,6 +44,7 @@ class TestApproveLoyaltyCallback:
 
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.upsert_shift", new=AsyncMock(return_value=None)),
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_shift = MagicMock()
@@ -103,6 +104,7 @@ class TestApproveLoyaltyCallback:
 
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.upsert_shift", new=AsyncMock(return_value=None)),
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_shift = MagicMock()

@@ -27,6 +27,13 @@ def _make_state(day: int, month: int, year: int, h: float, ah: float = 0.0) -> A
 # Тест 1: перезапись с другим значением → уведомление отправлено
 # ---------------------------------------------------------------------------
 
+
+def _old_shift(h: float, ah: float = 0.0) -> dict:
+    """Старая запись shifts из SQLite (возврат upsert_shift)."""
+    return {"telegram_id": 12345, "shift_date": "2026-05-15", "hours": h,
+            "extra_hours": ah, "source": "user",
+            "created_at": "x", "updated_at": "x"}
+
 class TestBarShiftOverwrite:
 
     @pytest.mark.asyncio
@@ -42,8 +49,9 @@ class TestBarShiftOverwrite:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест Тестов"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[111])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", [999]),
+            patch("app.bot.handlers.userhours.upsert_shift",
+                  new=AsyncMock(return_value=_old_shift(7.0))),
         ):
-            mock_sc.write_shift.return_value = "7"
             await _write_and_finish_bar(message, state, "Бармен")
 
         all_texts = " ".join(
@@ -67,8 +75,9 @@ class TestBarShiftOverwrite:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест Тестов"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[111])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", [999]),
+            patch("app.bot.handlers.userhours.upsert_shift",
+                  new=AsyncMock(return_value=_old_shift(8.0, 3.0))),
         ):
-            mock_sc.write_shift.return_value = "8/3"
             await _write_and_finish_bar(message, state, "Бармен")
 
         all_texts = " ".join(
@@ -89,8 +98,9 @@ class TestBarShiftOverwrite:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест Тестов"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[111])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", [999]),
+            patch("app.bot.handlers.userhours.upsert_shift",
+                  new=AsyncMock(return_value=None)),
         ):
-            mock_sc.write_shift.return_value = ""
             await _write_and_finish_bar(message, state, "Бармен")
 
         all_texts = " ".join(

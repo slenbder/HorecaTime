@@ -110,6 +110,7 @@ class TestBarAhInput:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Бармен Тест"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", []),
+            patch("app.bot.handlers.userhours.upsert_shift", new=AsyncMock(return_value=None)),
         ):
             mock_sc.write_shift.return_value = ""
             await _process_bar_ah_input(message, state, "Бармен")
@@ -130,6 +131,7 @@ class TestBarAhInput:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", []),
+            patch("app.bot.handlers.userhours.upsert_shift", new=AsyncMock(return_value=None)),
         ):
             mock_sc.write_shift.return_value = ""
             await _process_bar_ah_input(message, state, "Бармен")
@@ -149,6 +151,7 @@ class TestBarAhInput:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", []),
+            patch("app.bot.handlers.userhours.upsert_shift", new=AsyncMock(return_value=None)),
         ):
             mock_sc.write_shift.return_value = ""
             await _process_bar_ah_input(message, state, "Бармен")
@@ -213,6 +216,7 @@ class TestBarAhInput:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", []),
+            patch("app.bot.handlers.userhours.upsert_shift", new=AsyncMock(return_value=None)),
         ):
             mock_sc.write_shift.return_value = ""
             await _process_bar_ah_input(message, state, "Бармен")
@@ -241,6 +245,7 @@ class TestCbBarAhNo:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Бармен Тест"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", []),
+            patch("app.bot.handlers.userhours.upsert_shift", new=AsyncMock(return_value=None)),
         ):
             mock_sc.write_shift.return_value = ""
             await cb_bar_ah_no(callback, state)
@@ -266,6 +271,7 @@ class TestCbBarAhNo:
             patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
             patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
             patch("app.bot.handlers.userhours.SUPERADMIN_IDS", []),
+            patch("app.bot.handlers.userhours.upsert_shift", new=AsyncMock(return_value=None)),
         ):
             mock_sc.write_shift.return_value = ""
             await cb_bar_ah_no(callback, state)

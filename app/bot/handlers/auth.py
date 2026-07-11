@@ -31,7 +31,7 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import (
     get_user, delete_user, get_users_by_role,
     upsert_employee, approve_employee, dismiss_employee_db, set_employee_role,
-    upsert_shift,
+    upsert_shift, add_check_filling,
 )
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
@@ -768,7 +768,8 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
         # Парсим дату из "DD.MM.YY"
         try:
             day_s, month_s, year_s = shift_date.split(".")
-            day = int(day_s)
+            day, month, year = int(day_s), int(month_s), 2000 + int(year_s)
+            iso_date = to_iso_date(day, month, year)
         except (ValueError, AttributeError):
             logger.error(
                 "approve_filling_callback: не удалось распарсить дату '%s'", shift_date
@@ -776,24 +777,35 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
             await callback.answer("❌ Некорректный формат даты.", show_alert=True)
             return
 
-        if sheets_client is None:
-            await callback.answer("❌ Ошибка подключения к таблице.", show_alert=True)
+        # SQLite — источник правды: транзакционный инкремент
+        # (заодно фикс гонки read-modify-write из аудита).
+        try:
+            total = await add_check_filling(DB_PATH, iso_date, approved_count)
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: ошибка записи в SQLite date=%s", shift_date
+            )
+            await callback.answer("❌ Ошибка записи, апрув не выполнен.", show_alert=True)
             return
 
-        success = sheets_client.write_check_filling_to_phantom(shift_date, approved_count)
-        if not success:
-            await callback.answer("❌ Ошибка записи.", show_alert=True)
-            try:
-                await callback.bot.send_message(
-                    telegram_id,
-                    "⚠️ Не удалось записать наполняемость чеков.\n"
-                    "Обратитесь к администратору."
-                )
-            except Exception:
-                logger.exception(
-                    "approve_filling_callback: не удалось уведомить пользователя %s", telegram_id
-                )
-            return
+        # Зеркало Sheets: пишем сумму из БД (total), а не read-modify-write из листа.
+        # Ошибка не отменяет апрув, разработчик уведомлён.
+        try:
+            if sheets_client is None:
+                raise RuntimeError("sheets_client не инициализирован")
+            success = sheets_client.write_check_filling_to_phantom(
+                shift_date, approved_count, total=total
+            )
+            if not success:
+                raise RuntimeError("write_check_filling_to_phantom вернул False")
+        except Exception:
+            logging.getLogger("errors").exception(
+                "approve_filling_callback: зеркало Sheets не обновлено date=%s", shift_date
+            )
+            await _notify_mirror_failure(
+                callback.bot,
+                f"наполняемость чеков {shift_date}: +{approved_count} (итого в БД: {total})",
+            )
 
         period = "first" if day <= 15 else "second"
         phantom_checks = sheets_client.get_phantom_checks_summary(period)

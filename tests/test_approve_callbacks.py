@@ -138,6 +138,7 @@ class TestApproveFilllingCallback:
 
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.add_check_filling", new=AsyncMock(return_value=50)) as mock_add,
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = True
@@ -145,7 +146,10 @@ class TestApproveFilllingCallback:
 
             await approve_filling_callback(cb)
 
-        mock_sc.write_check_filling_to_phantom.assert_called_once_with("05.05.26", 3)
+        # SQLite-инкремент первым, зеркало получает готовую сумму из БД
+        mock_add.assert_awaited_once()
+        assert mock_add.await_args.args[1:] == ("2026-05-05", 3)
+        mock_sc.write_check_filling_to_phantom.assert_called_once_with("05.05.26", 3, total=50)
         mock_sc.get_phantom_checks_summary.assert_called_once_with("first")  # день 5 ≤ 15
         assert callback_key not in auth_module._pending_filling
         cb.message.edit_text.assert_called_once()
@@ -153,10 +157,11 @@ class TestApproveFilllingCallback:
         cb.bot.send_message.assert_called_once()  # уведомление офику
 
     @pytest.mark.asyncio
-    async def test_approve_filling_no_phantom(self):
-        """write_check_filling_to_phantom вернул False → 'Ошибка записи.'"""
+    async def test_approve_filling_mirror_failure_still_succeeds(self):
+        """Фаза 2b: зеркало вернуло False → апрув успешен (данные в SQLite), дев уведомлён."""
         from app.bot.handlers.auth import approve_filling_callback
         import app.bot.handlers.auth as auth_module
+        from config import DEVELOPER_ID
 
         callback_key = "fill_fail"
         auth_module._pending_filling[callback_key] = {
@@ -170,13 +175,22 @@ class TestApproveFilllingCallback:
 
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.add_check_filling", new=AsyncMock(return_value=1)),
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = False
+            mock_sc.get_phantom_checks_summary.return_value = 1
             await approve_filling_callback(cb)
 
-        cb.answer.assert_called_with("❌ Ошибка записи.", show_alert=True)
-        mock_sc.get_phantom_checks_summary.assert_not_called()
+        # Операция успешна: сводка показана, сообщение отредактировано
+        mock_sc.get_phantom_checks_summary.assert_called_once_with("second")
+        cb.message.edit_text.assert_called_once()
+        # Разработчик уведомлён о рассинхроне зеркала
+        dev_calls = [
+            c for c in cb.bot.send_message.call_args_list
+            if c.args and c.args[0] == DEVELOPER_ID
+        ]
+        assert dev_calls, "разработчик не уведомлён о рассинхроне зеркала"
 
     @pytest.mark.asyncio
     async def test_approve_filling_second_half_period(self):
@@ -196,6 +210,7 @@ class TestApproveFilllingCallback:
 
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.add_check_filling", new=AsyncMock(return_value=10)),
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = True

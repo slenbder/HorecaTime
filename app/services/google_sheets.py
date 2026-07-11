@@ -892,8 +892,15 @@ class GoogleSheetsClient:
         self,
         date_str: str,
         approved_count: int,
+        total: Optional[int] = None,
     ) -> bool:
-        """Суммирует approved_count чеков в ячейку фантома за дату date_str."""
+        """
+        Пишет количество чеков в ячейку фантома за дату date_str.
+        total задан → записывается это значение (готовая сумма из SQLite —
+        источника правды, без гоночного read-modify-write из листа);
+        total is None → legacy-режим: читает текущее значение ячейки
+        и прибавляет approved_count.
+        """
         try:
             if "-" in date_str:
                 dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -958,14 +965,16 @@ class GoogleSheetsClient:
 
             col = 3 + day if day <= 15 else 19 + (day - 15)
 
-            row_data = all_values[phantom_row - 1]
-            current_value = row_data[col - 1] if len(row_data) >= col else ""
-            try:
-                current_checks = int(float(str(current_value).strip().replace(",", "."))) if str(current_value).strip() else 0
-            except (ValueError, TypeError):
-                current_checks = 0
-
-            new_checks = current_checks + approved_count
+            if total is not None:
+                new_checks = int(total)
+            else:
+                row_data = all_values[phantom_row - 1]
+                current_value = row_data[col - 1] if len(row_data) >= col else ""
+                try:
+                    current_checks = int(float(str(current_value).strip().replace(",", "."))) if str(current_value).strip() else 0
+                except (ValueError, TypeError):
+                    current_checks = 0
+                new_checks = current_checks + approved_count
             cell = gspread.utils.rowcol_to_a1(phantom_row, col)
             try:
                 ws.update([[new_checks]], cell, value_input_option="RAW")

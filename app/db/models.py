@@ -509,3 +509,146 @@ async def get_admins_by_department(db_path: str, department: str) -> list[int]:
                 seen.add(sid)
 
         return dept_admins
+
+
+# --- Employees: SQLite = source of truth (Фаза 2a) ---
+# Ошибки БД не глотаются — исключение означает отказ операции (dual-write:
+# сначала SQLite, при успехе — зеркалирование в Google Sheets).
+
+_EMPLOYEE_FIELDS = (
+    "telegram_id, nickname, full_name, department, position, custom_position, "
+    "role, status, registered_at, approved_at, dismissed_at"
+)
+
+
+def _employee_row_to_dict(row) -> Dict:
+    return {
+        "telegram_id": row["telegram_id"],
+        "nickname": row["nickname"],
+        "full_name": row["full_name"],
+        "department": row["department"],
+        "position": row["position"],
+        "custom_position": row["custom_position"],
+        "role": row["role"],
+        "status": row["status"],
+        "registered_at": row["registered_at"],
+        "approved_at": row["approved_at"],
+        "dismissed_at": row["dismissed_at"],
+    }
+
+
+async def upsert_employee(
+    db_path: str,
+    telegram_id: int,
+    nickname: Optional[str],
+    full_name: str,
+    department: str,
+    position: str,
+    custom_position: Optional[str],
+    status: str,
+    registered_at: str,
+) -> None:
+    """
+    Создаёт или обновляет запись сотрудника (заявка на регистрацию).
+    При конфликте обновляет только пришедшие поля: role, approved_at и
+    dismissed_at существующей записи сохраняются.
+    """
+    logger.info("upsert_employee: telegram_id=%s status=%s", telegram_id, status)
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            '''
+            INSERT INTO employees
+                (telegram_id, nickname, full_name, department, position,
+                 custom_position, status, registered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                nickname        = excluded.nickname,
+                full_name       = excluded.full_name,
+                department      = excluded.department,
+                position        = excluded.position,
+                custom_position = excluded.custom_position,
+                status          = excluded.status,
+                registered_at   = excluded.registered_at
+            ''',
+            (telegram_id, nickname, full_name, department, position,
+             custom_position, status, registered_at),
+        )
+        await db.commit()
+
+
+async def approve_employee(db_path: str, telegram_id: int) -> None:
+    """
+    Помечает сотрудника одобренным (status='approved', approved_at=now).
+    Если записи нет — ValueError: одобрять можно только существующую заявку.
+    """
+    now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        cursor = await db.execute(
+            "UPDATE employees SET status = 'approved', approved_at = ? WHERE telegram_id = ?",
+            (now_str, telegram_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            raise ValueError(f"approve_employee: сотрудник {telegram_id} не найден в employees")
+    logger.info("approve_employee: telegram_id=%s одобрен", telegram_id)
+
+
+async def dismiss_employee_db(db_path: str, telegram_id: int) -> bool:
+    """
+    Помечает сотрудника уволенным (status='dismissed', dismissed_at=now).
+    Строка НЕ удаляется — история остаётся в БД.
+    Возвращает False (с warning), если записи нет: увольнение доступа
+    должно пройти даже для сотрудников, зарегистрированных до миграции.
+    """
+    now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        cursor = await db.execute(
+            "UPDATE employees SET status = 'dismissed', dismissed_at = ? WHERE telegram_id = ?",
+            (now_str, telegram_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            logger.warning("dismiss_employee_db: сотрудник %s не найден в employees", telegram_id)
+            return False
+    logger.info("dismiss_employee_db: telegram_id=%s уволен", telegram_id)
+    return True
+
+
+async def get_employee(db_path: str, telegram_id: int) -> Optional[Dict]:
+    """Возвращает запись сотрудника или None."""
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT {_EMPLOYEE_FIELDS} FROM employees WHERE telegram_id = ?",
+            (telegram_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+    return _employee_row_to_dict(row) if row else None
+
+
+async def get_employees_by_department_db(
+    db_path: str, department: str, status: str = "approved"
+) -> list[dict]:
+    """Сотрудники отдела с указанным статусом (по умолчанию — одобренные)."""
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT {_EMPLOYEE_FIELDS} FROM employees "
+            "WHERE department = ? AND status = ? ORDER BY full_name",
+            (department, status),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [_employee_row_to_dict(r) for r in rows]
+
+
+async def set_employee_role(db_path: str, telegram_id: int, role: str) -> None:
+    """Обновляет роль сотрудника в employees."""
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        cursor = await db.execute(
+            "UPDATE employees SET role = ? WHERE telegram_id = ?",
+            (role, telegram_id),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            logger.warning("set_employee_role: сотрудник %s не найден в employees", telegram_id)
+    logger.info("set_employee_role: telegram_id=%s role=%s", telegram_id, role)

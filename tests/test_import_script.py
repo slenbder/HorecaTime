@@ -13,9 +13,11 @@ from import_from_sheets import (
     extract_shifts,
     extract_check_filling,
     extract_dismissed_ids,
+    extract_dismissed_employees,
     write_employees,
     write_shifts,
     write_check_filling,
+    write_dismissed_employees,
     mark_dismissed,
 )
 
@@ -308,3 +310,101 @@ class TestMarkDismissed:
         assert marked == 1
         assert status == "dismissed"
         assert dismissed_at == NOW_ISO
+
+
+# ---------------------------------------------------------------------------
+# Фикс Фазы 2a: уволенные из красных строк → employees
+# ---------------------------------------------------------------------------
+
+def _header_row(text):
+    """Строка заголовка отдела/секции: A и B пустые, текст в C."""
+    return ["", "", text] + [""] * 32
+
+
+class TestExtractDismissedEmployees:
+
+    def test_red_row_becomes_dismissed_employee(self):
+        values = [
+            _header_row("ЗАЛ"),
+            _header_row("Официанты"),
+            _month_row(42, fio="Уволенный Тест"),
+        ]
+        rows = extract_dismissed_employees(values, {3}, NOW_ISO)
+        assert rows == [{
+            "telegram_id": 42,
+            "nickname": None,
+            "full_name": "Уволенный Тест",
+            "department": "Зал",
+            "position": "Официант",
+            "custom_position": None,
+            "role": "user",
+            "status": "dismissed",
+            "registered_at": NOW_ISO,
+            "dismissed_at": NOW_ISO,
+        }]
+
+    def test_kitchen_section_kept_as_position(self):
+        # Для цехов Кухни точную должность не восстановить — пишем название секции
+        values = [
+            _header_row("КУХНЯ"),
+            _header_row("Горячий цех"),
+            _month_row(77),
+        ]
+        rows = extract_dismissed_employees(values, {3}, NOW_ISO)
+        assert rows[0]["department"] == "Кухня"
+        assert rows[0]["position"] == "Горячий цех"
+
+    def test_ambiguous_section_kept_as_is(self):
+        # "Дополнительные сотрудники" ← Грузчик и Закупщик: неоднозначно
+        values = [
+            _header_row("КУХНЯ"),
+            _header_row("Дополнительные сотрудники"),
+            _month_row(88),
+        ]
+        rows = extract_dismissed_employees(values, {3}, NOW_ISO)
+        assert rows[0]["position"] == "Дополнительные сотрудники"
+
+    def test_phantom_and_non_red_rows_ignored(self):
+        values = [
+            _header_row("ЗАЛ"),
+            _month_row(PHANTOM_CHECK_FILLING_ID),
+            _month_row(42),
+        ]
+        assert extract_dismissed_employees(values, {2}, NOW_ISO) == []
+        assert len(extract_dismissed_employees(values, {3}, NOW_ISO)) == 1
+
+
+class TestWriteDismissedEmployees:
+
+    def test_red_row_without_techlist_creates_dismissed_employee(self, migration_db):
+        """Сценарий из ревью: TG_ID удалён из Техлиста, но строка листа красная."""
+        values = [
+            _header_row("БАР"),
+            _header_row("Бармены"),
+            _month_row(555, fio="Экс Бармен"),
+        ]
+        dismissed = extract_dismissed_employees(values, {3}, NOW_ISO)
+
+        with sqlite3.connect(migration_db) as conn:
+            written = write_dismissed_employees(conn, dismissed)
+            row = conn.execute(
+                "SELECT full_name, department, position, status, dismissed_at "
+                "FROM employees WHERE telegram_id = 555"
+            ).fetchone()
+        assert written == 1
+        assert row == ("Экс Бармен", "Бар", "Бармен", "dismissed", NOW_ISO)
+
+    def test_existing_employee_not_overwritten(self, migration_db):
+        """Запись из Техлиста полнее — красная строка не должна её затирать."""
+        values = [_header_row("ЗАЛ"), _month_row(42, fio="Из Листа")]
+        dismissed = extract_dismissed_employees(values, {2}, NOW_ISO)
+
+        with sqlite3.connect(migration_db) as conn:
+            write_employees(conn, [_employee(42)])  # из Техлиста: full_name="Иванов"
+            written = write_dismissed_employees(conn, dismissed)
+            full_name, status = conn.execute(
+                "SELECT full_name, status FROM employees WHERE telegram_id = 42"
+            ).fetchone()
+        assert written == 0
+        assert full_name == "Иванов"
+        assert status == "approved"

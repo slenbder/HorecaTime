@@ -28,6 +28,8 @@ from app.db.models import create_migration_tables
 from app.services.google_sheets import (
     GoogleSheetsClient,
     MONTH_NAMES_RU,
+    POSITION_TO_SECTION,
+    DEPARTMENT_TO_HEADER,
     COL_TELEGRAM_ID,
     COL_NICKNAME,
     COL_FIO_FROM_USER,
@@ -38,6 +40,18 @@ from app.services.google_sheets import (
     COL_CUSTOM_POSITION,
 )
 from config import PHANTOM_CHECK_FILLING_ID
+
+# Обратные маппинги для восстановления отдела/позиции уволенных из структуры листа.
+# Секция с единственной позицией → эта позиция ("Бармены" → "Бармен");
+# неоднозначная секция → её название ("Дополнительные сотрудники", цеха Кухни).
+_HEADER_TO_DEPARTMENT = {v: k for k, v in DEPARTMENT_TO_HEADER.items()}
+_SECTION_POSITIONS: dict[str, list[str]] = {}
+for _pos, _sec in POSITION_TO_SECTION.items():
+    _SECTION_POSITIONS.setdefault(_sec, []).append(_pos)
+SECTION_TO_POSITION = {
+    sec: (positions[0] if len(positions) == 1 else sec)
+    for sec, positions in _SECTION_POSITIONS.items()
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("import_from_sheets")
@@ -214,6 +228,52 @@ def extract_check_filling(
     return rows, warnings
 
 
+def extract_dismissed_employees(
+    sheet_values: list[list],
+    dismissed_rows: set,
+    now_iso: str,
+) -> list[dict]:
+    """
+    Красные строки месячного листа → минимальные записи employees.
+    Уволенные удалены из Техлиста, поэтому кроме листа их взять неоткуда.
+    Отдел/позиция восстанавливаются из заголовков секций (колонка C при
+    пустых A и B); точные даты неизвестны — registered_at/dismissed_at = now.
+    """
+    result: list[dict] = []
+    current_dept = ""
+    current_position = ""
+
+    for i, row in enumerate(sheet_values, start=1):
+        a, b, c = _cell(row, 1), _cell(row, 2), _cell(row, 3)
+
+        if not a and not b and c:
+            if c in _HEADER_TO_DEPARTMENT:
+                current_dept = _HEADER_TO_DEPARTMENT[c]
+                current_position = ""
+            elif c in SECTION_TO_POSITION:
+                current_position = SECTION_TO_POSITION[c]
+            continue
+
+        if i not in dismissed_rows:
+            continue
+        if not b.lstrip("-").isdigit() or int(b) == PHANTOM_CHECK_FILLING_ID:
+            continue
+
+        result.append({
+            "telegram_id": int(b),
+            "nickname": None,
+            "full_name": a,
+            "department": current_dept,
+            "position": current_position,
+            "custom_position": None,
+            "role": "user",
+            "status": "dismissed",
+            "registered_at": now_iso,
+            "dismissed_at": now_iso,
+        })
+    return result
+
+
 def extract_dismissed_ids(sheet_values: list[list], dismissed_rows: set) -> list[int]:
     """Индексы красных строк (1-based) → TG_ID из колонки B."""
     result = []
@@ -266,6 +326,25 @@ def write_shifts(conn: sqlite3.Connection, rows: list[dict]) -> int:
                 extra_hours = excluded.extra_hours,
                 updated_at = excluded.updated_at
             WHERE shifts.source = 'import'
+        ''', r)
+        written += cur.rowcount
+    return written
+
+
+def write_dismissed_employees(conn: sqlite3.Connection, rows: list[dict]) -> int:
+    """
+    Вставка уволенных, восстановленных из красных строк листа.
+    Существующие записи (из Техлиста) не перезаписываются — там данные полнее.
+    """
+    written = 0
+    for r in rows:
+        cur = conn.execute('''
+            INSERT INTO employees
+                (telegram_id, nickname, full_name, department, position,
+                 custom_position, role, status, registered_at, dismissed_at)
+            VALUES (:telegram_id, :nickname, :full_name, :department, :position,
+                    :custom_position, :role, :status, :registered_at, :dismissed_at)
+            ON CONFLICT(telegram_id) DO NOTHING
         ''', r)
         written += cur.rowcount
     return written
@@ -329,6 +408,7 @@ def run_import(db_path: str, dry_run: bool) -> None:
         shifts: list[dict] = []
         check_rows: list[dict] = []
         dismissed_ids: list[int] = []
+        dismissed_employees: list[dict] = []
 
         for month, year, is_current in (
             (prev_month, prev_year, False),
@@ -350,6 +430,8 @@ def run_import(db_path: str, dry_run: bool) -> None:
                 # d) Красные строки текущего месяца → dismissed
                 dismissed_rows = client.get_dismissed_rows(sheet_name)
                 dismissed_ids = extract_dismissed_ids(values, dismissed_rows)
+                # Уволенных уже нет в Техлисте — восстанавливаем их записи из листа
+                dismissed_employees = extract_dismissed_employees(values, dismissed_rows, now_iso)
 
         # --- Сводка ---
         by_status = {"pending": 0, "approved": 0, "dismissed": 0}
@@ -362,6 +444,7 @@ def run_import(db_path: str, dry_run: bool) -> None:
         print(f"employees:     {len(employees)} "
               f"(pending={by_status['pending']}, approved={by_status['approved']}, "
               f"будет помечено dismissed={len(dismissed_in_employees)})")
+        print(f"employees из красных строк (уже не в Техлисте): {len(dismissed_employees)}")
         print(f"shifts:        {len(shifts)}")
         print(f"check_filling: {len(check_rows)}")
         print(f"warnings:      {len(warnings)}")
@@ -373,12 +456,13 @@ def run_import(db_path: str, dry_run: bool) -> None:
 
         create_migration_tables(conn.cursor())
         n_emp = write_employees(conn, employees)
+        n_dismissed_created = write_dismissed_employees(conn, dismissed_employees)
         n_shifts = write_shifts(conn, shifts)
         n_checks = write_check_filling(conn, check_rows)
         n_dismissed = mark_dismissed(conn, dismissed_ids, now_iso)
         conn.commit()
-        print(f"\nЗаписано: employees={n_emp}, shifts={n_shifts} "
-              f"(существующие с source!='import' не тронуты), "
+        print(f"\nЗаписано: employees={n_emp} (+{n_dismissed_created} уволенных из красных строк), "
+              f"shifts={n_shifts} (существующие с source!='import' не тронуты), "
               f"check_filling={n_checks}, помечено dismissed={n_dismissed}")
     finally:
         conn.close()

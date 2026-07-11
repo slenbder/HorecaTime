@@ -652,3 +652,146 @@ async def set_employee_role(db_path: str, telegram_id: int, role: str) -> None:
         if cursor.rowcount == 0:
             logger.warning("set_employee_role: сотрудник %s не найден в employees", telegram_id)
     logger.info("set_employee_role: telegram_id=%s role=%s", telegram_id, role)
+
+
+# --- Shifts и check_filling: SQLite = source of truth (Фаза 2b) ---
+
+_SHIFT_FIELDS = "telegram_id, shift_date, hours, extra_hours, source, created_at, updated_at"
+
+_UPSERT_SHIFT_SQL = '''
+    INSERT INTO shifts
+        (telegram_id, shift_date, hours, extra_hours, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(telegram_id, shift_date) DO UPDATE SET
+        hours       = excluded.hours,
+        extra_hours = excluded.extra_hours,
+        source      = excluded.source,
+        updated_at  = excluded.updated_at
+'''
+
+
+def _shift_row_to_dict(row) -> Dict:
+    return {
+        "telegram_id": row["telegram_id"],
+        "shift_date": row["shift_date"],
+        "hours": row["hours"],
+        "extra_hours": row["extra_hours"],
+        "source": row["source"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+async def upsert_shift(
+    db_path: str,
+    telegram_id: int,
+    shift_date: str,
+    hours: float,
+    extra_hours: float,
+    source: str,
+) -> Optional[Dict]:
+    """
+    Создаёт или перезаписывает смену (shift_date: 'YYYY-MM-DD').
+    Возвращает старую запись ДО обновления (dict | None) — по ней
+    вызывающий код решает, уведомлять ли админа о перезаписи.
+    """
+    now_str = datetime.now(MOSCOW_TZ).isoformat()
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT {_SHIFT_FIELDS} FROM shifts WHERE telegram_id = ? AND shift_date = ?",
+            (telegram_id, shift_date),
+        ) as cursor:
+            old = await cursor.fetchone()
+        await db.execute(
+            _UPSERT_SHIFT_SQL,
+            (telegram_id, shift_date, hours, extra_hours, source, now_str, now_str),
+        )
+        await db.commit()
+    logger.info(
+        "upsert_shift: telegram_id=%s date=%s h=%s ah=%s source=%s overwrite=%s",
+        telegram_id, shift_date, hours, extra_hours, source, old is not None,
+    )
+    return _shift_row_to_dict(old) if old else None
+
+
+async def upsert_shifts_bulk(db_path: str, shifts: list) -> list:
+    """
+    Записывает список смен ОДНОЙ транзакцией: любая ошибка = rollback
+    всего списка (поведение бота «одна ошибочная строка = не записывается ничего»).
+    Каждый элемент: {telegram_id, shift_date, hours, extra_hours, source}.
+    Возвращает старые записи (до обновления) в порядке входного списка.
+    """
+    now_str = datetime.now(MOSCOW_TZ).isoformat()
+    olds: list = []
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            for s in shifts:
+                async with db.execute(
+                    f"SELECT {_SHIFT_FIELDS} FROM shifts WHERE telegram_id = ? AND shift_date = ?",
+                    (s["telegram_id"], s["shift_date"]),
+                ) as cursor:
+                    old = await cursor.fetchone()
+                olds.append(_shift_row_to_dict(old) if old else None)
+                await db.execute(
+                    _UPSERT_SHIFT_SQL,
+                    (s["telegram_id"], s["shift_date"], s["hours"],
+                     s.get("extra_hours", 0.0), s["source"], now_str, now_str),
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    logger.info("upsert_shifts_bulk: записано %d смен одной транзакцией", len(shifts))
+    return olds
+
+
+async def get_shift(db_path: str, telegram_id: int, shift_date: str) -> Optional[Dict]:
+    """Возвращает смену за дату ('YYYY-MM-DD') или None."""
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT {_SHIFT_FIELDS} FROM shifts WHERE telegram_id = ? AND shift_date = ?",
+            (telegram_id, shift_date),
+        ) as cursor:
+            row = await cursor.fetchone()
+    return _shift_row_to_dict(row) if row else None
+
+
+async def delete_shift(db_path: str, telegram_id: int, shift_date: str) -> None:
+    """
+    Удаляет смену. Используется как компенсация, когда Sheets отклонил
+    смену как невалидную (пользователь не числится в листе месяца).
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            "DELETE FROM shifts WHERE telegram_id = ? AND shift_date = ?",
+            (telegram_id, shift_date),
+        )
+        await db.commit()
+    logger.info("delete_shift: telegram_id=%s date=%s", telegram_id, shift_date)
+
+
+async def add_check_filling(db_path: str, fill_date: str, count: int) -> int:
+    """
+    Транзакционный инкремент наполняемости чеков за дату ('YYYY-MM-DD').
+    Возвращает новое суммарное значение за дату — его пишет в ячейку
+    Sheets-зеркало (вместо гоночного read-modify-write из листа).
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            '''
+            INSERT INTO check_filling (fill_date, count) VALUES (?, ?)
+            ON CONFLICT(fill_date) DO UPDATE SET count = count + excluded.count
+            ''',
+            (fill_date, count),
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT count FROM check_filling WHERE fill_date = ?", (fill_date,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    total = int(row[0])
+    logger.info("add_check_filling: %s +%d = %d", fill_date, count, total)
+    return total

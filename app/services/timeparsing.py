@@ -142,3 +142,11 @@ def parse_shift(text: str, position: str) -> dict | None:
     }
     logger.debug("parse_shift: %r → %s", text, result)
     return result
+
+
+def to_iso_date(day: int, month: int, year: int) -> str:
+    """
+    (day, month, year) → 'YYYY-MM-DD' для shifts.shift_date.
+    Невалидная дата → ValueError (datetime.date валидирует границы месяца).
+    """
+    return datetime.date(year, month, day).isoformat()

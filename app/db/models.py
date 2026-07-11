@@ -795,3 +795,93 @@ async def add_check_filling(db_path: str, fill_date: str, count: int) -> int:
     total = int(row[0])
     logger.info("add_check_filling: %s +%d = %d", fill_date, count, total)
     return total
+
+
+# --- Pending approvals: данные апрувов вместо callback_data (Фаза 2c) ---
+
+_APPROVAL_FIELDS = (
+    "id, telegram_id, approval_type, shift_date, hours, photo_count, "
+    "created_at, resolved_at, resolved_by"
+)
+
+
+async def create_pending_approval(
+    db_path: str,
+    telegram_id: int,
+    approval_type: str,
+    shift_date: str,
+    hours: Optional[float],
+    photo_count: Optional[int],
+) -> int:
+    """
+    Создаёт заявку на апрув ('ah_photos' / 'loyalty' / 'filling').
+    shift_date: 'YYYY-MM-DD'. Возвращает approval_id — только он
+    (плюс решение админа) попадает в callback_data кнопок.
+    """
+    now_str = datetime.now(MOSCOW_TZ).isoformat()
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        cursor = await db.execute(
+            '''
+            INSERT INTO pending_approvals
+                (telegram_id, approval_type, shift_date, hours, photo_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            (telegram_id, approval_type, shift_date, hours, photo_count, now_str),
+        )
+        await db.commit()
+        approval_id = cursor.lastrowid
+    logger.info(
+        "create_pending_approval: id=%s type=%s telegram_id=%s date=%s",
+        approval_id, approval_type, telegram_id, shift_date,
+    )
+    return approval_id
+
+
+async def get_pending_approval(db_path: str, approval_id: int) -> Optional[Dict]:
+    """Возвращает заявку по id или None."""
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT {_APPROVAL_FIELDS} FROM pending_approvals WHERE id = ?",
+            (approval_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {key: row[key] for key in row.keys()}
+
+
+async def resolve_pending_approval(db_path: str, approval_id: int, resolved_by: int) -> bool:
+    """
+    Атомарно помечает заявку обработанной. Возвращает True только первому
+    вызову (WHERE resolved_at IS NULL) — БД-защита от двойного апрува,
+    работающая даже при гонке двух админов.
+    """
+    now_str = datetime.now(MOSCOW_TZ).isoformat()
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        cursor = await db.execute(
+            "UPDATE pending_approvals SET resolved_at = ?, resolved_by = ? "
+            "WHERE id = ? AND resolved_at IS NULL",
+            (now_str, resolved_by, approval_id),
+        )
+        await db.commit()
+        resolved = cursor.rowcount == 1
+    logger.info(
+        "resolve_pending_approval: id=%s by=%s → %s",
+        approval_id, resolved_by, "resolved" if resolved else "already resolved",
+    )
+    return resolved
+
+
+async def reopen_pending_approval(db_path: str, approval_id: int) -> None:
+    """
+    Компенсация: снимает resolved, если запись данных после резолва упала
+    (сохраняет гарантию Фазы 2b «ошибка записи → кнопки живы, повтор возможен»).
+    """
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        await db.execute(
+            "UPDATE pending_approvals SET resolved_at = NULL, resolved_by = NULL WHERE id = ?",
+            (approval_id,),
+        )
+        await db.commit()
+    logger.warning("reopen_pending_approval: id=%s снова открыта после сбоя записи", approval_id)

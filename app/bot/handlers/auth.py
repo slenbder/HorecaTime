@@ -1,6 +1,8 @@
 import html
 import logging
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.services.roles_cache import RolesCacheService
 from aiogram import Router, F
@@ -26,7 +28,10 @@ from app.bot.keyboards.common import (
 )
 
 from app.bot.commands import set_commands_for_role
-from app.db.models import get_user, delete_user, get_users_by_role
+from app.db.models import (
+    get_user, delete_user, get_users_by_role,
+    upsert_employee, approve_employee, dismiss_employee_db, set_employee_role,
+)
 from app.services.google_sheets import GoogleSheetsClient
 from app.utils.text_utils import make_mention, mask_email, format_alert
 from app.utils.formatting import fmt_hours
@@ -94,6 +99,17 @@ try:
 except Exception as e:
     logger.exception(f"Ошибка при инициализации GoogleSheetsClient: {e}")
     sheets_client = None
+
+
+async def _notify_mirror_failure(bot, text: str) -> None:
+    """
+    Уведомляет разработчика, что запись в Sheets-зеркало не прошла.
+    SQLite (источник правды) уже записан, операция для пользователя успешна.
+    """
+    try:
+        await bot.send_message(DEVELOPER_ID, f"⚠️ Sheets-зеркало не обновлено: {text}")
+    except Exception:
+        logger.exception("Не удалось уведомить разработчика о рассинхроне зеркала: %s", text)
 
 
 async def _clear_commands(bot, tg_id: int) -> None:
@@ -336,14 +352,34 @@ async def process_fio(message: Message, state: FSMContext):
         tg_id, fio, department,
     )
 
-    if sheets_client is None:
-        await message.answer("Ошибка подключения к таблице. Обратись к администратору.")
-        logger.error("sheets_client не инициализирован при записи заявки")
-        await state.clear()
+    # 1. SQLite — источник правды: сохраняем заявку.
+    # Ошибка БД = отказ операции; state не сбрасываем, пользователь может повторить.
+    try:
+        await upsert_employee(
+            DB_PATH,
+            telegram_id=tg_id,
+            nickname=nickname or None,
+            full_name=fio,
+            department=department,
+            position=position,
+            custom_position=custom_position or None,
+            status="pending",
+            registered_at=datetime.now(ZoneInfo("Europe/Moscow")).isoformat(),
+        )
+        logger.info("Заявка пользователя %s сохранена в SQLite (status=pending)", tg_id)
+    except Exception:
+        logger.exception("Ошибка сохранения заявки в SQLite для пользователя %s", tg_id)
+        await message.answer(
+            "Не удалось сохранить заявку. Отправь ФИО ещё раз или напиши администратору."
+        )
         return
 
-    # 1. Записываем/обновляем заявку в Техлисте
+    # 2. Зеркалируем заявку в Техлист.
+    # Ошибка Sheets НЕ отменяет операцию: заявка уже в БД, разработчик уведомлён.
+    row_index = 0
     try:
+        if sheets_client is None:
+            raise RuntimeError("sheets_client не инициализирован")
         logger.info(f"Запись заявки в Техлист для пользователя {tg_id}")
         row_index = sheets_client.add_or_update_pending_user(
             telegram_id=tg_id,
@@ -353,15 +389,12 @@ async def process_fio(message: Message, state: FSMContext):
             position=position,
             custom_position=custom_position if custom_position else "",
         )
-
         logger.info(f"Заявка успешно записана в строку {row_index}")
     except Exception as e:
-        logger.exception(f"Ошибка при записи заявки в Техлист для пользователя {tg_id}: {e}")
-        await message.answer(
-            "Не удалось сохранить заявку в таблицу. Попробуй позже или напиши администратору."
+        logger.error(
+            "Зеркало Sheets не обновлено при регистрации %s: %s", tg_id, e, exc_info=True
         )
-        await state.clear()
-        return
+        await _notify_mirror_failure(message.bot, f"регистрация {tg_id} ({fio})")
 
     # Вычисляем отображаемые позицию и должность
     if position in VALID_DOP_POSITIONS:
@@ -391,7 +424,7 @@ async def process_fio(message: Message, state: FSMContext):
         f"🔧 <b>Должность:</b> {html.escape(display_title)}\n"
         f"🆔 Telegram ID: <code>{tg_id}</code>\n"
         f"📱 Ник: {mention}\n"
-        f"📋 Строка в Техлисте: {row_index}\n\n"
+        f"📋 Строка в Техлисте: {row_index or '— (зеркало не обновлено)'}\n\n"
         "❓ <b>Добавить пользователя в график?</b>"
     )
 
@@ -1039,7 +1072,19 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         custom_position = user_data["custom_position"]
         mention = user_data["mention"]
 
-        # Регистрация в Sheets (одобрение + график)
+        # SQLite — источник правды: одобрение. Ошибка БД = отказ операции.
+        try:
+            await approve_employee(DB_PATH, user_tg_id)
+            await set_employee_role(DB_PATH, user_tg_id, "user")
+        except Exception:
+            logger.exception(f"approve: ошибка записи одобрения в SQLite для {user_tg_id}")
+            await callback.answer(
+                "❌ Ошибка сохранения одобрения. Попробуйте ещё раз.", show_alert=True
+            )
+            return
+
+        # Зеркалирование в Sheets (одобрение в Техлисте + месячный график).
+        # Ошибка Sheets НЕ отменяет апрув: статус уже в БД, разработчик уведомлён.
         try:
             await _register_user_in_sheets(
                 sheets_client,
@@ -1049,14 +1094,10 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
                 callback.from_user.id,
                 user_data=user_data,
             )
+            logger.info(f"Синхронизация в график завершена для {user_tg_id}")
         except Exception:
-            logger.exception(f"approve: ошибка добавления в график для {user_tg_id}")
-            await callback.message.edit_text(
-                f"❌ Ошибка при добавлении {fio} в график."
-            )
-            return
-
-        logger.info(f"Синхронизация в график завершена для {user_tg_id}")
+            logger.exception(f"approve: зеркало Sheets не обновлено для {user_tg_id}")
+            await _notify_mirror_failure(callback.bot, f"апрув {user_tg_id} ({fio})")
 
         # Настройка доступа (ставка + кеш + команды)
         await _setup_user_access(
@@ -1452,6 +1493,18 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
 
     error_logger = logging.getLogger("errors")
 
+    # 0) SQLite employees — источник правды. Ошибка БД = отказ операции.
+    try:
+        await dismiss_employee_db(DB_PATH, target_id)
+    except Exception:
+        error_logger.exception(
+            "dismiss: ошибка записи увольнения в SQLite для %s", target_id
+        )
+        await callback.answer(
+            "❌ Ошибка БД, увольнение не выполнено. Попробуйте ещё раз.", show_alert=True
+        )
+        return
+
     # Guard: если сотрудник является администратором — сначала понизить
     current_data = get_user(target_id)
     if current_data and current_data.get("role") in _ADMIN_ROLES:
@@ -1498,22 +1551,25 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
     except Exception:
         error_logger.exception("dismiss: не удалось очистить FSM для %s", target_id)
 
-    # d+e) Удалить из SQLite (users = roles cache)
-    try:
-        delete_user(target_id)
-    except Exception:
-        error_logger.exception("dismiss: не удалось удалить пользователя %s из SQLite", target_id)
-
-    # f+g) Покрасить ячейку в месячном листе и удалить из Техлиста
+    # d) Зеркало Sheets: покрасить ячейку в месячном листе и удалить из Техлиста.
+    # Ошибка НЕ отменяет увольнение — статус уже в employees, разработчик уведомлён.
     if sheets_client is not None:
         try:
             sheets_client.dismiss_employee(target_id)
         except Exception:
             error_logger.exception("dismiss: ошибка при вызове dismiss_employee для %s", target_id)
+            await _notify_mirror_failure(callback.bot, f"увольнение {target_id} ({full_name})")
     else:
         error_logger.error(
-            "dismiss: sheets_client не инициализирован, шаги f/g пропущены для %s", target_id
+            "dismiss: sheets_client не инициализирован, зеркало пропущено для %s", target_id
         )
+        await _notify_mirror_failure(callback.bot, f"увольнение {target_id} ({full_name})")
+
+    # e) Удалить из SQLite users (кеш ролей, уйдёт в Фазе 3)
+    try:
+        delete_user(target_id)
+    except Exception:
+        error_logger.exception("dismiss: не удалось удалить пользователя %s из SQLite", target_id)
 
     # h) Ответить суперадмину
     await state.clear()

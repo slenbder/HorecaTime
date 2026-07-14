@@ -111,16 +111,18 @@ async def main():
     sheets_client = GoogleSheetsClient()
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Europe/Moscow"))
 
-    # Уведомление за 6 часов — каждое 25-е число в 12:00 МСК
+    SWITCH_DAY = 25  # день месяца переключения — единственный источник, чтобы триггеры и лог не расходились
+
+    # Уведомление за 6 часов — каждое SWITCH_DAY число в 12:00 МСК
     scheduler.add_job(
         notify_upcoming_switch,
-        CronTrigger(day=25, hour=12, minute=0, timezone=ZoneInfo("Europe/Moscow")),
+        CronTrigger(day=SWITCH_DAY, hour=12, minute=0, timezone=ZoneInfo("Europe/Moscow")),
         args=[bot, DB_PATH],
     )
-    # Переключение — каждое 25-е число в 18:00 МСК
+    # Переключение — каждое SWITCH_DAY число в 18:00 МСК
     scheduler.add_job(
         switch_month,
-        CronTrigger(day=25, hour=18, minute=0, timezone=ZoneInfo("Europe/Moscow")),
+        CronTrigger(day=SWITCH_DAY, hour=18, minute=0, timezone=ZoneInfo("Europe/Moscow")),
         args=[bot, sheets_client, DB_PATH],
     )
     scheduler.add_job(
@@ -131,7 +133,7 @@ async def main():
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Планировщик APScheduler запущен (переключение месяца 1-го в 18:00 МСК)")
+    logger.info(f"Планировщик APScheduler запущен (переключение месяца {SWITCH_DAY}-го в 18:00 МСК)")
 
     # Healthcheck каждые 30 минут
     scheduler.add_job(

@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.scheduler.monthly_switch import switch_month
+from config import PHANTOM_CHECK_FILLING_ID
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +157,31 @@ class TestSwitchMonthLogic:
         positional_args = mock_transfer.call_args[0]
         assert positional_args[1] == "Апрель 2026"  # current (old) sheet
         assert positional_args[2] == "Май 2026"     # next (new) sheet
+
+    @pytest.mark.asyncio
+    async def test_phantom_excluded_from_anomaly_check(self, caplog):
+        """Фантом (TG_ID=PHANTOM_CHECK_FILLING_ID) не в Техлисте по дизайну —
+        не считается аномалией: не входит в transferred/removed/anomalies,
+        не удаляется, в логе debug (не warning)."""
+        all_values = [
+            ["Наполняемость чека", str(PHANTOM_CHECK_FILLING_ID), "Официант"],  # row 1 — фантом
+            ["Активный", "101", "Официант"],                                     # row 2 — active
+        ]
+        client, _ = _make_sheets_client(all_values, dismissed=set(), in_techlist=True)
+        # Фантом реально никогда не в Техлисте — задаём это явно
+        client.get_techlist_ids.return_value = {"101"}
+
+        with caplog.at_level(logging.DEBUG):
+            result, _ = await _run_switch_month(client)
+
+        assert result["transferred"] == 1   # только активный сотрудник
+        assert result["removed"] == 0
+        assert result["anomalies"] == 0
+        assert "фантом" in caplog.text.lower()
+        assert "аномалия" not in caplog.text.lower()
+
+        requests = _find_delete_call(client)
+        assert requests is None  # фантом не удалён
 
 
 # ---------------------------------------------------------------------------
@@ -348,3 +374,78 @@ class TestBatchRowDeletion:
         dim_range = requests[0]["deleteDimension"]["range"]
         assert dim_range["startIndex"] == 1   # row 2 → 0-based index 1
         assert dim_range["endIndex"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Integration: реальный _transfer_phantom_to_new_month (не замокан).
+# Фантом исключён из аномалий, duplicate_sheet уже скопировал его строку —
+# после полного switch_month должна остаться РОВНО одна строка фантома.
+# ---------------------------------------------------------------------------
+
+class TestPhantomSurvivesFullSwitch:
+
+    @pytest.mark.asyncio
+    async def test_exactly_one_phantom_row_after_switch(self):
+        """Фантом в новом листе (скопирован duplicate_sheet, не удалён как
+        аномалия) → после switch_month с реальным _transfer_phantom_to_new_month
+        insert_rows не вызывается (нет дублирования), смены фантома обнулены."""
+        source_ws = MagicMock()
+        source_ws.id = 88
+
+        new_ws = MagicMock()
+        new_ws.id = 99
+        new_ws.title = "Май 2026"
+        new_ws.col_count = 40
+        # "Скопировано" duplicate_sheet: фантом (row 1) + активный сотрудник (row 2)
+        new_ws.get_all_values.return_value = [
+            ["Наполняемость чека", str(PHANTOM_CHECK_FILLING_ID), "Официант"],
+            ["Активный", "101", "Официант"],
+        ]
+
+        existing_sheet = MagicMock()
+        existing_sheet.title = "Апрель 2026"
+
+        client = MagicMock()
+        client._spreadsheet.worksheets.return_value = [existing_sheet]
+        client._spreadsheet.worksheet.side_effect = lambda name: (
+            source_ws if name == "Апрель 2026" else new_ws
+        )
+        client._spreadsheet.duplicate_sheet.return_value = new_ws
+        client.get_dismissed_rows.return_value = set()   # никто не уволен
+        client.get_techlist_ids.return_value = {"101"}   # фантом не в Техлисте
+        client._call.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
+
+        bot = AsyncMock()
+        with (
+            patch(
+                "app.scheduler.monthly_switch._find_last_month_sheet",
+                return_value=("Апрель 2026", 4, 2026),
+            ),
+            patch(
+                "app.scheduler.monthly_switch.snapshot_user_rates_history",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.scheduler.monthly_switch.apply_future_rates",
+                new_callable=AsyncMock,
+            ),
+            # _transfer_phantom_to_new_month НЕ замокан — проверяем реальное поведение
+        ):
+            result = await switch_month(bot, client, "test.db")
+
+        assert result["transferred"] == 1   # только активный сотрудник (фантом не считается)
+
+        # Ровно одна строка фантома: insert_rows нигде не вызывался
+        new_ws.insert_rows.assert_not_called()
+
+        # Смены фантома обнулены на месте (строка 1), отдельно от активного (строка 2)
+        clear_calls = [c[0][0] for c in new_ws.batch_clear.call_args_list]
+        assert ["D1:R1", "T1:AI1"] in clear_calls
+        assert any("D2:R2" in ranges for ranges in clear_calls)
+
+        # Формулы фантома — простой SUM для строки 1 (не СУММПРОИЗВ H/AH)
+        all_updates = [
+            item for c in new_ws.batch_update.call_args_list for item in c[0][0]
+        ]
+        phantom_formula = next(item for item in all_updates if item["range"] == "S1")
+        assert phantom_formula["values"][0][0] == "=SUM(D1:R1)"

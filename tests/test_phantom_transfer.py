@@ -191,3 +191,71 @@ class TestPhantomTransfer:
             await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
 
         new_ws.insert_rows.assert_not_called()
+
+    # -----------------------------------------------------------------------
+    # Фикс: фантом исключён из проверки аномалий switch_month, поэтому
+    # duplicate_sheet уже копирует его строку в новый лист — обнуляем
+    # смены на месте вместо вставки новой (иначе дублирование).
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_phantom_already_in_new_sheet_cleared_not_duplicated(self):
+        """Фантом уже есть в новом листе (не удалён как аномалия) → смены
+        обнуляются на месте (batch_clear), insert_rows НЕ вызывается."""
+        old_vals = _make_old_values(phantom_row=5)
+        new_vals = [
+            ["Петров", "67890", "Официант"],
+            ["Наполняемость чека", str(PHANTOM_CHECK_FILLING_ID), "Официант"],
+            ["Сидоров", "11111", "Официант"],
+        ]
+        client, _, new_ws = _make_sheets_client(old_vals, new_vals)
+
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
+
+        new_ws.insert_rows.assert_not_called()
+        new_ws.batch_clear.assert_called_once_with(["D2:R2", "T2:AI2"])
+
+    @pytest.mark.asyncio
+    async def test_phantom_already_in_new_sheet_formulas_recalculated(self):
+        """Формулы S/AJ/AK — простой SUM (не H/AH), для фактической строки фантома."""
+        old_vals = _make_old_values(phantom_row=5)
+        new_vals = [
+            ["Наполняемость чека", str(PHANTOM_CHECK_FILLING_ID), "Официант"],
+            ["Петров", "67890", "Официант"],
+        ]
+        client, _, new_ws = _make_sheets_client(old_vals, new_vals)
+
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
+
+        new_ws.batch_update.assert_called_once()
+        bu_args, bu_kwargs = new_ws.batch_update.call_args
+        ranges = [item["range"] for item in bu_args[0]]
+        values = [item["values"][0][0] for item in bu_args[0]]
+        assert ranges == ["S1", "AJ1", "AK1"]
+        assert values == ["=SUM(D1:R1)", "=SUM(T1:AI1)", "=S1+AJ1"]
+        assert bu_kwargs.get("value_input_option") == "USER_ENTERED"
+
+    @pytest.mark.asyncio
+    async def test_phantom_already_in_new_sheet_old_sheet_not_read(self):
+        """Фантом найден в новом листе → старый лист вообще не читается (не нужен)."""
+        old_vals = _make_old_values(phantom_row=5)
+        new_vals = [
+            ["Наполняемость чека", str(PHANTOM_CHECK_FILLING_ID), "Официант"],
+        ]
+        client, old_ws, new_ws = _make_sheets_client(old_vals, new_vals)
+
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
+
+        old_ws.get_all_values.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_phantom_missing_from_new_sheet_falls_back_to_insert(self):
+        """Фантома нет в новом листе (ручное удаление) → fallback: вставка новой строки,
+        как раньше (устойчивость к нестандартному состоянию листа)."""
+        old_vals = _make_old_values(phantom_row=5)
+        new_vals = _make_new_values(section_row=5)  # без фантома
+        client, _, new_ws = _make_sheets_client(old_vals, new_vals)
+
+        await _transfer_phantom_to_new_month(client, "Апрель 2026", "Май 2026", _make_bot())
+
+        new_ws.insert_rows.assert_called_once()

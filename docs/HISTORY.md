@@ -1361,3 +1361,13 @@ except ValueError as e:
   `SELECT * FROM pending_approvals WHERE resolved_at IS NULL AND
   created_at < datetime('now', '-24 hours')`, пинг ответственным админам
   отдела (Зал) по каждой найденной заявке.
+
+## В скоуп Фазы 3 (найдено при дифф-ревью перед деплоем, 2026-07-14)
+- **Мигрировать `_fetch_user_info` на `employees`** — снимает блокировку
+  апрува при упавшем зеркале регистрации. Сейчас `process_approve` читает
+  данные заявки из Техлиста Sheets (`_fetch_user_info` → `get_user_from_techlist`),
+  а не из SQLite. Если `add_or_update_pending_user` в `process_fio` упал
+  (строка не попала в Техлист), заявка корректно лежит в `employees`
+  (status='pending'), но админ никогда не сможет её одобрить через бота —
+  `_fetch_user_info` всегда вернёт None, пока кто-то вручную не восстановит
+  строку в Sheets. Известное ограничение до Фазы 3 (миграции чтений).

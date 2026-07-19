@@ -242,6 +242,44 @@ class TestFullApprovalFlow:
         mock_sc.write_check_filling_to_phantom.assert_called_once_with("20.07.26", 3, total=3)
         mock_sc.get_phantom_checks_summary.assert_called_once_with("second")
 
+    @pytest.mark.asyncio
+    async def test_filling_summary_read_failure_still_succeeds(self, approvals_db):
+        """get_phantom_checks_summary падает после успешного коммита →
+        операция всё равно завершается успешно: админ получает сообщение
+        с плейсхолдером сводки, официант получает своё уведомление."""
+        from app.bot.handlers.auth import process_approval_callback
+
+        approval_id = await create_pending_approval(
+            approvals_db, 12345, "filling", "2026-07-20", 8.0, 3
+        )
+        cb = _make_callback(f"apprv:{approval_id}:3")
+
+        with (
+            patch("app.bot.handlers.auth.DB_PATH", approvals_db),
+            patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.sheets_client") as mock_sc,
+        ):
+            mock_sc.write_check_filling_to_phantom.return_value = True
+            mock_sc.get_phantom_checks_summary.side_effect = Exception("Sheets down")
+            await process_approval_callback(cb)
+
+        # Данные всё равно закоммичены — падение сводки не должно их откатывать
+        with sqlite3.connect(approvals_db) as conn:
+            total = conn.execute(
+                "SELECT count FROM check_filling WHERE fill_date = '2026-07-20'"
+            ).fetchone()[0]
+        assert total == 3
+        approval = await get_pending_approval(approvals_db, approval_id)
+        assert approval["resolved_at"] is not None
+
+        # Админ получил сообщение с плейсхолдером вместо генерик-ошибки
+        admin_text = cb.message.answer.call_args[0][0]
+        assert "сводка пула временно недоступна" in admin_text
+        assert "✅ Наполняемость записана" in admin_text
+
+        # Официант получил своё уведомление как обычно
+        cb.bot.send_message.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Reject

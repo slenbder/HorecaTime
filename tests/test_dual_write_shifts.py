@@ -212,6 +212,50 @@ class TestSimpleHBulkDualWrite:
         assert "❌ Ошибка записи" in _answers(message)
 
     @pytest.mark.asyncio
+    async def test_rollback_notification_excludes_failed_mirror_dates(self, shifts_db):
+        """3 строки: 1-я мирор ок, 2-я — Exception (mirror_failed), 3-я — ValueError.
+
+        Уведомление о сверке должно перечислять ТОЛЬКО 01.05 (реально попала
+        в Sheets), а НЕ 02.05 — её мирор упал с Exception, хотя строка и
+        попала в 'written'. Раньше уведомление ошибочно включало 02.05,
+        рискуя тем, что разработчик сочтёт её уже в Sheets и не восстановит."""
+        from app.bot.handlers.userhours import _process_simple_h_shifts
+
+        message = _make_message(
+            text="01.05 10:00-20:00\n02.05 10:00-20:00\n03.05 10:00-20:00"
+        )
+        state = _make_state(position="Клининг")
+
+        with (
+            patch("app.bot.handlers.userhours.DB_PATH", shifts_db),
+            patch("app.bot.handlers.userhours.sheets_client") as mock_sc,
+            patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
+            patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
+        ):
+            mock_sc.write_shift.side_effect = [
+                "",                                                          # 01.05 — мирор успешен
+                Exception("Sheets down"),                                     # 02.05 — мирор упал
+                ValueError("Пользователь 12345 не найден в листе 'Май 2026'"),  # 03.05
+            ]
+            await _process_simple_h_shifts(message, state, "Клининг")
+
+        # Вся транзакция откачена (ValueError = отказ всей операции)
+        for d in ("2026-05-01", "2026-05-02", "2026-05-03"):
+            assert await get_shift(shifts_db, 12345, d) is None
+
+        dev_calls = [
+            c for c in message.bot.send_message.call_args_list
+            if c.args and c.args[0] == DEVELOPER_ID
+        ]
+        assert dev_calls, "разработчик должен быть уведомлён о необходимости сверки"
+        notif_text = str(dev_calls[0])
+        assert "01.05" in notif_text, "01.05 реально в Sheets — должна быть в уведомлении"
+        assert "02.05" not in notif_text, (
+            "02.05 НЕ в Sheets (мирор упал с Exception) — не должна фигурировать "
+            "как 'уже записана'"
+        )
+
+    @pytest.mark.asyncio
     async def test_roster_validation_rolls_back_whole_bulk(self, shifts_db):
         """'не найден в листе' на 1-й строке → обе строки транзакции откачены."""
         from app.bot.handlers.userhours import _process_simple_h_shifts

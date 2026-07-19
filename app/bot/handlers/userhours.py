@@ -1,7 +1,6 @@
 import asyncio
 import html
 import logging
-import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -1344,6 +1343,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
 
     written: list[tuple[str, float]] = []
     mirror_failed: list[str] = []
+    mirrored_ok: list[str] = []  # даты, реально подтверждённые зеркалом (write_shift без исключений)
 
     for (_line, result), old_rec in zip(parsed, olds):
         day, month, year = result["day"], result["month"], result["year"]
@@ -1352,6 +1352,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
         date = _date_str(day, month, year)
 
         # Зеркалирование строки в Sheets
+        mirror_ok = True
         try:
             if sheets_client is None:
                 raise RuntimeError("sheets_client не инициализирован")
@@ -1372,12 +1373,13 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
                     "_process_simple_h_shifts: Sheets отклонил %s для %s", date, tg_id
                 )
                 await message.answer(f"❌ Ошибка записи {date}. Попробуйте позже.")
-            if written:
-                # Ранее зеркалированные строки остались в Sheets, но откатились в БД
+            if mirrored_ok:
+                # Только реально подтверждённые зеркалом строки остались в Sheets
+                # после отката — mirror_failed туда не входят (их там и не было).
                 await notify_mirror_failure(
                     message.bot,
                     f"смены {tg_id}: операция отклонена ('{date}'), но в Sheets уже "
-                    f"записаны даты {', '.join(d for d, _ in written)} — требуется сверка",
+                    f"записаны даты {', '.join(mirrored_ok)} — требуется сверка",
                 )
             return
         except Exception:
@@ -1385,12 +1387,15 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
                 "_process_simple_h_shifts: зеркало Sheets не обновлено %s для %s", date, tg_id
             )
             mirror_failed.append(date)
+            mirror_ok = False
 
         logger.info(
             "Смена записана: user=%s, date=%s, H=%s, position=%s",
             tg_id, date, fmt_hours(h), position,
         )
         written.append((date, h))
+        if mirror_ok:
+            mirrored_ok.append(date)
 
         time_range = f"{_hours_hhmm(start)}–{_hours_hhmm(end)}"
         admin_text = (

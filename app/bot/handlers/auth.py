@@ -387,7 +387,12 @@ async def process_fio(message: Message, state: FSMContext):
         logger.error(
             "Зеркало Sheets не обновлено при регистрации %s: %s", tg_id, e, exc_info=True
         )
-        await _notify_mirror_failure(message.bot, f"регистрация {tg_id} ({fio})")
+        # Полный набор полей для ручного восстановления строки Техлиста.
+        await _notify_mirror_failure(
+            message.bot,
+            f"регистрация {tg_id} ({fio}), отдел={department}, позиция={position}, "
+            f"должность={custom_position or '—'}",
+        )
 
     # Вычисляем отображаемые позицию и должность
     if position in VALID_DOP_POSITIONS:
@@ -1061,7 +1066,16 @@ async def _finalize_filling(callback: CallbackQuery, approval: dict, approved_co
         )
 
     period = "first" if day <= 15 else "second"
-    phantom_checks = sheets_client.get_phantom_checks_summary(period) if sheets_client else 0
+    # Читаем сводку пула для отображения — это read-only отчёт (не запись),
+    # его сбой не должен глушить уже успешно завершённую операцию.
+    try:
+        phantom_checks = sheets_client.get_phantom_checks_summary(period) if sheets_client else 0
+    except Exception:
+        logger.warning(
+            "_finalize_filling: не удалось получить сводку пула (%s, date=%s)",
+            period, shift_date, exc_info=True,
+        )
+        phantom_checks = None
 
     logger.info(
         "_finalize_filling: user=%s date=%s checks=%d, admin=%s",
@@ -1071,12 +1085,18 @@ async def _finalize_filling(callback: CallbackQuery, approval: dict, approved_co
     await _edit_approval_message(callback, f"\n✅ Одобрено {approved_count} чека")
 
     period_text = "первую" if period == "first" else "вторую"
+    if phantom_checks is None:
+        summary_line = "(сводка пула временно недоступна)"
+    else:
+        summary_line = (
+            f"Всего за {period_text} половину: {phantom_checks} чеков"
+            f" ({phantom_checks * PHANTOM_HOURLY_RATE} р)"
+        )
     admin_text = (
         f"✅ Наполняемость записана\n"
         f"Дата: {shift_date}\n"
         f"Добавлено: {approved_count} чека\n"
-        f"Всего за {period_text} половину: {phantom_checks} чеков"
-        f" ({phantom_checks * PHANTOM_HOURLY_RATE} р)"
+        f"{summary_line}"
     )
     try:
         await callback.message.answer(admin_text)

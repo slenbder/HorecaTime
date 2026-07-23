@@ -12,7 +12,12 @@ credentials.json
 
 # Database
 db/
+data/
 *.db
+*.db-wal
+*.db-shm
+*.db.backup-*
+*.bak
 *.sqlite3
 
 # Logs

@@ -183,7 +183,7 @@ class TestDismissDualWrite:
 
         with (
             patch("app.bot.handlers.auth.dismiss_employee_db",
-                  new=AsyncMock(return_value=True)) as mock_dismiss,
+                  new=AsyncMock(return_value="dismissed")) as mock_dismiss,
             patch("app.bot.handlers.auth.get_user", return_value=None),
             patch("app.bot.handlers.auth.delete_user") as mock_delete,
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
@@ -223,3 +223,87 @@ class TestDismissDualWrite:
         cb.answer.assert_called_with(
             "❌ Ошибка БД, увольнение не выполнено. Попробуйте ещё раз.", show_alert=True
         )
+
+    @pytest.mark.asyncio
+    async def test_already_dismissed_short_circuits(self):
+        """already_dismissed → alert + state.clear(), шаги guard/a-i не выполняются."""
+        from app.bot.handlers.auth import dismiss_confirm_handler
+
+        cb = _make_callback("dismiss_confirm:42")
+        state = _make_state({"dismiss_target_name": "Иванов Иван"})
+
+        with (
+            patch("app.bot.handlers.auth.dismiss_employee_db",
+                  new=AsyncMock(return_value="already_dismissed")),
+            patch("app.bot.handlers.auth.get_user") as mock_get_user,
+            patch("app.bot.handlers.auth.delete_user") as mock_delete,
+            patch("app.bot.handlers.auth.sheets_client") as mock_sc,
+        ):
+            await dismiss_confirm_handler(cb, state)
+
+        cb.answer.assert_called_once_with("Уже обработано.", show_alert=True)
+        state.clear.assert_awaited_once()
+        mock_get_user.assert_not_called()
+        cb.bot.send_message.assert_not_called()
+        mock_sc.dismiss_employee.assert_not_called()
+        mock_delete.assert_not_called()
+        cb.message.edit_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_guard_block_exception_does_not_break_handler(self):
+        """RolesCacheService.update_user_role падает → хендлер доходит до конца, error залогирован."""
+        from app.bot.handlers.auth import dismiss_confirm_handler
+
+        cb = _make_callback("dismiss_confirm:42")
+        state = _make_state({"dismiss_target_name": "Иванов Иван"})
+
+        with (
+            patch("app.bot.handlers.auth.dismiss_employee_db",
+                  new=AsyncMock(return_value="dismissed")),
+            patch("app.bot.handlers.auth.get_user",
+                  return_value={"role": "admin_hall", "department": "Зал", "position": "Официант"}),
+            patch("app.bot.handlers.auth.RolesCacheService.update_user_role",
+                  side_effect=Exception("cache down")),
+            patch("app.bot.handlers.auth.delete_user") as mock_delete,
+            patch("app.bot.handlers.auth.sheets_client") as mock_sc,
+            patch("logging.getLogger") as mock_get_logger,
+        ):
+            mock_error_logger = MagicMock()
+            mock_get_logger.side_effect = (
+                lambda name=None: mock_error_logger if name == "errors" else MagicMock()
+            )
+            await dismiss_confirm_handler(cb, state)
+
+        mock_delete.assert_called_once_with(42)          # дошли до шага e
+        edit_text = cb.message.edit_text.call_args.args[0]
+        assert "уволен" in edit_text                      # дошли до шага h
+        assert any(
+            "guard-блоке" in call.args[0]
+            for call in mock_error_logger.exception.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_double_press_second_call_is_noop(self):
+        """Два последовательных вызова с одним callback.data: второй не шлёт уведомление
+        сотруднику и не дёргает Sheets повторно — dismiss_employee_db атомарно возвращает
+        already_dismissed при повторном UPDATE."""
+        from app.bot.handlers.auth import dismiss_confirm_handler
+
+        cb = _make_callback("dismiss_confirm:42")
+        state = _make_state({"dismiss_target_name": "Иванов Иван"})
+
+        with (
+            patch("app.bot.handlers.auth.dismiss_employee_db",
+                  new=AsyncMock(side_effect=["dismissed", "already_dismissed"])),
+            patch("app.bot.handlers.auth.get_user", return_value=None),
+            patch("app.bot.handlers.auth.delete_user"),
+            patch("app.bot.handlers.auth.sheets_client") as mock_sc,
+        ):
+            await dismiss_confirm_handler(cb, state)
+            first_send_count = cb.bot.send_message.call_count
+            first_sheets_count = mock_sc.dismiss_employee.call_count
+
+            await dismiss_confirm_handler(cb, state)
+
+        assert cb.bot.send_message.call_count == first_send_count
+        assert mock_sc.dismiss_employee.call_count == first_sheets_count

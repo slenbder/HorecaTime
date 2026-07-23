@@ -2,7 +2,7 @@ import calendar
 import sqlite3
 import logging
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, Literal
 from zoneinfo import ZoneInfo
 
 import aiosqlite
@@ -594,25 +594,47 @@ async def approve_employee(db_path: str, telegram_id: int) -> None:
     logger.info("approve_employee: telegram_id=%s одобрен", telegram_id)
 
 
-async def dismiss_employee_db(db_path: str, telegram_id: int) -> bool:
+async def dismiss_employee_db(
+    db_path: str, telegram_id: int
+) -> Literal["dismissed", "not_found", "already_dismissed"]:
     """
     Помечает сотрудника уволенным (status='dismissed', dismissed_at=now).
     Строка НЕ удаляется — история остаётся в БД.
-    Возвращает False (с warning), если записи нет: увольнение доступа
-    должно пройти даже для сотрудников, зарегистрированных до миграции.
+
+    Атомарный guard от двойного нажатия: UPDATE условится на status !=
+    'dismissed', так что повторный вызов не перезаписывает dismissed_at.
+
+    Возвращает:
+      - "dismissed" — запись обновлена этим вызовом;
+      - "not_found" — записи нет (легитимный кейс: увольнение доступа
+        должно пройти даже для сотрудников, зарегистрированных до
+        миграции), с warning в лог;
+      - "already_dismissed" — запись уже была уволена ранее, ничего не
+        изменено.
     """
     now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
     async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         cursor = await db.execute(
-            "UPDATE employees SET status = 'dismissed', dismissed_at = ? WHERE telegram_id = ?",
+            "UPDATE employees SET status = 'dismissed', dismissed_at = ? "
+            "WHERE telegram_id = ? AND status != 'dismissed'",
             (now_str, telegram_id),
         )
         await db.commit()
-        if cursor.rowcount == 0:
+        if cursor.rowcount == 1:
+            logger.info("dismiss_employee_db: telegram_id=%s уволен", telegram_id)
+            return "dismissed"
+
+        row = await db.execute_fetchall(
+            "SELECT status FROM employees WHERE telegram_id = ?", (telegram_id,)
+        )
+        if not row:
             logger.warning("dismiss_employee_db: сотрудник %s не найден в employees", telegram_id)
-            return False
-    logger.info("dismiss_employee_db: telegram_id=%s уволен", telegram_id)
-    return True
+            return "not_found"
+        logger.warning(
+            "dismiss_employee_db: сотрудник %s уже был уволен ранее, повторный вызов проигнорирован",
+            telegram_id,
+        )
+        return "already_dismissed"
 
 
 async def get_employee(db_path: str, telegram_id: int) -> Optional[Dict]:

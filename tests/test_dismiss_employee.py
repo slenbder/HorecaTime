@@ -23,12 +23,13 @@ class TestDismissEmployee:
             patch.object(sheets_client, "_get_current_month_worksheet", return_value=month_ws),
             patch.object(sheets_client, "_get_techlist_worksheet", return_value=tech_ws),
         ):
-            sheets_client.dismiss_employee(123)
+            result = sheets_client.dismiss_employee(123)
 
         month_ws.format.assert_called_once_with(
             "A3",
             {"backgroundColor": {"red": 1.0, "green": 0.8, "blue": 0.8}},
         )
+        assert result is True
 
     def test_dismiss_deletes_from_techlist(self, sheets_client):
         """dismiss_employee calls delete_rows with the correct 1-based row index."""
@@ -51,7 +52,8 @@ class TestDismissEmployee:
         tech_ws.delete_rows.assert_called_once_with(3)
 
     def test_dismiss_user_not_found_no_error(self, sheets_client):
-        """dismiss_employee with an unknown telegram_id completes without raising."""
+        """dismiss_employee with an unknown telegram_id completes without raising, returns True
+        (не найден в листе — легитимный кейс, не ошибка)."""
         month_ws = MagicMock()
         month_ws.get_all_values.return_value = [
             ["User1", "1", "Официант"],
@@ -64,10 +66,43 @@ class TestDismissEmployee:
             patch.object(sheets_client, "_get_current_month_worksheet", return_value=month_ws),
             patch.object(sheets_client, "_get_techlist_worksheet", return_value=tech_ws),
         ):
-            sheets_client.dismiss_employee(999)  # not present in either sheet
+            result = sheets_client.dismiss_employee(999)  # not present in either sheet
 
         month_ws.format.assert_not_called()
         tech_ws.delete_rows.assert_not_called()
+        assert result is True
+
+    def test_dismiss_month_sheet_error_returns_false(self, sheets_client):
+        """Исключение при окраске ячейки в месячном листе → dismiss_employee вернёт False,
+        даже если удаление из Техлиста прошло успешно."""
+        tech_ws = MagicMock()
+        tech_ws.get_all_values.return_value = [["123", "@t"]]
+
+        with (
+            patch.object(sheets_client, "_get_current_month_worksheet",
+                         side_effect=Exception("network down")),
+            patch.object(sheets_client, "_get_techlist_worksheet", return_value=tech_ws),
+        ):
+            result = sheets_client.dismiss_employee(123)
+
+        tech_ws.delete_rows.assert_called_once_with(1)
+        assert result is False
+
+    def test_dismiss_techlist_error_returns_false(self, sheets_client):
+        """Исключение при удалении строки из Техлиста → dismiss_employee вернёт False,
+        даже если окраска ячейки прошла успешно."""
+        month_ws = MagicMock()
+        month_ws.get_all_values.return_value = [["TestUser", "123", "Бармен"]]
+
+        with (
+            patch.object(sheets_client, "_get_current_month_worksheet", return_value=month_ws),
+            patch.object(sheets_client, "_get_techlist_worksheet",
+                         side_effect=Exception("network down")),
+        ):
+            result = sheets_client.dismiss_employee(123)
+
+        month_ws.format.assert_called_once()
+        assert result is False
 
     def test_get_dismissed_rows_returns_red_rows(self, sheets_client):
         """get_dismissed_rows returns indices of red-background rows and omits others."""

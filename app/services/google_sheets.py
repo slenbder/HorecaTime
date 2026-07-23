@@ -1262,13 +1262,19 @@ class GoogleSheetsClient:
             )
         return result
 
-    def dismiss_employee(self, telegram_id: int) -> None:
+    def dismiss_employee(self, telegram_id: int) -> bool:
         """
         Увольняет сотрудника:
         1. Красит ячейку A в текущем месячном листе (#FFCCCC) по telegram_id в колонке B.
         2. Удаляет строку из Техлиста.
+
+        Возвращает True, если обе под-операции прошли успешно или законно
+        ничего не нашли (сотрудник отсутствует в листе — не ошибка).
+        Возвращает False, если любая из двух реально упала (сеть/API).
         """
         logger.info("dismiss_employee: начало увольнения telegram_id=%s", telegram_id)
+        month_ok = True
+        techlist_ok = True
 
         # Покрасить ячейку A в месячном листе
         try:
@@ -1295,6 +1301,7 @@ class GoogleSheetsClient:
                     telegram_id, month_ws.title,
                 )
         except Exception:
+            month_ok = False
             logger.exception(
                 "dismiss_employee: ошибка при окраске ячейки в месячном листе для %s",
                 telegram_id,
@@ -1327,10 +1334,13 @@ class GoogleSheetsClient:
                     telegram_id,
                 )
         except Exception:
+            techlist_ok = False
             logger.exception(
                 "dismiss_employee: ошибка при удалении из Техлиста для %s",
                 telegram_id,
             )
+
+        return month_ok and techlist_ok
 
     def get_sheet_id_by_name(self, sheet_name: str) -> int | None:
         """Возвращает числовой gid листа по его названию."""

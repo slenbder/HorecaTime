@@ -98,7 +98,7 @@ class TestDismissEmployee:
 
         result = await dismiss_employee_db(employees_db, 42)
 
-        assert result is True
+        assert result == "dismissed"
         emp = await get_employee(employees_db, 42)
         assert emp is not None                      # строка НЕ удалена
         assert emp["status"] == "dismissed"
@@ -106,8 +106,24 @@ class TestDismissEmployee:
         assert emp["full_name"] == "Иванов Иван"    # история сохранена
 
     @pytest.mark.asyncio
-    async def test_dismiss_missing_employee_returns_false(self, employees_db):
-        assert await dismiss_employee_db(employees_db, 999) is False
+    async def test_dismiss_missing_employee_returns_not_found(self, employees_db):
+        assert await dismiss_employee_db(employees_db, 999) == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_dismiss_twice_returns_already_dismissed(self, employees_db):
+        await _register(employees_db)
+        await approve_employee(employees_db, 42)
+
+        first = await dismiss_employee_db(employees_db, 42)
+        emp_after_first = await get_employee(employees_db, 42)
+
+        second = await dismiss_employee_db(employees_db, 42)
+        emp_after_second = await get_employee(employees_db, 42)
+
+        assert first == "dismissed"
+        assert second == "already_dismissed"
+        # Идемпотентность по данным: второй вызов не перезаписывает dismissed_at
+        assert emp_after_second["dismissed_at"] == emp_after_first["dismissed_at"]
 
 
 class TestGetEmployeesByDepartment:

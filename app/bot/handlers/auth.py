@@ -1887,7 +1887,7 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
 
     # 0) SQLite employees — источник правды. Ошибка БД = отказ операции.
     try:
-        await dismiss_employee_db(DB_PATH, target_id)
+        dismiss_result = await dismiss_employee_db(DB_PATH, target_id)
     except Exception:
         error_logger.exception(
             "dismiss: ошибка записи увольнения в SQLite для %s", target_id
@@ -1897,27 +1897,39 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
         )
         return
 
+    if dismiss_result == "already_dismissed":
+        await callback.answer("Уже обработано.", show_alert=True)
+        await state.clear()
+        return
+    # "not_found" — легитимный кейс (сотрудник зарегистрирован до миграции),
+    # продолжаем шаги ниже как при "dismissed".
+
     # Guard: если сотрудник является администратором — сначала понизить
-    current_data = get_user(target_id)
-    if current_data and current_data.get("role") in _ADMIN_ROLES:
-        dept_guard = current_data.get("department") or ""
-        position_guard = current_data.get("position")
-        RolesCacheService.update_user_role(
-            telegram_id=target_id,
-            full_name=full_name,
-            role="user",
-            department=dept_guard,
-            position=position_guard,
-        )
-        try:
-            await set_commands_for_role(callback.bot, target_id, "user")
-        except Exception:
-            error_logger.exception(
-                "dismiss_confirm: не удалось сбросить команды после понижения для %s", target_id
+    try:
+        current_data = get_user(target_id)
+        if current_data and current_data.get("role") in _ADMIN_ROLES:
+            dept_guard = current_data.get("department") or ""
+            position_guard = current_data.get("position")
+            RolesCacheService.update_user_role(
+                telegram_id=target_id,
+                full_name=full_name,
+                role="user",
+                department=dept_guard,
+                position=position_guard,
             )
-        logger.info(
-            "dismiss_confirm: %s (id=%s) сначала понижен до user перед увольнением (guard)",
-            full_name, target_id,
+            try:
+                await set_commands_for_role(callback.bot, target_id, "user")
+            except Exception:
+                error_logger.exception(
+                    "dismiss_confirm: не удалось сбросить команды после понижения для %s", target_id
+                )
+            logger.info(
+                "dismiss_confirm: %s (id=%s) сначала понижен до user перед увольнением (guard)",
+                full_name, target_id,
+            )
+    except Exception:
+        error_logger.exception(
+            "dismiss_confirm: ошибка в guard-блоке понижения админа для %s", target_id
         )
 
     # a) Уведомить сотрудника
@@ -1947,7 +1959,9 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
     # Ошибка НЕ отменяет увольнение — статус уже в employees, разработчик уведомлён.
     if sheets_client is not None:
         try:
-            sheets_client.dismiss_employee(target_id)
+            success = sheets_client.dismiss_employee(target_id)
+            if not success:
+                await _notify_mirror_failure(callback.bot, f"увольнение {target_id} ({full_name})")
         except Exception:
             error_logger.exception("dismiss: ошибка при вызове dismiss_employee для %s", target_id)
             await _notify_mirror_failure(callback.bot, f"увольнение {target_id} ({full_name})")

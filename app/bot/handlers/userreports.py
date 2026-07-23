@@ -6,7 +6,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, BufferedInputFile
 
-from app.db.models import get_user, get_user_rate, get_user_rate_history
+from app.db.models import get_user, get_user_rate, get_user_rate_history, get_check_filling_summary
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
 from app.utils.formatting import fmt_hours, fmt_money
@@ -79,7 +79,9 @@ def _build_runner_earnings_lines(
     return lines
 
 
-async def _build_hours_first_lines(data: dict, position: str | None, rate: dict | None) -> list[str]:
+async def _build_hours_first_lines(
+    data: dict, position: str | None, rate: dict | None, year: int, month: int,
+) -> list[str]:
     h = data["h_first"]
     ah = data["ah_first"]
     lines = [
@@ -112,8 +114,8 @@ async def _build_hours_first_lines(data: dict, position: str | None, rate: dict 
     else:
         if ah > 0:
             lines.append(f"Доп. часы: {fmt_hours(ah)} ч")
-        if position == "Официант" and sheets_client is not None:
-            phantom_checks = sheets_client.get_phantom_checks_summary("first")
+        if position == "Официант":
+            phantom_checks = await get_check_filling_summary(DB_PATH, year, month, "first")
             phantom_total_rub = phantom_checks * PHANTOM_HOURLY_RATE
             lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({fmt_money(phantom_total_rub)} р)")
         earnings = (h + ah) * base
@@ -123,8 +125,9 @@ async def _build_hours_first_lines(data: dict, position: str | None, rate: dict 
 
 
 async def _build_hours_second_lines(data: dict, position: str | None, rate: dict | None,
+                                     year: int, month: int,
                                      sheet_label: str = "Вторая половина месяца (16–конец)",
-                                     phantom_period: str = "second") -> list[str]:
+                                     half: str = "second") -> list[str]:
     h2 = data["h_second"]
     ah2 = data["ah_second"]
     h_tot = data["h_total"]
@@ -172,8 +175,8 @@ async def _build_hours_second_lines(data: dict, position: str | None, rate: dict
         lines.append(f"Всего за месяц: {fmt_hours(h_tot)} ч")
         if ah_tot > 0:
             lines.append(f"Доп. часы за месяц: {fmt_hours(ah_tot)} ч")
-        if position == "Официант" and sheets_client is not None:
-            phantom_checks = sheets_client.get_phantom_checks_summary(phantom_period)
+        if position == "Официант":
+            phantom_checks = await get_check_filling_summary(DB_PATH, year, month, half)
             phantom_total_rub = phantom_checks * PHANTOM_HOURLY_RATE
             lines.append(f"💳 Общий пул чеков: {phantom_checks} шт ({fmt_money(phantom_total_rub)} р)")
         lines.append(f"💰 Заработок за месяц: {fmt_money(earnings_total)} р")
@@ -215,7 +218,8 @@ async def cmd_hours_first(message: Message):
         )
         return
 
-    lines = await _build_hours_first_lines(data, position, rate)
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    lines = await _build_hours_first_lines(data, position, rate, now.year, now.month)
     await message.answer("\n".join(lines))
 
 
@@ -253,7 +257,8 @@ async def cmd_hours_second(message: Message):
         )
         return
 
-    lines = await _build_hours_second_lines(data, position, rate)
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    lines = await _build_hours_second_lines(data, position, rate, now.year, now.month)
     await message.answer("\n".join(lines))
 
 
@@ -303,7 +308,9 @@ async def cmd_hours_last(message: Message):
         )
         return
 
-    lines = await _build_hours_second_lines(data, position, rate, sheet_label=sheet_name, phantom_period="last")
+    lines = await _build_hours_second_lines(
+        data, position, rate, prev_year, prev_month, sheet_label=sheet_name, half="full",
+    )
     await message.answer("\n".join(lines))
 
 

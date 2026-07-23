@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from config import DB_PATH
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -139,10 +141,10 @@ class TestApproveFilllingCallback:
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
             patch("app.bot.handlers.auth.add_check_filling", new=AsyncMock(return_value=50)) as mock_add,
+            patch("app.bot.handlers.auth.get_check_filling_summary", new=AsyncMock(return_value=47)) as mock_summary,
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = True
-            mock_sc.get_phantom_checks_summary.return_value = 47
 
             await approve_filling_callback(cb)
 
@@ -150,7 +152,7 @@ class TestApproveFilllingCallback:
         mock_add.assert_awaited_once()
         assert mock_add.await_args.args[1:] == ("2026-05-05", 3)
         mock_sc.write_check_filling_to_phantom.assert_called_once_with("05.05.26", 3, total=50)
-        mock_sc.get_phantom_checks_summary.assert_called_once_with("first")  # день 5 ≤ 15
+        mock_summary.assert_called_once_with(DB_PATH, 2026, 5, "first")  # день 5 ≤ 15
         assert callback_key not in auth_module._pending_filling
         cb.message.edit_text.assert_called_once()
         cb.message.answer.assert_called_once()    # сводка админу
@@ -176,14 +178,14 @@ class TestApproveFilllingCallback:
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
             patch("app.bot.handlers.auth.add_check_filling", new=AsyncMock(return_value=1)),
+            patch("app.bot.handlers.auth.get_check_filling_summary", new=AsyncMock(return_value=1)) as mock_summary,
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = False
-            mock_sc.get_phantom_checks_summary.return_value = 1
             await approve_filling_callback(cb)
 
         # Операция успешна: сводка показана, сообщение отредактировано
-        mock_sc.get_phantom_checks_summary.assert_called_once_with("second")
+        mock_summary.assert_called_once_with(DB_PATH, 2026, 5, "second")
         cb.message.edit_text.assert_called_once()
         # Разработчик уведомлён о рассинхроне зеркала
         dev_calls = [
@@ -211,14 +213,14 @@ class TestApproveFilllingCallback:
         with (
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
             patch("app.bot.handlers.auth.add_check_filling", new=AsyncMock(return_value=10)),
+            patch("app.bot.handlers.auth.get_check_filling_summary", new=AsyncMock(return_value=10)) as mock_summary,
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = True
-            mock_sc.get_phantom_checks_summary.return_value = 10
 
             await approve_filling_callback(cb)
 
-        mock_sc.get_phantom_checks_summary.assert_called_once_with("second")
+        mock_summary.assert_called_once_with(DB_PATH, 2026, 5, "second")
 
 
 # ---------------------------------------------------------------------------

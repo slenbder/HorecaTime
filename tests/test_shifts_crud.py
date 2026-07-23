@@ -11,6 +11,7 @@ from app.db.models import (
     get_shift,
     delete_shift,
     add_check_filling,
+    get_check_filling_summary,
 )
 from app.services.timeparsing import to_iso_date
 
@@ -128,6 +129,75 @@ class TestAddCheckFilling:
                 "SELECT count FROM check_filling WHERE fill_date = '2026-07-01'"
             ).fetchone()[0]
         assert total == 10
+
+
+class TestGetCheckFillingSummary:
+
+    @pytest.mark.asyncio
+    async def test_get_check_filling_summary_first(self, shifts_db):
+        await add_check_filling(shifts_db, "2026-07-01", 3)
+        await add_check_filling(shifts_db, "2026-07-15", 4)
+        await add_check_filling(shifts_db, "2026-07-16", 100)  # вне диапазона first
+
+        total = await get_check_filling_summary(shifts_db, 2026, 7, "first")
+        assert total == 7
+
+    @pytest.mark.asyncio
+    async def test_get_check_filling_summary_second(self, shifts_db):
+        await add_check_filling(shifts_db, "2026-07-01", 100)  # вне диапазона second
+        await add_check_filling(shifts_db, "2026-07-16", 5)
+        await add_check_filling(shifts_db, "2026-07-31", 6)
+
+        total = await get_check_filling_summary(shifts_db, 2026, 7, "second")
+        assert total == 11
+
+    @pytest.mark.asyncio
+    async def test_get_check_filling_summary_full(self, shifts_db):
+        await add_check_filling(shifts_db, "2026-07-01", 3)
+        await add_check_filling(shifts_db, "2026-07-16", 5)
+        await add_check_filling(shifts_db, "2026-07-31", 6)
+        await add_check_filling(shifts_db, "2026-08-01", 999)  # другой месяц
+
+        total = await get_check_filling_summary(shifts_db, 2026, 7, "full")
+        assert total == 14
+
+    @pytest.mark.asyncio
+    async def test_boundary_day_15_vs_16(self, shifts_db):
+        """День 15 → в 'first', день 16 → в 'second' (граница строго между ними)."""
+        await add_check_filling(shifts_db, "2026-07-15", 10)
+        await add_check_filling(shifts_db, "2026-07-16", 20)
+
+        assert await get_check_filling_summary(shifts_db, 2026, 7, "first") == 10
+        assert await get_check_filling_summary(shifts_db, 2026, 7, "second") == 20
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("year, month, days", [
+        (2026, 2, 28),   # февраль, невисокосный
+        (2024, 2, 29),   # февраль, високосный
+        (2026, 4, 30),   # апрель, 30 дней
+        (2026, 7, 31),   # июль, 31 день
+    ])
+    async def test_second_half_respects_month_length(self, shifts_db, year, month, days):
+        """'second' должен включать последний день месяца независимо от его длины."""
+        last_day_date = f"{year:04d}-{month:02d}-{days:02d}"
+        await add_check_filling(shifts_db, last_day_date, 42)
+        # день 16 (заведомо в second) — общий фон, чтобы не проверять по нулю
+        mid_date = f"{year:04d}-{month:02d}-16"
+        await add_check_filling(shifts_db, mid_date, 1)
+
+        total = await get_check_filling_summary(shifts_db, year, month, "second")
+        assert total == 43
+
+    @pytest.mark.asyncio
+    async def test_empty_range_returns_zero_not_none(self, shifts_db):
+        total = await get_check_filling_summary(shifts_db, 2026, 7, "full")
+        assert total == 0
+        assert total is not None
+
+    @pytest.mark.asyncio
+    async def test_invalid_half_raises_value_error(self, shifts_db):
+        with pytest.raises(ValueError):
+            await get_check_filling_summary(shifts_db, 2026, 7, "third")
 
 
 class TestToIsoDate:

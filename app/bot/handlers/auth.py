@@ -31,7 +31,7 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import (
     get_user, delete_user, get_users_by_role,
     upsert_employee, approve_employee, dismiss_employee_db, set_employee_role,
-    upsert_shift, add_check_filling,
+    upsert_shift, add_check_filling, get_check_filling_summary,
     get_pending_approval, resolve_pending_approval, reopen_pending_approval,
 )
 from app.services.google_sheets import GoogleSheetsClient
@@ -829,7 +829,7 @@ async def approve_filling_callback(callback: CallbackQuery) -> None:
             )
 
         period = "first" if day <= 15 else "second"
-        phantom_checks = sheets_client.get_phantom_checks_summary(period)
+        phantom_checks = await get_check_filling_summary(DB_PATH, year, month, period)
 
         logger.info(
             "approve_filling_callback: user=%s date=%s checks=%d, admin=%s",
@@ -1036,7 +1036,7 @@ async def _finalize_loyalty(callback: CallbackQuery, approval: dict, approved_co
 async def _finalize_filling(callback: CallbackQuery, approval: dict, approved_count: int) -> None:
     """Решение по наполняемости чеков: транзакционный инкремент + зеркало суммой из БД."""
     telegram_id = approval["telegram_id"]
-    day, _month, _year, shift_date = _approval_date_parts(approval)
+    day, month, year, shift_date = _approval_date_parts(approval)
 
     try:
         total = await add_check_filling(DB_PATH, approval["shift_date"], approved_count)
@@ -1069,7 +1069,7 @@ async def _finalize_filling(callback: CallbackQuery, approval: dict, approved_co
     # Читаем сводку пула для отображения — это read-only отчёт (не запись),
     # его сбой не должен глушить уже успешно завершённую операцию.
     try:
-        phantom_checks = sheets_client.get_phantom_checks_summary(period) if sheets_client else 0
+        phantom_checks = await get_check_filling_summary(DB_PATH, year, month, period)
     except Exception:
         logger.warning(
             "_finalize_filling: не удалось получить сводку пула (%s, date=%s)",

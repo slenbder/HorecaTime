@@ -1,3 +1,4 @@
+import calendar
 import sqlite3
 import logging
 from datetime import datetime
@@ -794,6 +795,39 @@ async def add_check_filling(db_path: str, fill_date: str, count: int) -> int:
             row = await cursor.fetchone()
     total = int(row[0])
     logger.info("add_check_filling: %s +%d = %d", fill_date, count, total)
+    return total
+
+
+async def get_check_filling_summary(db_path: str, year: int, month: int, half: str) -> int:
+    """
+    Сумма наполняемости чеков за половину/весь месяц.
+    half: "first" (дни 1-15), "second" (16-конец месяца), "full" (весь месяц).
+    Возвращает 0, если записей за диапазон нет.
+    """
+    days_in_month = calendar.monthrange(year, month)[1]
+    if half == "first":
+        start_day, end_day = 1, 15
+    elif half == "second":
+        start_day, end_day = 16, days_in_month
+    elif half == "full":
+        start_day, end_day = 1, days_in_month
+    else:
+        raise ValueError(f"get_check_filling_summary: недопустимый half='{half}'")
+
+    start_date = f"{year:04d}-{month:02d}-{start_day:02d}"
+    end_date = f"{year:04d}-{month:02d}-{end_day:02d}"
+
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        async with db.execute(
+            "SELECT COALESCE(SUM(count), 0) FROM check_filling WHERE fill_date BETWEEN ? AND ?",
+            (start_date, end_date),
+        ) as cursor:
+            row = await cursor.fetchone()
+    total = int(row[0])
+    logger.info(
+        "get_check_filling_summary: %04d-%02d half=%s (%s..%s) = %d",
+        year, month, half, start_date, end_date, total,
+    )
     return total
 
 

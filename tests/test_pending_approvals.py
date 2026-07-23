@@ -1,7 +1,9 @@
 """Тесты Фазы 2c: pending_approvals вместо callback_data + защита от двойного апрува."""
 import asyncio
 import sqlite3
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -12,6 +14,7 @@ from app.db.models import (
     resolve_pending_approval,
     reopen_pending_approval,
     get_shift,
+    add_check_filling,
 )
 
 
@@ -231,7 +234,6 @@ class TestFullApprovalFlow:
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = True
-            mock_sc.get_phantom_checks_summary.return_value = 3
             await process_approval_callback(cb)
 
         with sqlite3.connect(approvals_db) as conn:
@@ -240,11 +242,14 @@ class TestFullApprovalFlow:
             ).fetchone()[0]
         assert total == 3
         mock_sc.write_check_filling_to_phantom.assert_called_once_with("20.07.26", 3, total=3)
-        mock_sc.get_phantom_checks_summary.assert_called_once_with("second")
+        # Сводка теперь читается из SQLite (check_filling), а не из Sheets-зеркала —
+        # 20.07 > 15 → вторая половина, единственная запись в изолированной approvals_db.
+        admin_text = cb.message.answer.call_args[0][0]
+        assert "Всего за вторую половину: 3 чеков" in admin_text
 
     @pytest.mark.asyncio
     async def test_filling_summary_read_failure_still_succeeds(self, approvals_db):
-        """get_phantom_checks_summary падает после успешного коммита →
+        """get_check_filling_summary падает после успешного коммита →
         операция всё равно завершается успешно: админ получает сообщение
         с плейсхолдером сводки, официант получает своё уведомление."""
         from app.bot.handlers.auth import process_approval_callback
@@ -257,10 +262,11 @@ class TestFullApprovalFlow:
         with (
             patch("app.bot.handlers.auth.DB_PATH", approvals_db),
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.get_check_filling_summary",
+                  new=AsyncMock(side_effect=Exception("db locked"))),
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
         ):
             mock_sc.write_check_filling_to_phantom.return_value = True
-            mock_sc.get_phantom_checks_summary.side_effect = Exception("Sheets down")
             await process_approval_callback(cb)
 
         # Данные всё равно закоммичены — падение сводки не должно их откатывать
@@ -279,6 +285,38 @@ class TestFullApprovalFlow:
 
         # Официант получил своё уведомление как обычно
         cb.bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_filling_summary_uses_shift_month_not_now(self, approvals_db):
+        """Регрессия на исходный баг: период считается по месяцу СМЕНЫ
+        (approval['shift_date']), а не по datetime.now(). Апрувим чек за
+        20 января, при этом в БД уже есть 'шумовая' запись за текущий
+        календарный месяц (по системным часам) — она не должна попасть
+        в сводку, если сегодня не январь."""
+        from app.bot.handlers.auth import process_approval_callback
+
+        now = datetime.now(ZoneInfo("Europe/Moscow"))
+        if now.month != 1:
+            noise_date = f"{now.year:04d}-{now.month:02d}-20"
+            await add_check_filling(approvals_db, noise_date, 999)
+
+        approval_id = await create_pending_approval(
+            approvals_db, 12345, "filling", "2026-01-20", 8.0, 3
+        )
+        cb = _make_callback(f"apprv:{approval_id}:3")
+
+        with (
+            patch("app.bot.handlers.auth.DB_PATH", approvals_db),
+            patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[999])),
+            patch("app.bot.handlers.auth.sheets_client") as mock_sc,
+        ):
+            mock_sc.write_check_filling_to_phantom.return_value = True
+            await process_approval_callback(cb)
+
+        # 20.01 > 15 → вторая половина ЯНВАРЯ = только что записанные 3,
+        # "шумовая" запись текущего календарного месяца не учтена.
+        admin_text = cb.message.answer.call_args[0][0]
+        assert "Всего за вторую половину: 3 чеков" in admin_text
 
 
 # ---------------------------------------------------------------------------

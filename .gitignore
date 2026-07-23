@@ -40,6 +40,9 @@ deploy.sh
 # Test cache
 .pytest_cache/
 
+# Per-instance overrides (container_name etc. differ between prod/test/clones on same host)
+docker-compose.override.yml
+
 # ВАЖНО: CLAUDE.md, HISTORY.md, TECH_REFERENCE.md НИКОГДА не добавлять сюда!
 # Это жизненно необходимые контекстные файлы для Claude Code.
 # Они намеренно отслеживаются git и остаются в корне проекта.

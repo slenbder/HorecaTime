@@ -31,6 +31,7 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import (
     get_user, delete_user, get_users_by_role,
     upsert_employee, approve_employee, dismiss_employee_db, set_employee_role,
+    get_employee,
     upsert_shift, add_check_filling, get_check_filling_summary,
     get_pending_approval, resolve_pending_approval, reopen_pending_approval,
 )
@@ -1252,27 +1253,26 @@ def _parse_approve_callback(callback_data: str) -> tuple[int, int] | None:
         return None
 
 
-def _fetch_user_info(sheets_client, user_tg_id: int) -> dict | None:
+async def _fetch_user_info(user_tg_id: int) -> dict | None:
     """
-    Получает данные пользователя из Техлиста и подготавливает для approve.
+    Получает данные сотрудника из employees и подготавливает для approve.
 
     Args:
-        sheets_client: Экземпляр GoogleSheetsClient
         user_tg_id: Telegram ID пользователя
 
     Returns:
         Dict с полями: fio, department, position, custom_position, mention
-        или None если пользователь не найден
+        или None если сотрудник не найден
     """
-    user_info = sheets_client.get_user_from_techlist(user_tg_id)
-    if not user_info:
+    employee = await get_employee(DB_PATH, user_tg_id)
+    if not employee:
         return None
 
-    fio = user_info.get("fio_from_user", "Неизвестно")
-    department = user_info.get("department", "")
-    position = user_info.get("position", "")
-    custom_position = user_info.get("custom_position", "")
-    nickname = (user_info.get("nickname") or "").lstrip("@") or None
+    fio = employee["full_name"]
+    department = employee["department"]
+    position = employee["position"]
+    custom_position = employee.get("custom_position") or ""
+    nickname = (employee.get("nickname") or "").lstrip("@") or None
     mention = make_mention(nickname, fio)
 
     return {
@@ -1453,7 +1453,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Ошибка подключения к таблице", show_alert=True)
             return
 
-        user_data = _fetch_user_info(sheets_client, user_tg_id)
+        user_data = await _fetch_user_info(user_tg_id)
         if user_data is None:
             await callback.answer("❌ Пользователь не найден в Техлисте.")
             return

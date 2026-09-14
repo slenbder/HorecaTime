@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import gspread
 from gspread.exceptions import APIError, WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout
 
 from app.utils.formatting import fmt_hours
 from config import (
@@ -133,12 +134,10 @@ class GoogleSheetsClient:
     # --- Техлист ---
 
     def _get_techlist_worksheet(self):
-        try:
-            return self._spreadsheet.worksheet(TECH_SHEET_NAME)
-        except Exception as e:
-            logger.error("Ошибка получения листа '%s', пробуем переподключиться: %s", TECH_SHEET_NAME, e, exc_info=True)
-            self._reconnect()
-            return self._spreadsheet.worksheet(TECH_SHEET_NAME)
+        # lambda, а не bound-метод: self._spreadsheet читается заново при каждом
+        # вызове, поэтому повтор после reconnect() внутри _call идёт против
+        # свежего spreadsheet, а не против объекта, протухшего до reconnect.
+        return self._call(lambda: self._spreadsheet.worksheet(TECH_SHEET_NAME))
     
     def _reconnect(self) -> None:
         """Пересоздаёт клиент и подключение к таблице."""
@@ -149,24 +148,68 @@ class GoogleSheetsClient:
 
     def _call(self, fn, *args, **kwargs):
         """
-        Выполняет fn(*args, **kwargs) с 429-aware backoff (3 попытки).
-        - APIError 429: exponential sleep (2s, 4s) перед повтором, без reconnect.
-        - Другие ошибки: propagate немедленно.
-        Используется для всех write-операций switch_month.
+        Выполняет fn(*args, **kwargs) с retry-логикой для транзиентных ошибок Sheets API.
+        - APIError 429 (quota exceeded): exponential sleep (2s, 4s) перед повтором,
+          БЕЗ reconnect, до 3 попыток (reconnect тут не помогает и делает лишний
+          Read-запрос, только усугубляя исчерпанную квоту).
+        - APIError 500/503 и прочие транзиентные сетевые ошибки (обрыв соединения,
+          таймаут): reconnect() + один повторный вызов; если повтор тоже упал —
+          исключение пробрасывается.
+        - Прочие исключения: propagate немедленно, без retry.
         """
         _BACKOFF_SECS = [2, 4]
+        _TRANSIENT_NETWORK_ERRORS = (RequestsConnectionError, RequestsTimeout)
+
         for attempt in range(3):
             try:
                 return fn(*args, **kwargs)
             except APIError as e:
-                if e.code != 429 or attempt >= 2:
-                    raise
-                sleep_secs = _BACKOFF_SECS[attempt]
+                if e.code == 429:
+                    if attempt >= 2:
+                        raise
+                    sleep_secs = _BACKOFF_SECS[attempt]
+                    logger.warning(
+                        "_call: 429 quota exceeded — sleeping %ds before retry %d/2",
+                        sleep_secs, attempt + 1,
+                    )
+                    time.sleep(sleep_secs)
+                    continue
+                if e.code in (500, 503):
+                    logger.warning(
+                        "_call: APIError %s — reconnect и один повторный вызов", e.code
+                    )
+                    self._reconnect()
+                    return fn(*args, **kwargs)
+                raise
+            except _TRANSIENT_NETWORK_ERRORS as e:
                 logger.warning(
-                    "_call: 429 quota exceeded — sleeping %ds before retry %d/2",
-                    sleep_secs, attempt + 1,
+                    "_call: транзиентная сетевая ошибка (%s) — reconnect и один повторный вызов: %s",
+                    type(e).__name__, e,
                 )
-                time.sleep(sleep_secs)
+                self._reconnect()
+                return fn(*args, **kwargs)
+
+    def _fetch_worksheet_and_values(self, sheet_name: str):
+        """Получает лист по имени и все его значения одним защищённым вызовом (см. _call)."""
+        def _fetch():
+            ws = self._spreadsheet.worksheet(sheet_name)
+            return ws, ws.get_all_values()
+        return self._call(_fetch)
+
+    def _call_with_worksheet(self, get_ws, op):
+        """
+        Выполняет op(ws), где ws = get_ws(), с retry-логикой self._call.
+        get_ws вызывается заново при КАЖДОЙ попытке (включая повтор после
+        reconnect), поэтому op всегда работает со свежим листом, а не с
+        объектом, протухшим после reconnect() (в отличие от передачи уже
+        забинженного метода вроде ws.update, который держит ссылку на старый
+        self._spreadsheet/self._client до reconnect).
+        Возвращает (ws, результат op(ws)).
+        """
+        def _do():
+            ws = get_ws()
+            return ws, op(ws)
+        return self._call(_do)
 
     def _auto_resize_columns(self, worksheet) -> None:
         """Автоподбор ширины всех столбцов листа через Sheets API."""
@@ -193,14 +236,9 @@ class GoogleSheetsClient:
         Поиск пользователя в Техлисте по Telegram ID.
         """
         logger.debug("Поиск пользователя %s в Техлисте", telegram_id)
-        ws = self._get_techlist_worksheet()
-        try:
-            all_values: List[List[Any]] = ws.get_all_values()
-        except Exception:
-            logger.warning("get_user_by_telegram_id: сетевой сбой, переподключаюсь")
-            self._reconnect()
-            ws = self._get_techlist_worksheet()
-            all_values = ws.get_all_values()
+        _, all_values = self._call_with_worksheet(
+            self._get_techlist_worksheet, lambda ws: ws.get_all_values()
+        )
 
         for row_idx, row in enumerate(all_values[1:], start=2):
             if not row:
@@ -234,14 +272,9 @@ class GoogleSheetsClient:
         Создаёт или обновляет запись пользователя в Техлисте (заявка на доступ).
         Возвращает номер строки.
         """
-        ws = self._get_techlist_worksheet()
-        try:
-            all_rows = ws.get_all_values()
-        except Exception:
-            logger.warning("add_or_update_pending_user: сетевой сбой, переподключаюсь")
-            self._reconnect()
-            ws = self._get_techlist_worksheet()
-            all_rows = ws.get_all_values()
+        ws, all_rows = self._call_with_worksheet(
+            self._get_techlist_worksheet, lambda ws: ws.get_all_values()
+        )
         nick = nickname if nickname.startswith("@") else f"@{nickname}"
         now_str = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%y %H:%M")
 
@@ -252,27 +285,20 @@ class GoogleSheetsClient:
                 break
 
         if row_idx is not None:
-            try:
-                ws.batch_update([
-                    {"range": f"B{row_idx}", "values": [[nick]]},
-                    {"range": f"C{row_idx}", "values": [[fio_from_user]]},
-                    {"range": f"D{row_idx}", "values": [[department]]},
-                    {"range": f"E{row_idx}", "values": [[position]]},
-                    {"range": f"F{row_idx}", "values": [[now_str]]},
-                    {"range": f"H{row_idx}", "values": [[custom_position]]},
-                ], value_input_option="RAW")
-            except Exception:
-                logger.warning("add_or_update_pending_user: сетевой сбой, переподключаюсь")
-                self._reconnect()
-                ws = self._get_techlist_worksheet()
-                ws.batch_update([
-                    {"range": f"B{row_idx}", "values": [[nick]]},
-                    {"range": f"C{row_idx}", "values": [[fio_from_user]]},
-                    {"range": f"D{row_idx}", "values": [[department]]},
-                    {"range": f"E{row_idx}", "values": [[position]]},
-                    {"range": f"F{row_idx}", "values": [[now_str]]},
-                    {"range": f"H{row_idx}", "values": [[custom_position]]},
-                ], value_input_option="RAW")
+            self._call_with_worksheet(
+                self._get_techlist_worksheet,
+                lambda ws: ws.batch_update(
+                    [
+                        {"range": f"B{row_idx}", "values": [[nick]]},
+                        {"range": f"C{row_idx}", "values": [[fio_from_user]]},
+                        {"range": f"D{row_idx}", "values": [[department]]},
+                        {"range": f"E{row_idx}", "values": [[position]]},
+                        {"range": f"F{row_idx}", "values": [[now_str]]},
+                        {"range": f"H{row_idx}", "values": [[custom_position]]},
+                    ],
+                    value_input_option="RAW",
+                ),
+            )
             logger.info(
                 "Обновлена заявка пользователя %s в строке %s, custom_position='%s'",
                 telegram_id,
@@ -293,13 +319,10 @@ class GoogleSheetsClient:
             custom_position,   # H: Должность
         ]
 
-        try:
-            ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW")
-        except Exception:
-            logger.warning("add_or_update_pending_user: сетевой сбой, переподключаюсь")
-            self._reconnect()
-            ws = self._get_techlist_worksheet()
-            ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW")
+        ws, _ = self._call_with_worksheet(
+            self._get_techlist_worksheet,
+            lambda ws: ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW"),
+        )
         logger.info(
             "Создана новая заявка пользователя %s в строке %s, custom_position='%s'",
             telegram_id,
@@ -355,14 +378,14 @@ class GoogleSheetsClient:
         """
         Помечает пользователя как одобренного (ставит 'ДА' в столбец 'Наличие в таблице сотрудников').
         """
-        ws = self._get_techlist_worksheet()
-        try:
-            ws.update([["ДА"]], gspread.utils.rowcol_to_a1(row_index, COL_IN_STAFF_TABLE), value_input_option="RAW")
-        except Exception as e:
-            logger.error("mark_user_approved: ошибка, реконнект: %s", e, exc_info=True)
-            self._reconnect()
-            ws = self._get_techlist_worksheet()
-            ws.update([["ДА"]], gspread.utils.rowcol_to_a1(row_index, COL_IN_STAFF_TABLE), value_input_option="RAW")
+        self._call_with_worksheet(
+            self._get_techlist_worksheet,
+            lambda ws: ws.update(
+                [["ДА"]],
+                gspread.utils.rowcol_to_a1(row_index, COL_IN_STAFF_TABLE),
+                value_input_option="RAW",
+            ),
+        )
         logger.info("Пользователь в строке %s помечен как одобренный", row_index)
 
     def get_user_from_techlist(self, telegram_id: int) -> Optional[Dict[str, Any]]:
@@ -377,18 +400,13 @@ class GoogleSheetsClient:
         Возвращает True если telegram_id найден, False иначе.
         """
         logger.info("Проверка наличия %s в Техлисте (колонка A)", telegram_id)
-        ws = self._get_techlist_worksheet()
         try:
-            all_values = ws.get_all_values()
+            _, all_values = self._call_with_worksheet(
+                self._get_techlist_worksheet, lambda ws: ws.get_all_values()
+            )
         except Exception:
-            logger.warning("user_exists_in_techlist: сетевой сбой, переподключаюсь")
-            self._reconnect()
-            ws = self._get_techlist_worksheet()
-            try:
-                all_values = ws.get_all_values()
-            except Exception:
-                logger.warning("user_exists_in_techlist: повтор не удался, возвращаю False")
-                return False
+            logger.warning("user_exists_in_techlist: повтор не удался, возвращаю False")
+            return False
         for row in all_values[1:]:
             if row and str(row[COL_TELEGRAM_ID - 1]).strip() == str(telegram_id):
                 logger.info("Пользователь %s найден в Техлисте", telegram_id)
@@ -402,18 +420,13 @@ class GoogleSheetsClient:
         Use in batch operations (e.g. switch_month) to avoid per-row API calls (N+1).
         """
         logger.info("get_techlist_ids: читаем Техлист одним запросом")
-        ws = self._get_techlist_worksheet()
         try:
-            all_values = ws.get_all_values()
+            _, all_values = self._call_with_worksheet(
+                self._get_techlist_worksheet, lambda ws: ws.get_all_values()
+            )
         except Exception:
-            logger.warning("get_techlist_ids: сетевой сбой, переподключаюсь")
-            self._reconnect()
-            ws = self._get_techlist_worksheet()
-            try:
-                all_values = ws.get_all_values()
-            except Exception:
-                logger.error("get_techlist_ids: повтор не удался после reconnect")
-                raise
+            logger.error("get_techlist_ids: повтор не удался после reconnect")
+            raise
         result = set()
         for row in all_values[1:]:
             if row:
@@ -430,16 +443,9 @@ class GoogleSheetsClient:
     def _get_current_month_worksheet(self):
         sheet_name = self._get_month_sheet_name()
         try:
-            return self._spreadsheet.worksheet(sheet_name)
+            return self._call(lambda: self._spreadsheet.worksheet(sheet_name))
         except WorksheetNotFound as exc:
             raise ValueError(f"Лист текущего месяца '{sheet_name}' не найден") from exc
-        except Exception as e:
-            logger.error("Ошибка получения листа месяца, пробуем переподключиться: %s", e, exc_info=True)
-            self._reconnect()
-            try:
-                return self._spreadsheet.worksheet(sheet_name)
-            except WorksheetNotFound as exc:
-                raise ValueError(f"Лист текущего месяца '{sheet_name}' не найден") from exc
 
     @staticmethod
     def _normalize_first_three_cols(rows: List[List[Any]]) -> List[List[str]]:
@@ -527,19 +533,13 @@ class GoogleSheetsClient:
             )
             raise ValueError(f"Пользователь {telegram_id} не найден в Техлисте")
 
-        month_ws = self._get_current_month_worksheet()
-
         full_name = str(user_info.get("fio_from_user") or user_info.get("fio", "")).strip()
         department = str(user_info.get("department", "")).strip()
         position = str(user_info.get("position", "")).strip()
 
-        try:
-            all_rows = month_ws.get_all_values()
-        except Exception:
-            logger.warning("ensure_user_in_current_month_hours: сетевой сбой, переподключаюсь")
-            self._reconnect()
-            month_ws = self._get_current_month_worksheet()
-            all_rows = month_ws.get_all_values()
+        month_ws, all_rows = self._call_with_worksheet(
+            self._get_current_month_worksheet, lambda ws: ws.get_all_values()
+        )
         if not all_rows:
             raise ValueError(f"Лист '{month_ws.title}' пуст")
 
@@ -604,21 +604,14 @@ class GoogleSheetsClient:
 
         new_row = insert_after_row + 1
 
-        try:
-            month_ws.insert_row(
+        month_ws, _ = self._call_with_worksheet(
+            self._get_current_month_worksheet,
+            lambda ws: ws.insert_row(
                 [full_name, str(telegram_id), display_position],
                 index=new_row,
                 value_input_option="RAW",
-            )
-        except Exception:
-            logger.warning("ensure_user_in_current_month_hours: сетевой сбой, переподключаюсь")
-            self._reconnect()
-            month_ws = self._get_current_month_worksheet()
-            month_ws.insert_row(
-                [full_name, str(telegram_id), display_position],
-                index=new_row,
-                value_input_option="RAW",
-            )
+            ),
+        )
 
         # Явно применяем границы для новой строки
         _solid = {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
@@ -781,8 +774,7 @@ class GoogleSheetsClient:
         )
 
         try:
-            ws = self._spreadsheet.worksheet(sheet_name)
-            all_values = ws.get_all_values()
+            ws, all_values = self._fetch_worksheet_and_values(sheet_name)
         except WorksheetNotFound:
             raise ValueError(f"Лист '{sheet_name}' не найден")
         except Exception as e:
@@ -796,12 +788,7 @@ class GoogleSheetsClient:
                 ),
                 exc_info=True,
             )
-            self._reconnect()
-            try:
-                ws = self._spreadsheet.worksheet(sheet_name)
-                all_values = ws.get_all_values()
-            except WorksheetNotFound:
-                raise ValueError(f"Лист '{sheet_name}' не найден")
+            raise
 
         # Найти строку пользователя по telegram_id в колонке B (индекс 1)
         user_row = None
@@ -847,13 +834,10 @@ class GoogleSheetsClient:
         cell_value = f"{fmt_hours(h)}/{fmt_hours(ah)}" if ah > 0 else fmt_hours(h)
 
         cell_addr = gspread.utils.rowcol_to_a1(user_row, day_col)
-        try:
-            ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
-        except Exception as e:
-            logger.warning("write_shift: ошибка записи смены, реконнект: %s", e)
-            self._reconnect()
-            ws = self._spreadsheet.worksheet(sheet_name)
-            ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW")
+        ws, _ = self._call_with_worksheet(
+            lambda: self._spreadsheet.worksheet(sheet_name),
+            lambda ws: ws.update(values=[[cell_value]], range_name=cell_addr, value_input_option="RAW"),
+        )
         logger.info(
             "write_shift: записано '%s' → строка=%d, столбец=%d (лист='%s')",
             cell_value, user_row, day_col, sheet_name,
@@ -910,8 +894,7 @@ class GoogleSheetsClient:
             sheet_name = f"{MONTH_NAMES_RU[month]} {year}"
 
             try:
-                ws = self._spreadsheet.worksheet(sheet_name)
-                all_values = ws.get_all_values()
+                ws, all_values = self._fetch_worksheet_and_values(sheet_name)
             except WorksheetNotFound:
                 logger.error(
                     format_alert(
@@ -922,29 +905,6 @@ class GoogleSheetsClient:
                     )
                 )
                 return False
-            except Exception as e:
-                logger.error(
-                    format_alert(
-                        "write_check_filling",
-                        error=e,
-                        date=date_str,
-                        extra=f"лист: {sheet_name} | чеков: {approved_count}",
-                    )
-                )
-                self._reconnect()
-                try:
-                    ws = self._spreadsheet.worksheet(sheet_name)
-                    all_values = ws.get_all_values()
-                except WorksheetNotFound:
-                    logger.error(
-                        format_alert(
-                            "write_check_filling",
-                            error=f"лист '{sheet_name}' не найден после реконнекта",
-                            date=date_str,
-                            extra=f"чеков: {approved_count}",
-                        )
-                    )
-                    return False
 
             phantom_row = None
             for i, row in enumerate(all_values, start=1):
@@ -976,15 +936,10 @@ class GoogleSheetsClient:
                     current_checks = 0
                 new_checks = current_checks + approved_count
             cell = gspread.utils.rowcol_to_a1(phantom_row, col)
-            try:
-                ws.update([[new_checks]], cell, value_input_option="RAW")
-            except Exception as e:
-                logger.warning(
-                    "write_check_filling_to_phantom: ошибка записи, реконнект: %s", e
-                )
-                self._reconnect()
-                ws = self._spreadsheet.worksheet(sheet_name)
-                ws.update([[new_checks]], cell, value_input_option="RAW")
+            self._call_with_worksheet(
+                lambda: self._spreadsheet.worksheet(sheet_name),
+                lambda ws: ws.update([[new_checks]], cell, value_input_option="RAW"),
+            )
             logger.info(
                 "write_check_filling_to_phantom: %d чеков добавлено, итого: %d, дата: %s",
                 approved_count, new_checks, date_str,
@@ -1020,27 +975,12 @@ class GoogleSheetsClient:
                 sheet_name = f"{MONTH_NAMES_RU[now.month]} {now.year}"
 
             try:
-                ws = self._spreadsheet.worksheet(sheet_name)
-                all_values = ws.get_all_values()
+                ws, all_values = self._fetch_worksheet_and_values(sheet_name)
             except WorksheetNotFound:
                 logger.warning(
                     "get_phantom_checks_summary: лист '%s' не найден", sheet_name
                 )
                 return 0
-            except Exception as e:
-                logger.error(
-                    "get_phantom_checks_summary: ошибка доступа к листу, реконнект: %s", e
-                )
-                self._reconnect()
-                try:
-                    ws = self._spreadsheet.worksheet(sheet_name)
-                    all_values = ws.get_all_values()
-                except WorksheetNotFound:
-                    logger.warning(
-                        "get_phantom_checks_summary: лист '%s' не найден после реконнекта",
-                        sheet_name,
-                    )
-                    return 0
 
             phantom_row = None
             for i, row in enumerate(all_values, start=1):
@@ -1093,20 +1033,10 @@ class GoogleSheetsClient:
         """
         logger.info("get_summary_hours: telegram_id=%s, sheet='%s'", telegram_id, sheet_name)
         try:
-            ws = self._spreadsheet.worksheet(sheet_name)
-            all_values = ws.get_all_values()
+            ws, all_values = self._fetch_worksheet_and_values(sheet_name)
         except WorksheetNotFound:
             logger.info("get_summary_hours: лист '%s' не найден", sheet_name)
             return None
-        except Exception as e:
-            logger.error("get_summary_hours: ошибка доступа к листу '%s', реконнект: %s", sheet_name, e, exc_info=True)
-            self._reconnect()
-            try:
-                ws = self._spreadsheet.worksheet(sheet_name)
-                all_values = ws.get_all_values()
-            except WorksheetNotFound:
-                logger.info("get_summary_hours: лист '%s' не найден после реконнекта", sheet_name)
-                return None
 
         user_row_idx = None
         for i, row in enumerate(all_values, start=1):
@@ -1185,14 +1115,9 @@ class GoogleSheetsClient:
         Каждый элемент: {"telegram_id": int, "full_name": str, "position": str}
         """
         logger.info("get_employees_by_dept: dept=%s", dept)
-        try:
-            ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
-            all_values = ws.get_all_values()
-        except Exception as e:
-            logger.error("get_employees_by_dept: ошибка доступа, реконнект: %s", e, exc_info=True)
-            self._reconnect()
-            ws = self._spreadsheet.worksheet(TECH_SHEET_NAME)
-            all_values = ws.get_all_values()
+        _, all_values = self._call_with_worksheet(
+            self._get_techlist_worksheet, lambda ws: ws.get_all_values()
+        )
         result = []
         for row in all_values[1:]:
             if len(row) < COL_DEPARTMENT:
@@ -1317,13 +1242,9 @@ class GoogleSheetsClient:
                     tech_row = i
                     break
             if tech_row is not None:
-                try:
-                    ws.delete_rows(tech_row)
-                except Exception:
-                    logger.warning("dismiss_employee: сетевой сбой, переподключаюсь")
-                    self._reconnect()
-                    ws = self._get_techlist_worksheet()
-                    ws.delete_rows(tech_row)
+                self._call_with_worksheet(
+                    self._get_techlist_worksheet, lambda ws: ws.delete_rows(tech_row)
+                )
                 logger.info(
                     "dismiss_employee: строка %d удалена из Техлиста (telegram_id=%s)",
                     tech_row, telegram_id,
@@ -1344,12 +1265,7 @@ class GoogleSheetsClient:
 
     def get_sheet_id_by_name(self, sheet_name: str) -> int | None:
         """Возвращает числовой gid листа по его названию."""
-        try:
-            worksheets = self._spreadsheet.worksheets()
-        except Exception as e:
-            logger.error("get_sheet_id_by_name: ошибка, реконнект: %s", e, exc_info=True)
-            self._reconnect()
-            worksheets = self._spreadsheet.worksheets()
+        worksheets = self._call(lambda: self._spreadsheet.worksheets())
         for ws in worksheets:
             if ws.title == sheet_name:
                 return ws.id
@@ -1363,14 +1279,7 @@ class GoogleSheetsClient:
         возвращает диапазон от заголовка до последней строки блока.
         Если не найдено — возвращает None (весь лист).
         """
-        try:
-            ws = self._spreadsheet.worksheet(sheet_name)
-            all_values = ws.get_all_values()
-        except Exception as e:
-            logger.error("get_section_range: ошибка, реконнект: %s", e, exc_info=True)
-            self._reconnect()
-            ws = self._spreadsheet.worksheet(sheet_name)
-            all_values = ws.get_all_values()
+        ws, all_values = self._fetch_worksheet_and_values(sheet_name)
 
         ALL_DEPTS = ["кухня", "бар", "зал"]
         dept_lower = department.lower()

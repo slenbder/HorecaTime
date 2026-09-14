@@ -1,15 +1,19 @@
 """
-Тесты 429-aware backoff в GoogleSheetsClient._call и fail-loud switch_month.
+Тесты retry-логики в GoogleSheetsClient._call и fail-loud switch_month.
 
 Покрывает:
 - APIError 429 → backoff+retry без reconnect
-- не-429 APIError → propagate немедленно
+- APIError 500/503 → reconnect + один повторный вызов
+- транзиентные сетевые ошибки (ConnectionError/Timeout) → reconnect + один повтор
+- не-429/500/503 APIError → propagate немедленно, без reconnect
 - 429 исчерпан (3 попытки) → raise
+- 500/503/network error: повтор тоже упал → raise, reconnect вызван ровно один раз
 - провал батча в switch_month → raise RuntimeError (один алерт)
 """
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout
 
 from app.services.google_sheets import GoogleSheetsClient
 from app.scheduler.monthly_switch import switch_month
@@ -125,6 +129,169 @@ class TestCallBackoff:
         client._call(fn, [1, 2, 3], value_input_option="USER_ENTERED")
 
         fn.assert_called_once_with([1, 2, 3], value_input_option="USER_ENTERED")
+
+
+# ---------------------------------------------------------------------------
+# Tests: _call — 500/503 и транзиентные сетевые ошибки → reconnect + 1 повтор
+# ---------------------------------------------------------------------------
+
+class TestCallReconnectRetry:
+
+    @pytest.mark.parametrize("code", [500, 503])
+    def test_5xx_reconnects_and_retries_once_then_succeeds(self, code):
+        """APIError 500/503 → reconnect() вызывается один раз → второй вызов успешен."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+
+        fn = MagicMock(side_effect=[_make_api_error(code), "ok"])
+
+        with patch("app.services.google_sheets.time.sleep") as mock_sleep:
+            result = client._call(fn, "arg1")
+
+        assert result == "ok"
+        assert fn.call_count == 2
+        client._reconnect.assert_called_once()
+        mock_sleep.assert_not_called()  # 500/503 не использует backoff-sleep, только reconnect
+
+    @pytest.mark.parametrize("code", [500, 503])
+    def test_5xx_retry_fails_raises_after_exactly_one_retry(self, code):
+        """APIError 500/503 → reconnect + один повтор → повтор тоже упал → raise.
+        reconnect() вызван РОВНО один раз, fn вызван РОВНО два раза (без третьей попытки)."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+
+        fn = MagicMock(side_effect=[_make_api_error(code), _make_api_error(code)])
+
+        from gspread.exceptions import APIError
+        with pytest.raises(APIError) as exc_info:
+            client._call(fn, "arg1")
+
+        assert exc_info.value.code == code
+        assert fn.call_count == 2
+        client._reconnect.assert_called_once()
+
+    def test_other_5xx_like_codes_not_retried(self):
+        """APIError с кодом вне {429,500,503} (напр. 403) — без reconnect, без retry."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+
+        fn = MagicMock(side_effect=_make_api_error(403))
+
+        from gspread.exceptions import APIError
+        with pytest.raises(APIError):
+            client._call(fn)
+
+        assert fn.call_count == 1
+        client._reconnect.assert_not_called()
+
+    @pytest.mark.parametrize("error_cls", [RequestsConnectionError, RequestsTimeout])
+    def test_transient_network_error_reconnects_and_retries_once_then_succeeds(self, error_cls):
+        """ConnectionError/Timeout → reconnect() один раз → второй вызов успешен."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+
+        fn = MagicMock(side_effect=[error_cls("boom"), "ok"])
+
+        result = client._call(fn, "arg1")
+
+        assert result == "ok"
+        assert fn.call_count == 2
+        client._reconnect.assert_called_once()
+
+    @pytest.mark.parametrize("error_cls", [RequestsConnectionError, RequestsTimeout])
+    def test_transient_network_error_retry_fails_raises_after_one_retry(self, error_cls):
+        """ConnectionError/Timeout persists через повтор → raise, reconnect вызван один раз."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+
+        fn = MagicMock(side_effect=[error_cls("boom"), error_cls("boom again")])
+
+        with pytest.raises(error_cls):
+            client._call(fn, "arg1")
+
+        assert fn.call_count == 2
+        client._reconnect.assert_called_once()
+
+    def test_generic_exception_not_retried_no_reconnect(self):
+        """Обычное исключение (не APIError, не сетевая ошибка) — propagate немедленно,
+        без reconnect, без retry (see google_sheets.py call-site refactor)."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+
+        fn = MagicMock(side_effect=ValueError("business logic error"))
+
+        with pytest.raises(ValueError):
+            client._call(fn)
+
+        assert fn.call_count == 1
+        client._reconnect.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: staleness fix — retry после reconnect() должен идти против свежего
+# объекта (self._spreadsheet / worksheet), а не против того, что был получен
+# ДО reconnect(). Регрессионные тесты на баг, найденный при код-ревью рефакторинга.
+# ---------------------------------------------------------------------------
+
+class TestCallWithWorksheetFreshness:
+
+    def test_retry_refetches_worksheet_after_reconnect(self):
+        """500/503 внутри op(ws) → reconnect() → get_ws() вызывается ЗАНОВО,
+        и повтор op выполняется против свежего (второго) объекта листа,
+        а не против того, что был получен до reconnect."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+
+        old_ws = MagicMock(name="old_ws")
+        new_ws = MagicMock(name="new_ws")
+        get_ws = MagicMock(side_effect=[old_ws, new_ws])
+
+        def op(ws):
+            if ws is old_ws:
+                raise _make_api_error(503)
+            return "ok-with-fresh-ws"
+
+        result_ws, result = client._call_with_worksheet(get_ws, op)
+
+        assert result == "ok-with-fresh-ws"
+        assert result_ws is new_ws
+        assert get_ws.call_count == 2
+        client._reconnect.assert_called_once()
+
+    def test_success_on_first_attempt_calls_get_ws_once(self):
+        """Успех с первой попытки — get_ws() вызывается один раз, reconnect не нужен."""
+        client = _make_client()
+        client._reconnect = MagicMock()
+        ws = MagicMock()
+        get_ws = MagicMock(return_value=ws)
+
+        result_ws, result = client._call_with_worksheet(get_ws, lambda w: w.get_all_values())
+
+        assert result_ws is ws
+        get_ws.assert_called_once()
+        client._reconnect.assert_not_called()
+
+    def test_get_techlist_worksheet_retry_uses_fresh_spreadsheet(self):
+        """Регрессионный тест на исходный баг: retry внутри _get_techlist_worksheet
+        после reconnect() должен читать self._spreadsheet ЗАНОВО (через lambda),
+        а не держать bound-метод на объекте, протухшем до reconnect()."""
+        client = _make_client()
+        old_spreadsheet = client._spreadsheet
+        old_spreadsheet.worksheet.side_effect = _make_api_error(503)
+
+        new_spreadsheet = MagicMock(name="new_spreadsheet")
+        new_spreadsheet.worksheet.return_value = "fresh-ws"
+
+        def fake_reconnect():
+            client._spreadsheet = new_spreadsheet
+        client._reconnect = MagicMock(side_effect=fake_reconnect)
+
+        result = client._get_techlist_worksheet()
+
+        assert result == "fresh-ws"
+        new_spreadsheet.worksheet.assert_called_once()
+        # Старый spreadsheet должен быть вызван только один раз (первая, неудачная попытка)
+        old_spreadsheet.worksheet.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

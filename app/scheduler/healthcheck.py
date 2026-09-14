@@ -59,7 +59,7 @@ async def healthcheck(bot) -> None:
         logger.info("Healthcheck: Google Sheets ✅")
     except Exception as e:
         issues.append(f"❌ Google Sheets недоступен: {type(e).__name__}")
-        logger.error("Healthcheck: Google Sheets ❌ — %s", e)
+        logger.warning("Healthcheck: Google Sheets ❌ — %s", e)
 
     # 2. SQLite не locked?
     try:
@@ -68,7 +68,7 @@ async def healthcheck(bot) -> None:
         logger.info("Healthcheck: SQLite ✅")
     except Exception as e:
         issues.append(f"❌ SQLite locked/недоступен: {type(e).__name__}")
-        logger.error("Healthcheck: SQLite ❌ — %s", e)
+        logger.warning("Healthcheck: SQLite ❌ — %s", e)
 
     # 3. Errors.log растёт слишком быстро?
     error_count = count_errors_in_log(hours=1)

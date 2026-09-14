@@ -84,6 +84,7 @@ async def main():
             handler_name,
             exception,
             exc_info=True,
+            extra={"telegram_already_alerted": True},
         )
 
         # Определяем severity

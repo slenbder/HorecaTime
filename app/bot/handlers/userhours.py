@@ -597,7 +597,7 @@ async def _write_waiter_no_photo(
                 await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
                 logger.info("_write_waiter_no_photo: уведомлен %s", admin_id)
             except Exception as e:
-                error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e)
+                error_logger.error("_write_waiter_no_photo: не удалось уведомить %s: %s", admin_id, e, exc_info=True)
 
     new_value = fmt_hours(h)
     if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
@@ -757,7 +757,7 @@ async def _send_waiter_report(
             logger.info("_send_waiter_report: уведомлен %s", admin_id)
         except Exception as e:
             error_logger.error(
-                "_send_waiter_report: не удалось уведомить %s: %s", admin_id, e
+                "_send_waiter_report: не удалось уведомить %s: %s", admin_id, e, exc_info=True
             )
 
 
@@ -939,7 +939,7 @@ async def _send_loyalty_cards_report(
             )
             logger.info("_send_loyalty_cards_report: уведомлен %s", admin_id)
         except Exception as e:
-            error_logger.error("_send_loyalty_cards_report: не удалось уведомить %s: %s", admin_id, e)
+            error_logger.error("_send_loyalty_cards_report: не удалось уведомить %s: %s", admin_id, e, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1107,7 +1107,7 @@ async def _send_check_filling_report(
             )
             logger.info("_send_check_filling_report: уведомлен %s", admin_id)
         except Exception as e:
-            error_logger.error("_send_check_filling_report: не удалось уведомить %s: %s", admin_id, e)
+            error_logger.error("_send_check_filling_report: не удалось уведомить %s: %s", admin_id, e, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1273,7 +1273,7 @@ async def _write_and_finish_bar(
             await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
-            error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
+            error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e, exc_info=True)
 
     new_value = f"{fmt_hours(h)}/{fmt_hours(ah)}" if ah > 0 else fmt_hours(h)
     if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \
@@ -1409,7 +1409,7 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
                 await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
                 logger.info("Notified admin %s", admin_id)
             except Exception as e:
-                error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
+                error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e, exc_info=True)
 
         old = _shift_record_to_value(old_rec)
         new_value = fmt_hours(h)
@@ -1508,7 +1508,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
             await message.bot.send_message(chat_id=admin_id, text=admin_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
             logger.info("Notified admin %s", admin_id)
         except Exception as e:
-            error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e)
+            error_logger.error("Не удалось уведомить admin %s: %s", admin_id, e, exc_info=True)
 
     new_value = f"{fmt_hours(h)}/{fmt_hours(ah)}" if ah > 0 else fmt_hours(h)
     if old and old.strip() and _parse_shift_raw(old) != (0.0, 0.0) \

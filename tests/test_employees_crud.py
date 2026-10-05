@@ -56,8 +56,10 @@ class TestUpsertEmployee:
         await _register(employees_db)
         await approve_employee(employees_db, 42)
         await set_employee_role(employees_db, 42, "admin_kitchen")
+        await dismiss_employee_db(employees_db, 42)
 
-        # Повторная регистрация (например, смена отдела)
+        # Повторная регистрация уволенного (смена отдела). Для approved + pending
+        # обновление пропускается целиком — см. tests/test_registration_guard.py
         await _register(employees_db, department="Бар", position="Бармен")
 
         emp = await get_employee(employees_db, 42)

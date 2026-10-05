@@ -67,6 +67,7 @@ class TestRegistrationDualWrite:
         state = _make_state(_FIO_STATE)
 
         with (
+            patch("app.bot.handlers.auth.get_employee", new=AsyncMock(return_value=None)),
             patch("app.bot.handlers.auth.upsert_employee", new=AsyncMock()) as mock_upsert,
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,
             patch("app.bot.handlers.auth.get_admins_by_department", new=AsyncMock(return_value=[])),
@@ -90,6 +91,7 @@ class TestRegistrationDualWrite:
         state = _make_state(_FIO_STATE)
 
         with (
+            patch("app.bot.handlers.auth.get_employee", new=AsyncMock(return_value=None)),
             patch("app.bot.handlers.auth.upsert_employee",
                   new=AsyncMock(side_effect=Exception("db locked"))),
             patch("app.bot.handlers.auth.sheets_client") as mock_sc,

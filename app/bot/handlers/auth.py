@@ -31,7 +31,7 @@ from app.bot.commands import set_commands_for_role
 from app.db.models import (
     get_user, delete_user, get_users_by_role,
     upsert_employee, approve_employee, dismiss_employee_db, set_employee_role,
-    get_employee,
+    get_employee, get_employees_by_department_db,
     upsert_shift, add_check_filling, get_check_filling_summary,
     get_pending_approval, resolve_pending_approval, reopen_pending_approval,
 )
@@ -136,25 +136,14 @@ async def cmd_start(message: Message, state: FSMContext):
         logger.info("cmd_start: %s вошёл как %s", tg_id, privileged_role)
         return
 
-    if sheets_client is None:
-        await message.answer("Ошибка подключения к таблице. Обратись к администратору.")
-        logger.error("sheets_client не инициализирован")
-        return
+    # 0. Проверяем статус в employees (SQLite — источник правды) и кеш users
+    try:
+        employee = await get_employee(DB_PATH, tg_id)
+        cached_user = get_user(tg_id)
 
-    # 0. Resync: если пользователь есть в SQLite, но удалён из Техлиста — сбрасываем
-    cached_user = get_user(tg_id)
-    if cached_user:
-        try:
-            exists_in_techlist = sheets_client.user_exists_in_techlist(tg_id)
-        except Exception:
-            logger.exception(
-                "Ошибка при проверке наличия %s в Техлисте при /start, продолжаем без сброса",
-                tg_id,
-            )
-            exists_in_techlist = True  # fail-safe: не сбрасываем при ошибке
-
-        if not exists_in_techlist:
-            logger.info("User %s not found in Техлист, resetting", tg_id)
+        # Resync: юзер в кеше users, но в employees уволен — сбрасываем
+        if cached_user and employee is not None and employee["status"] == "dismissed":
+            logger.info("User %s dismissed in employees, resetting", tg_id)
             delete_user(tg_id)
             await state.clear()
             await _clear_commands(message.bot, tg_id)
@@ -165,11 +154,9 @@ async def cmd_start(message: Message, state: FSMContext):
             await state.set_state(AuthStates.choosing_department)
             return
 
-    # 1. Проверяем, есть ли пользователь и одобрен ли он
-    try:
-        logger.info(f"Проверка авторизации пользователя {tg_id}")
-        is_approved = sheets_client.is_user_fully_authorized(tg_id)
-        logger.info(f"Результат проверки авторизации: {is_approved}")
+        # 1. Одобренный сотрудник — уже авторизован
+        is_approved = employee is not None and employee["status"] == "approved"
+        logger.info("Результат проверки авторизации пользователя %s: %s", tg_id, is_approved)
 
         if is_approved:
             cached = RolesCacheService.get_user_role(tg_id)
@@ -1718,24 +1705,13 @@ async def dismiss_dept_selected(callback: CallbackQuery, state: FSMContext):
         filtered = get_users_by_role(DB_PATH, admin_role) if admin_role else []
         logger.info("dismiss_dept_selected: получено %d администраторов из SQLite для отдела %s", len(filtered), dept)
     else:
-        if sheets_client is None:
-            await callback.answer("Ошибка подключения к таблице", show_alert=True)
-            await state.clear()
-            return
         try:
-            employees = sheets_client.get_employees_by_dept(dept)
+            filtered = await get_employees_by_department_db(DB_PATH, dept)
         except Exception:
             logger.exception("dismiss_dept_selected: ошибка при получении сотрудников отдела %s", dept)
             await callback.answer("Ошибка при получении списка сотрудников", show_alert=True)
             await state.clear()
             return
-        filtered = []
-        for emp in employees:
-            user_data = get_user(emp["telegram_id"])
-            if user_data is None:
-                continue
-            # Показываем всех (user + admin) — fork demote/fire реализован в dismiss_select
-            filtered.append(emp)
 
     if not filtered:
         type_label = "сотрудников" if dismiss_type == "user" else "администраторов"
@@ -1774,23 +1750,24 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
     target_id = int(callback.data.split(":")[1])
 
     user_data = get_user(target_id)
-    full_name = user_data["full_name"] if user_data else str(target_id)
     role = user_data.get("role", "user") if user_data else "user"
 
-    if sheets_client is not None:
-        try:
-            tech_info = sheets_client.get_user_from_techlist(target_id)
-        except Exception:
-            logger.exception("dismiss_select: ошибка чтения Техлиста")
-            await state.clear()
-            await callback.message.answer(
-                "⚠️ Ошибка при получении данных. Попробуйте позже или используйте /cancel"
-            )
-            return
-    else:
-        tech_info = None
-    position = (tech_info["position"] if tech_info else "") or (user_data.get("position") if user_data else "") or (user_data.get("role") if user_data else "") or "—"
-    dept = (tech_info["department"] if tech_info else "") or (user_data.get("department") if user_data else "") or "—"
+    try:
+        employee = await get_employee(DB_PATH, target_id)
+    except Exception:
+        logger.exception("dismiss_select: ошибка чтения employees")
+        await state.clear()
+        await callback.message.answer(
+            "⚠️ Ошибка при получении данных. Попробуйте позже или используйте /cancel"
+        )
+        return
+    full_name = (
+        (employee["full_name"] if employee else "")
+        or (user_data["full_name"] if user_data else "")
+        or str(target_id)
+    )
+    position = (employee["position"] if employee else "") or (user_data.get("position") if user_data else "") or (user_data.get("role") if user_data else "") or "—"
+    dept = (employee["department"] if employee else "") or (user_data.get("department") if user_data else "") or "—"
 
     await state.update_data(
         dismiss_target_id=target_id,

@@ -579,13 +579,15 @@ async def upsert_employee(
 
 async def approve_employee(db_path: str, telegram_id: int) -> None:
     """
-    Помечает сотрудника одобренным (status='approved', approved_at=now).
+    Помечает сотрудника одобренным (status='approved', approved_at=now,
+    dismissed_at сбрасывается — актуально при повторном апруве уволенного).
     Если записи нет — ValueError: одобрять можно только существующую заявку.
     """
     now_str = datetime.now(ZoneInfo("Europe/Moscow")).isoformat()
     async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         cursor = await db.execute(
-            "UPDATE employees SET status = 'approved', approved_at = ? WHERE telegram_id = ?",
+            "UPDATE employees SET status = 'approved', approved_at = ?, dismissed_at = NULL "
+            "WHERE telegram_id = ?",
             (now_str, telegram_id),
         )
         await db.commit()

@@ -552,11 +552,12 @@ async def upsert_employee(
     """
     Создаёт или обновляет запись сотрудника (заявка на регистрацию).
     При конфликте обновляет только пришедшие поля: role, approved_at и
-    dismissed_at существующей записи сохраняются.
+    dismissed_at существующей записи сохраняются. Если запись уже approved,
+    а приходит pending — обновление пропускается целиком.
     """
     logger.info("upsert_employee: telegram_id=%s status=%s", telegram_id, status)
     async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
-        await db.execute(
+        cursor = await db.execute(
             '''
             INSERT INTO employees
                 (telegram_id, nickname, full_name, department, position,
@@ -570,11 +571,14 @@ async def upsert_employee(
                 custom_position = excluded.custom_position,
                 status          = excluded.status,
                 registered_at   = excluded.registered_at
+            WHERE NOT (employees.status = 'approved' AND excluded.status = 'pending')
             ''',
             (telegram_id, nickname, full_name, department, position,
              custom_position, status, registered_at),
         )
         await db.commit()
+        if cursor.rowcount == 0:
+            logger.warning("upsert_employee: пропущен, telegram_id=%s уже approved", telegram_id)
 
 
 async def approve_employee(db_path: str, telegram_id: int) -> None:

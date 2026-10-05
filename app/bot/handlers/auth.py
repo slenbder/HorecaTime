@@ -310,6 +310,22 @@ async def process_dop_position(message: Message, state: FSMContext):
 
 @auth_router.message(AuthStates.entering_fio)
 async def process_fio(message: Message, state: FSMContext):
+    tg_id = message.from_user.id
+    try:
+        employee = await get_employee(DB_PATH, tg_id)
+    except Exception:
+        logger.exception("process_fio: ошибка чтения employees для пользователя %s", tg_id)
+        await message.answer("Произошла ошибка. Попробуй ещё раз позже.")
+        return
+
+    if employee and employee["status"] == "approved":
+        await state.clear()
+        await message.answer(
+            "Ты уже авторизован ✅\n"
+            "Используй меню команд для внесения смен и просмотра отчётов."
+        )
+        return
+
     fio = message.text.strip()
 
     if not fio or len(fio) < 2 or len(fio) > 100:

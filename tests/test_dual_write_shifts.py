@@ -2,15 +2,18 @@
 
 Ошибка Sheets → операция успешна, данные в SQLite, разработчик уведомлён.
 Ошибка SQLite → отказ операции, Sheets не вызывается, state сохраняется.
-ValueError Sheets (не в листе месяца) → отказ как раньше + откат записи в БД.
+Любая ошибка Sheets, включая ValueError (не в листе месяца) → сбой зеркала:
+смена остаётся в SQLite, пользователю ✅, разработчик уведомлён, без отката.
 """
 import sqlite3
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.db.models import create_migration_tables, get_shift
+from app.db.models import create_migration_tables, get_shift, upsert_shift
 from config import DEVELOPER_ID
+
+UH = "app.bot.handlers.userhours"
 
 
 @pytest.fixture()
@@ -48,6 +51,13 @@ def _dev_notified(send_message_mock) -> bool:
 
 def _answers(msg) -> str:
     return " ".join(str(c) for c in msg.answer.call_args_list)
+
+
+def _api_error(code: int):
+    from gspread.exceptions import APIError
+    response = MagicMock()
+    response.json.return_value = {"error": {"code": code, "message": "test error"}}
+    return APIError(response)
 
 
 _BAR_STATE = dict(day=15, month=5, year=2026, h=8.0, ah=3.0, start=16.0, end=0.0)
@@ -103,27 +113,64 @@ class TestBarDualWrite:
         assert "❌ Ошибка записи" in _answers(message)
 
     @pytest.mark.asyncio
-    async def test_roster_validation_rolls_back_sqlite(self, shifts_db):
-        """Sheets: 'не найден в листе' → отказ как раньше, запись в БД откачена."""
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ValueError("Пользователь 12345 не найден в листе 'Май 2026'"),
+            ValueError("День 15 не найден в строке дат листа 'Май 2026'"),
+            ValueError("Лист 'Май 2026' не найден"),
+            _api_error(503),
+        ],
+        ids=["not-in-roster", "day-not-found", "sheet-not-found", "api-error"],
+    )
+    async def test_sheets_error_is_mirror_failure_shift_kept(self, shifts_db, error):
+        """Любая ошибка write_shift (в т.ч. ValueError) → смена в SQLite, ✅, один алерт."""
         from app.bot.handlers.userhours import _write_and_finish_bar
 
         message = _make_message()
         state = _make_state(**_BAR_STATE)
 
         with (
-            patch("app.bot.handlers.userhours.DB_PATH", shifts_db),
-            patch("app.bot.handlers.userhours.sheets_client") as mock_sc,
-            patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
-            patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
+            patch(f"{UH}.DB_PATH", shifts_db),
+            patch(f"{UH}.sheets_client") as mock_sc,
+            patch(f"{UH}.get_user", return_value={"full_name": "Тест"}),
+            patch(f"{UH}.get_admins_by_department", new=AsyncMock(return_value=[])),
+            patch(f"{UH}.notify_mirror_failure", new=AsyncMock()) as mock_notify,
+        ):
+            mock_sc.write_shift.side_effect = error
+            await _write_and_finish_bar(message, state, "Бармен")
+
+        rec = await get_shift(shifts_db, 12345, "2026-05-15")
+        assert rec is not None
+        assert (rec["hours"], rec["extra_hours"]) == (8.0, 3.0)
+        assert "✅ Смена" in _answers(message)
+        assert "не числитесь" not in _answers(message)
+        mock_notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_overwrite_keeps_new_value_when_mirror_fails(self, shifts_db):
+        """Перезапись существующей смены при сбое зеркала: SQLite хранит НОВОЕ значение."""
+        from app.bot.handlers.userhours import _write_and_finish_bar
+
+        await upsert_shift(shifts_db, 12345, "2026-05-15", 5.0, 0.0, "user")
+        message = _make_message()
+        state = _make_state(**_BAR_STATE)
+
+        with (
+            patch(f"{UH}.DB_PATH", shifts_db),
+            patch(f"{UH}.sheets_client") as mock_sc,
+            patch(f"{UH}.get_user", return_value={"full_name": "Тест"}),
+            patch(f"{UH}.get_admins_by_department", new=AsyncMock(return_value=[])),
+            patch(f"{UH}.notify_mirror_failure", new=AsyncMock()) as mock_notify,
         ):
             mock_sc.write_shift.side_effect = ValueError(
                 "Пользователь 12345 не найден в листе 'Май 2026'"
             )
             await _write_and_finish_bar(message, state, "Бармен")
 
-        assert await get_shift(shifts_db, 12345, "2026-05-15") is None
-        assert "не числитесь в графике" in _answers(message)
-        state.clear.assert_called_once()
+        rec = await get_shift(shifts_db, 12345, "2026-05-15")
+        assert (rec["hours"], rec["extra_hours"]) == (8.0, 3.0)   # не откатилось к 5.0
+        mock_notify.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -212,13 +259,11 @@ class TestSimpleHBulkDualWrite:
         assert "❌ Ошибка записи" in _answers(message)
 
     @pytest.mark.asyncio
-    async def test_rollback_notification_excludes_failed_mirror_dates(self, shifts_db):
-        """3 строки: 1-я мирор ок, 2-я — Exception (mirror_failed), 3-я — ValueError.
+    async def test_value_error_on_second_date_all_rows_kept_single_alert(self, shifts_db):
+        """3 строки: 01.05 ок, 02.05 — ValueError, 03.05 — Exception.
 
-        Уведомление о сверке должно перечислять ТОЛЬКО 01.05 (реально попала
-        в Sheets), а НЕ 02.05 — её мирор упал с Exception, хотя строка и
-        попала в 'written'. Раньше уведомление ошибочно включало 02.05,
-        рискуя тем, что разработчик сочтёт её уже в Sheets и не восстановит."""
+        Все строки остаются в SQLite, в подтверждении все даты, один алерт
+        разработчику с перечнем неудавшихся дат (02.05, 03.05), без ФИО."""
         from app.bot.handlers.userhours import _process_simple_h_shifts
 
         message = _make_message(
@@ -227,56 +272,59 @@ class TestSimpleHBulkDualWrite:
         state = _make_state(position="Клининг")
 
         with (
-            patch("app.bot.handlers.userhours.DB_PATH", shifts_db),
-            patch("app.bot.handlers.userhours.sheets_client") as mock_sc,
-            patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
-            patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
+            patch(f"{UH}.DB_PATH", shifts_db),
+            patch(f"{UH}.sheets_client") as mock_sc,
+            patch(f"{UH}.get_user", return_value={"full_name": "Тест"}),
+            patch(f"{UH}.get_admins_by_department", new=AsyncMock(return_value=[])),
+            patch(f"{UH}.notify_mirror_failure", new=AsyncMock()) as mock_notify,
         ):
             mock_sc.write_shift.side_effect = [
-                "",                                                          # 01.05 — мирор успешен
-                Exception("Sheets down"),                                     # 02.05 — мирор упал
-                ValueError("Пользователь 12345 не найден в листе 'Май 2026'"),  # 03.05
+                "",
+                ValueError("Пользователь 12345 не найден в листе 'Май 2026'"),
+                Exception("Sheets down"),
             ]
             await _process_simple_h_shifts(message, state, "Клининг")
 
-        # Вся транзакция откачена (ValueError = отказ всей операции)
         for d in ("2026-05-01", "2026-05-02", "2026-05-03"):
-            assert await get_shift(shifts_db, 12345, d) is None
+            assert await get_shift(shifts_db, 12345, d) is not None
+        answers = _answers(message)
+        assert "✅ Записано смен: 3" in answers
+        assert all(d in answers for d in ("01.05", "02.05", "03.05"))
+        assert "не числитесь" not in answers
 
-        dev_calls = [
-            c for c in message.bot.send_message.call_args_list
-            if c.args and c.args[0] == DEVELOPER_ID
-        ]
-        assert dev_calls, "разработчик должен быть уведомлён о необходимости сверки"
-        notif_text = str(dev_calls[0])
-        assert "01.05" in notif_text, "01.05 реально в Sheets — должна быть в уведомлении"
-        assert "02.05" not in notif_text, (
-            "02.05 НЕ в Sheets (мирор упал с Exception) — не должна фигурировать "
-            "как 'уже записана'"
-        )
+        mock_notify.assert_awaited_once()
+        alert = mock_notify.await_args.args[1]
+        assert "02.05" in alert and "03.05" in alert
+        assert "01.05" not in alert
+        assert "Тест" not in alert
+        state.clear.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_roster_validation_rolls_back_whole_bulk(self, shifts_db):
-        """'не найден в листе' на 1-й строке → обе строки транзакции откачены."""
+    async def test_value_error_on_every_row_keeps_all_and_confirms(self, shifts_db):
+        """'не найден в листе' на каждой строке → обе строки в SQLite, один алерт, ✅."""
         from app.bot.handlers.userhours import _process_simple_h_shifts
 
         message = _make_message(text="01.05 10:00-20:00\n02.05 10:00-20:00")
         state = _make_state(position="Клининг")
 
         with (
-            patch("app.bot.handlers.userhours.DB_PATH", shifts_db),
-            patch("app.bot.handlers.userhours.sheets_client") as mock_sc,
-            patch("app.bot.handlers.userhours.get_user", return_value={"full_name": "Тест"}),
-            patch("app.bot.handlers.userhours.get_admins_by_department", new=AsyncMock(return_value=[])),
+            patch(f"{UH}.DB_PATH", shifts_db),
+            patch(f"{UH}.sheets_client") as mock_sc,
+            patch(f"{UH}.get_user", return_value={"full_name": "Тест"}),
+            patch(f"{UH}.get_admins_by_department", new=AsyncMock(return_value=[])),
+            patch(f"{UH}.notify_mirror_failure", new=AsyncMock()) as mock_notify,
         ):
             mock_sc.write_shift.side_effect = ValueError(
                 "Пользователь 12345 не найден в листе 'Май 2026'"
             )
             await _process_simple_h_shifts(message, state, "Клининг")
 
-        assert await get_shift(shifts_db, 12345, "2026-05-01") is None
-        assert await get_shift(shifts_db, 12345, "2026-05-02") is None
-        assert "не числитесь в графике" in _answers(message)
+        assert await get_shift(shifts_db, 12345, "2026-05-01") is not None
+        assert await get_shift(shifts_db, 12345, "2026-05-02") is not None
+        assert "✅ Записано смен: 2" in _answers(message)
+        mock_notify.assert_awaited_once()
+        assert "01.05" in mock_notify.await_args.args[1]
+        assert "02.05" in mock_notify.await_args.args[1]
 
 
 # ---------------------------------------------------------------------------

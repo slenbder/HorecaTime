@@ -18,7 +18,7 @@ from aiogram.types import (
 
 from app.bot.fsm.shift_states import ShiftStates
 from app.db.models import (
-    get_user, upsert_shift, upsert_shifts_bulk, delete_shift,
+    get_user, upsert_shift, upsert_shifts_bulk,
     create_pending_approval,
 )
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU, _format_shift_value, _parse_shift_raw
@@ -113,13 +113,6 @@ async def _notify_overwrite(
             pass
 
 
-_NOT_IN_ROSTER_TEXT = (
-    "❌ Вы не числитесь в графике за указанный месяц.\n\n"
-    "Смены можно вносить только за текущий месяц.\n"
-    "Если вы уверены, что ошибки нет — обратитесь к администратору или разработчику."
-)
-
-
 def _shift_record_to_value(rec: dict | None) -> str:
     """Запись shifts из SQLite → строка формата ячейки ('8' или '8/2') для уведомления о перезаписи."""
     if not rec:
@@ -129,28 +122,8 @@ def _shift_record_to_value(rec: dict | None) -> str:
     return f"{fmt_hours(h)}/{fmt_hours(ah)}" if ah > 0 else fmt_hours(h)
 
 
-async def _rollback_shift(tg_id: int, iso_date: str, old_rec: dict | None) -> None:
-    """
-    Компенсация: Sheets отклонил смену как невалидную (пользователь не числится
-    в листе месяца / лист не существует) — возвращаем БД к прежнему состоянию.
-    """
-    try:
-        if old_rec is None:
-            await delete_shift(DB_PATH, tg_id, iso_date)
-        else:
-            await upsert_shift(
-                DB_PATH, tg_id, iso_date,
-                old_rec["hours"], old_rec["extra_hours"], old_rec["source"],
-            )
-    except Exception:
-        error_logger.exception(
-            "_rollback_shift: не удалось откатить смену %s/%s", tg_id, iso_date
-        )
-
-
 async def _dual_write_shift(
     message: Message,
-    state: FSMContext,
     tg_id: int,
     day: int,
     month: int,
@@ -169,9 +142,9 @@ async def _dual_write_shift(
       old_value — прежнее значение по данным БД в формате ячейки ('8'/'8/2').
 
     Ошибка SQLite → отказ, state сохраняется (пользователь может повторить ввод).
-    ValueError из Sheets (не в листе месяца / лист не найден) — валидация,
-    а не сбой зеркала: отказ как раньше + откат записи в БД.
-    Прочие ошибки Sheets → операция успешна, разработчик уведомлён.
+    Любая ошибка Sheets (включая ValueError: не в листе месяца, лист или день
+    не найден) — сбой зеркала: смена остаётся в SQLite, операция успешна,
+    разработчик уведомлён.
     """
     iso_date = to_iso_date(day, month, year)
 
@@ -188,16 +161,6 @@ async def _dual_write_shift(
         if sheets_client is None:
             raise RuntimeError("sheets_client не инициализирован")
         sheets_client.write_shift(tg_id, day, month, year, h, ah, is_weekend=is_weekend)
-    except ValueError as e:
-        await _rollback_shift(tg_id, iso_date, old_rec)
-        await state.clear()
-        if "не найден в листе" in str(e):
-            await message.answer(_NOT_IN_ROSTER_TEXT)
-            logger.warning("write_shift: user %s not found in sheet: %s", tg_id, e)
-        else:
-            error_logger.exception("%s: Sheets отклонил смену для %s", log_label, tg_id)
-            await message.answer("❌ Ошибка записи. Попробуйте позже.")
-        return False, ""
     except Exception:
         error_logger.exception("%s: зеркало Sheets не обновлено для %s", log_label, tg_id)
         await notify_mirror_failure(
@@ -395,7 +358,7 @@ async def process_shift_input(message: Message, state: FSMContext):
 
         tg_id = message.from_user.id
         ok, _old = await _dual_write_shift(
-            message, state, tg_id,
+            message, tg_id,
             result["day"], result["month"], result["year"], result["h"], 0.0,
             log_label="process_shift_input",
         )
@@ -564,7 +527,7 @@ async def _write_waiter_no_photo(
     full_name = user_data["full_name"] if user_data else str(tg_id)
 
     ok, old = await _dual_write_shift(
-        message, state, tg_id, day, month, year, h, 0.0,
+        message, tg_id, day, month, year, h, 0.0,
         log_label="_write_waiter_no_photo",
     )
     if not ok:
@@ -1224,7 +1187,7 @@ async def _write_and_finish_bar(
     date = _date_str(day, month, year)
 
     ok, old = await _dual_write_shift(
-        message, state, tg_id, day, month, year, h, ah,
+        message, tg_id, day, month, year, h, ah,
         log_label="_write_and_finish_bar",
     )
     if not ok:
@@ -1343,7 +1306,6 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
 
     written: list[tuple[str, float]] = []
     mirror_failed: list[str] = []
-    mirrored_ok: list[str] = []  # даты, реально подтверждённые зеркалом (write_shift без исключений)
 
     for (_line, result), old_rec in zip(parsed, olds):
         day, month, year = result["day"], result["month"], result["year"]
@@ -1351,51 +1313,23 @@ async def _process_simple_h_shifts(message: Message, state: FSMContext, position
         start, end = result["start"], result["end"]
         date = _date_str(day, month, year)
 
-        # Зеркалирование строки в Sheets
-        mirror_ok = True
+        # Зеркалирование строки в Sheets. Любая ошибка (в т.ч. ValueError
+        # "не найден в листе") — сбой зеркала: строка остаётся в SQLite.
         try:
             if sheets_client is None:
                 raise RuntimeError("sheets_client не инициализирован")
             sheets_client.write_shift(tg_id, day, month, year, h, 0.0)
-        except ValueError as e:
-            # Валидация Sheets (не в листе месяца / лист не найден):
-            # отказ всей операции — откатываем ВСЕ строки транзакции в БД.
-            for (_l, r), o in zip(parsed, olds):
-                await _rollback_shift(
-                    tg_id, to_iso_date(r["day"], r["month"], r["year"]), o
-                )
-            await state.clear()
-            if "не найден в листе" in str(e):
-                await message.answer(_NOT_IN_ROSTER_TEXT)
-                logger.warning("write_shift: user %s not found in sheet: %s", tg_id, e)
-            else:
-                error_logger.exception(
-                    "_process_simple_h_shifts: Sheets отклонил %s для %s", date, tg_id
-                )
-                await message.answer(f"❌ Ошибка записи {date}. Попробуйте позже.")
-            if mirrored_ok:
-                # Только реально подтверждённые зеркалом строки остались в Sheets
-                # после отката — mirror_failed туда не входят (их там и не было).
-                await notify_mirror_failure(
-                    message.bot,
-                    f"смены {tg_id}: операция отклонена ('{date}'), но в Sheets уже "
-                    f"записаны даты {', '.join(mirrored_ok)} — требуется сверка",
-                )
-            return
         except Exception:
             error_logger.exception(
                 "_process_simple_h_shifts: зеркало Sheets не обновлено %s для %s", date, tg_id
             )
             mirror_failed.append(date)
-            mirror_ok = False
 
         logger.info(
             "Смена записана: user=%s, date=%s, H=%s, position=%s",
             tg_id, date, fmt_hours(h), position,
         )
         written.append((date, h))
-        if mirror_ok:
-            mirrored_ok.append(date)
 
         time_range = f"{_hours_hhmm(start)}–{_hours_hhmm(end)}"
         admin_text = (
@@ -1456,7 +1390,7 @@ async def _write_and_finish(message: Message, state: FSMContext) -> None:
     # В SQLite — полные часы дня (h, ah); разделение будни/выходные — вычисление
     # по shift_date. is_weekend уходит только в зеркало (накопители AM/AN Раннера).
     ok, old = await _dual_write_shift(
-        message, state, tg_id, day, month, year, h, ah,
+        message, tg_id, day, month, year, h, ah,
         is_weekend=is_weekend,
         log_label="_write_and_finish",
     )

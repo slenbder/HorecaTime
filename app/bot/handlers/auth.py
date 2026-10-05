@@ -217,7 +217,7 @@ async def process_department(message: Message, state: FSMContext):
 
 @auth_router.message(AuthStates.choosing_department)
 async def process_department_invalid(message: Message):
-    logger.warning(f"Пользователь {message.from_user.id} ввёл некорректный отдел: {message.text}")
+    logger.warning("Пользователь %s ввёл некорректный отдел", message.from_user.id)
     await message.answer(
         "Пожалуйста, выбери отдел, используя кнопки ниже.",
         reply_markup=department_keyboard(),
@@ -234,8 +234,8 @@ async def process_position(message: Message, state: FSMContext):
     allowed = VALID_POSITIONS.get(department, [])
     if position not in allowed:
         logger.warning(
-            f"Пользователь {message.from_user.id} ввёл недопустимую позицию: "
-            f"'{position}' для отдела '{department}'"
+            "Пользователь %s ввёл недопустимую позицию для отдела '%s'",
+            message.from_user.id, department,
         )
         kb_func = POSITION_KEYBOARDS.get(department, department_keyboard)
         await message.answer(
@@ -275,14 +275,14 @@ async def process_custom_position_input(message: Message, state: FSMContext):
     custom_position = (message.text or "").strip()
     if len(custom_position) < 2 or len(custom_position) > 50:
         logger.warning(
-            "Пользователь %s ввёл некорректную должность (длина %d): '%s'",
-            message.from_user.id, len(custom_position), custom_position[:50],
+            "Пользователь %s ввёл некорректную должность (длина %d)",
+            message.from_user.id, len(custom_position),
         )
         await message.answer("Название должности должно быть от 2 до 50 символов. Введите заново:")
         return
     logger.info(
-        "Пользователь %s ввёл должность для Руководящий состав: '%s'",
-        message.from_user.id, custom_position,
+        "Пользователь %s ввёл должность для Руководящий состав",
+        message.from_user.id,
     )
     await state.update_data(custom_position=custom_position)
     await message.answer("Отправь, пожалуйста, своё имя и фамилию (как в таблице):")
@@ -294,8 +294,8 @@ async def process_dop_position(message: Message, state: FSMContext):
     position = (message.text or "").strip()
     if position not in VALID_DOP_POSITIONS:
         logger.warning(
-            "Пользователь %s выбрал недопустимую доп. позицию: '%s'",
-            message.from_user.id, position,
+            "Пользователь %s выбрал недопустимую доп. позицию",
+            message.from_user.id,
         )
         await message.answer(
             "Пожалуйста, выбери позицию из предложенных кнопок:",
@@ -330,8 +330,8 @@ async def process_fio(message: Message, state: FSMContext):
 
     if not fio or len(fio) < 2 or len(fio) > 100:
         logger.warning(
-            "Пользователь %s ввёл некорректное ФИО (длина %s): '%s'",
-            message.from_user.id, len(fio), fio[:50]
+            "Пользователь %s ввёл некорректное ФИО (длина %s)",
+            message.from_user.id, len(fio),
         )
         await message.answer("Пожалуйста, введи имя и фамилию корректно (от 2 до 100 символов).")
         return
@@ -344,10 +344,7 @@ async def process_fio(message: Message, state: FSMContext):
     tg_id = message.from_user.id
     nickname = message.from_user.username or ""
 
-    logger.info(
-        "Пользователь %s ввёл ФИО: %s, отдел: %s",
-        tg_id, fio, department,
-    )
+    logger.info("Пользователь %s ввёл ФИО, отдел: %s", tg_id, department)
 
     # 1. SQLite — источник правды: сохраняем заявку.
     # Ошибка БД = отказ операции; state не сбрасываем, пользователь может повторить.
@@ -394,7 +391,7 @@ async def process_fio(message: Message, state: FSMContext):
         # Полный набор полей для ручного восстановления строки Техлиста.
         await _notify_mirror_failure(
             message.bot,
-            f"регистрация {tg_id} ({fio}), отдел={department}, позиция={position}, "
+            f"регистрация {tg_id}, отдел={department}, позиция={position}, "
             f"должность={custom_position or '—'}",
         )
 
@@ -1794,8 +1791,8 @@ async def dismiss_select(callback: CallbackQuery, state: FSMContext):
 
     if role in _ADMIN_ROLES:
         logger.info(
-            "dismiss_select: %s (id=%s) является администратором (%s), показываем развилку",
-            full_name, target_id, role,
+            "dismiss_select: id=%s является администратором (%s), показываем развилку",
+            target_id, role,
         )
         await callback.message.edit_text(
             f"⚠️ {full_name} является администратором отдела {dept}.\n\n"
@@ -1843,8 +1840,8 @@ async def dismiss_demote_only_handler(callback: CallbackQuery, state: FSMContext
         position=position,
     )
     logger.info(
-        "dismiss_demote_only: %s (id=%s) понижен до user суперадмином %s",
-        full_name, target_id, callback.from_user.id,
+        "dismiss_demote_only: id=%s понижен до user суперадмином %s",
+        target_id, callback.from_user.id,
     )
 
     await set_commands_for_role(callback.bot, target_id, "user")
@@ -1917,8 +1914,8 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
                     "dismiss_confirm: не удалось сбросить команды после понижения для %s", target_id
                 )
             logger.info(
-                "dismiss_confirm: %s (id=%s) сначала понижен до user перед увольнением (guard)",
-                full_name, target_id,
+                "dismiss_confirm: id=%s сначала понижен до user перед увольнением (guard)",
+                target_id,
             )
     except Exception:
         error_logger.exception(

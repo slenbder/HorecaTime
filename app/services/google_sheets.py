@@ -300,10 +300,10 @@ class GoogleSheetsClient:
                 ),
             )
             logger.info(
-                "Обновлена заявка пользователя %s в строке %s, custom_position='%s'",
+                "Обновлена заявка пользователя %s в строке %s, custom_position_set=%s",
                 telegram_id,
                 row_idx,
-                custom_position,
+                bool(custom_position),
             )
             return row_idx
 
@@ -324,10 +324,10 @@ class GoogleSheetsClient:
             lambda ws: ws.update(f"A{next_row}:H{next_row}", [values], value_input_option="RAW"),
         )
         logger.info(
-            "Создана новая заявка пользователя %s в строке %s, custom_position='%s'",
+            "Создана новая заявка пользователя %s в строке %s, custom_position_set=%s",
             telegram_id,
             next_row,
-            custom_position,
+            bool(custom_position),
         )
         self._auto_resize_columns(ws)
         return next_row
@@ -523,6 +523,7 @@ class GoogleSheetsClient:
             dept = (user_info or {}).get("department", "?")
             pos = (user_info or {}).get("position", "?")
             logger.error(
+                "%s",
                 format_alert(
                     "ensure_user",
                     error="Пользователь не найден в Техлисте",
@@ -779,6 +780,7 @@ class GoogleSheetsClient:
             raise ValueError(f"Лист '{sheet_name}' не найден")
         except Exception as e:
             logger.error(
+                "%s",
                 format_alert(
                     "write_shift",
                     error=e,
@@ -897,6 +899,7 @@ class GoogleSheetsClient:
                 ws, all_values = self._fetch_worksheet_and_values(sheet_name)
             except WorksheetNotFound:
                 logger.error(
+                    "%s",
                     format_alert(
                         "write_check_filling",
                         error=f"лист '{sheet_name}' не найден",
@@ -914,6 +917,7 @@ class GoogleSheetsClient:
 
             if phantom_row is None:
                 logger.error(
+                    "%s",
                     format_alert(
                         "write_check_filling",
                         error=f"фантом {PHANTOM_CHECK_FILLING_ID} не найден в '{sheet_name}'",
@@ -948,6 +952,7 @@ class GoogleSheetsClient:
 
         except Exception:
             logger.exception(
+                "%s",
                 format_alert(
                     "write_check_filling",
                     error="необработанная ошибка",

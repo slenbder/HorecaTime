@@ -55,6 +55,15 @@ class TestScrubEvent:
         assert len(frames) == 3
         assert all("vars" not in f for f in frames)
 
+    def test_exception_value_removed_type_module_stacktrace_kept(self):
+        event = scrub_event(_full_event())
+        first, second = event["exception"]["values"]
+        assert "value" not in first and "value" not in second
+        assert (first["type"], first["module"]) == ("ValueError", "builtins")
+        assert second["type"] == "RuntimeError"
+        assert [f["function"] for f in first["stacktrace"]["frames"]] == ["outer", "inner"]
+        assert [f["function"] for f in second["stacktrace"]["frames"]] == ["cause"]
+
     def test_user_request_extra_breadcrumbs_removed(self):
         event = scrub_event(_full_event())
         for key in ("user", "request", "extra", "breadcrumbs"):
@@ -67,6 +76,7 @@ class TestScrubEvent:
         assert event["level"] == "error"
         assert event["logger"] == "app.utils.mirror"
         values = event["exception"]["values"]
+        assert all("value" not in v for v in values)
         assert [(v["type"], v.get("module")) for v in values] == [
             ("ValueError", "builtins"), ("RuntimeError", None),
         ]

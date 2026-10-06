@@ -608,8 +608,8 @@ async def _delayed_process_waiter(mgid: str) -> None:
             return
 
         logger.info(
-            "_delayed_process_waiter: mgid=%s, photos=%d, caption=%r",
-            mgid, len(photo_ids), caption,
+            "_delayed_process_waiter: mgid=%s, photos=%d, has_caption=%s",
+            mgid, len(photo_ids), bool(caption),
         )
 
         result = parse_shift(caption, "Официант")

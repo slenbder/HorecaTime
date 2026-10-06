@@ -11,6 +11,7 @@ def scrub_event(event, hint=None):
     Убирает из события Sentry всё, что может содержать данные пользователей:
       * logentry.params (аргументы лога); шаблон message остаётся;
       * vars (локальные переменные) во всех фреймах exception.values;
+      * value (текст исключения) во всех элементах exception.values;
       * user, request, extra, breadcrumbs.
     Тип исключения, модуль, имена функций и номера строк остаются.
     Отсутствие любых ключей и пустой event не приводят к ошибке.
@@ -25,6 +26,8 @@ def scrub_event(event, hint=None):
     exception = event.get("exception")
     values = exception.get("values") if isinstance(exception, dict) else None
     for value in values or []:
+        if isinstance(value, dict):
+            value.pop("value", None)
         stacktrace = value.get("stacktrace") if isinstance(value, dict) else None
         frames = stacktrace.get("frames") if isinstance(stacktrace, dict) else None
         for frame in frames or []:

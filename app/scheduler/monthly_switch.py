@@ -364,6 +364,7 @@ async def switch_month(bot: Bot, sheets_client, db_path: str) -> dict:
             await apply_future_rates(db_path, next_month, next_year)
         except Exception as future_err:
             logger.error(
+                "%s",
                 format_alert(
                     "switch_month/apply_future_rates",
                     error=future_err,

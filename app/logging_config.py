@@ -112,6 +112,7 @@ def _init_sentry() -> None:
     import sentry_sdk
     from sentry_sdk.integrations.logging import LoggingIntegration
     from sentry_sdk.integrations.asyncio import AsyncioIntegration
+    from app.utils.sentry_scrub import scrub_event
 
     sentry_sdk.init(
         dsn=SENTRY_DSN,
@@ -128,4 +129,8 @@ def _init_sentry() -> None:
             "TelegramNetworkError",
             "TelegramConnectionError",
         ],
+        include_local_variables=False,
+        send_default_pii=False,
+        max_breadcrumbs=0,
+        before_send=scrub_event,
     )

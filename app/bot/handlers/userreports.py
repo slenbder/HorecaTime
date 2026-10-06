@@ -6,9 +6,13 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, BufferedInputFile
 
-from app.db.models import get_user, get_user_rate, get_user_rate_history, get_check_filling_summary
+from app.db.models import (
+    get_user, get_user_rate, get_user_rate_history, get_check_filling_summary,
+    get_shifts_for_period,
+)
 from app.services.google_sheets import GoogleSheetsClient, MONTH_NAMES_RU
 from app.services.pdfservice import PDFService
+from app.services.shift_summary import summarize_shifts
 from app.utils.formatting import fmt_hours, fmt_money
 from config import DB_PATH, GOOGLE_CREDENTIALS_PATH, PHANTOM_HOURLY_RATE, SPREADSHEET_ID, SUPERADMIN_IDS, DEVELOPER_ID, SHEET_URL, POSITIONS_WITH_EXTRA
 
@@ -46,6 +50,19 @@ def _get_last_month_sheet_name() -> str:
     month = now.month - 1 if now.month > 1 else 12
     year = now.year if now.month > 1 else now.year - 1
     return f"{MONTH_NAMES_RU[month]} {year}"
+
+
+async def _load_hours_summary(
+    tg_id: int, year: int, month: int, *, require_shifts: bool = False,
+) -> dict | None:
+    """
+    Часы сотрудника за календарный месяц из SQLite (shifts), ключи как у
+    прежнего get_summary_hours. Нет смен: нули, либо None при require_shifts=True.
+    """
+    rows = await get_shifts_for_period(DB_PATH, tg_id, year, month, "full")
+    if require_shifts and not rows:
+        return None
+    return summarize_shifts(rows, year, month)
 
 
 def _build_runner_earnings_lines(
@@ -193,14 +210,8 @@ async def cmd_hours_first(message: Message):
 
     logger.info("hours_first: запрос от %s", tg_id)
 
-    if sheets_client is None:
-        await message.answer("📊 Ошибка подключения к таблице.")
-        return
-
-    data = sheets_client.get_summary_hours(tg_id, _get_current_sheet_name())
-    if data is None:
-        await message.answer("📊 Данные не найдены.")
-        return
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    data = await _load_hours_summary(tg_id, now.year, now.month)
 
     position = user_data.get("position") or None
     rate = await get_user_rate(DB_PATH, tg_id)
@@ -218,7 +229,6 @@ async def cmd_hours_first(message: Message):
         )
         return
 
-    now = datetime.now(ZoneInfo("Europe/Moscow"))
     lines = await _build_hours_first_lines(data, position, rate, now.year, now.month)
     await message.answer("\n".join(lines))
 
@@ -232,14 +242,8 @@ async def cmd_hours_second(message: Message):
 
     logger.info("hours_second: запрос от %s", tg_id)
 
-    if sheets_client is None:
-        await message.answer("📊 Ошибка подключения к таблице.")
-        return
-
-    data = sheets_client.get_summary_hours(tg_id, _get_current_sheet_name())
-    if data is None:
-        await message.answer("📊 Данные не найдены.")
-        return
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    data = await _load_hours_summary(tg_id, now.year, now.month)
 
     position = user_data.get("position") or None
     rate = await get_user_rate(DB_PATH, tg_id)
@@ -257,7 +261,6 @@ async def cmd_hours_second(message: Message):
         )
         return
 
-    now = datetime.now(ZoneInfo("Europe/Moscow"))
     lines = await _build_hours_second_lines(data, position, rate, now.year, now.month)
     await message.answer("\n".join(lines))
 
@@ -272,19 +275,16 @@ async def cmd_hours_last(message: Message):
     sheet_name = _get_last_month_sheet_name()
     logger.info("hours_last: запрос от %s, лист='%s'", tg_id, sheet_name)
 
-    if sheets_client is None:
-        await message.answer("📊 Ошибка подключения к таблице.")
-        return
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    prev_month = now.month - 1 if now.month > 1 else 12
+    prev_year = now.year if now.month > 1 else now.year - 1
 
-    data = sheets_client.get_summary_hours(tg_id, sheet_name)
+    data = await _load_hours_summary(tg_id, prev_year, prev_month, require_shifts=True)
     if data is None:
         await message.answer("📊 Данные за прошлый месяц недоступны.")
         return
 
     position = user_data.get("position") or None
-    now = datetime.now(ZoneInfo("Europe/Moscow"))
-    prev_month = now.month - 1 if now.month > 1 else 12
-    prev_year = now.year if now.month > 1 else now.year - 1
 
     rate = await get_user_rate_history(DB_PATH, tg_id, prev_month, prev_year)
     if rate is None:

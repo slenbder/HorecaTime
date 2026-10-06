@@ -14,6 +14,7 @@ from app.db.fsm_storage import SQLiteStorage
 from config import BOT_TOKEN, DB_PATH
 from app.logging_config import setup_logging
 from app.db.models import init_database
+from app.utils.telegram_session import ResilientAiohttpSession, wait_for_telegram
 from app.utils.error_alerts import (
     extract_context,
     is_critical_exception,
@@ -53,6 +54,7 @@ async def main():
 
     bot = Bot(
         token=BOT_TOKEN,
+        session=ResilientAiohttpSession(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher(storage=SQLiteStorage(db_path=DB_PATH))
@@ -149,6 +151,7 @@ async def main():
 
     logger.info("Бот HorecaTime запущен, начинаю поллинг")
     try:
+        await wait_for_telegram(bot)
         await dp.start_polling(bot)
     finally:
         scheduler.shutdown()

@@ -12,6 +12,7 @@ from app.db.models import (
     delete_shift,
     add_check_filling,
     get_check_filling_summary,
+    get_shifts_for_period,
 )
 from app.services.timeparsing import to_iso_date
 
@@ -221,3 +222,66 @@ class TestToIsoDate:
     def test_invalid_dates_raise(self, day, month, year):
         with pytest.raises(ValueError):
             to_iso_date(day, month, year)
+
+
+class TestGetShiftsForPeriod:
+
+    @pytest.mark.asyncio
+    async def test_boundary_day_15_vs_16(self, shifts_db):
+        await upsert_shift(shifts_db, 42, "2026-07-15", 8.0, 0.0, "user")
+        await upsert_shift(shifts_db, 42, "2026-07-16", 9.0, 0.0, "user")
+
+        first = await get_shifts_for_period(shifts_db, 42, 2026, 7, "first")
+        second = await get_shifts_for_period(shifts_db, 42, 2026, 7, "second")
+        assert [r["shift_date"] for r in first] == ["2026-07-15"]
+        assert [r["shift_date"] for r in second] == ["2026-07-16"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("year, month, last_day", [
+        (2026, 2, 28),   # февраль, невисокосный
+        (2024, 2, 29),   # февраль, високосный
+    ])
+    async def test_february_last_day_in_second_and_full(self, shifts_db, year, month, last_day):
+        last = f"{year:04d}-{month:02d}-{last_day:02d}"
+        await upsert_shift(shifts_db, 42, last, 7.0, 0.0, "user")
+        # день после конца месяца не должен попасть
+        next_month = f"{year:04d}-{month + 1:02d}-01"
+        await upsert_shift(shifts_db, 42, next_month, 5.0, 0.0, "user")
+
+        second = await get_shifts_for_period(shifts_db, 42, year, month, "second")
+        full = await get_shifts_for_period(shifts_db, 42, year, month, "full")
+        assert [r["shift_date"] for r in second] == [last]
+        assert [r["shift_date"] for r in full] == [last]
+
+    @pytest.mark.asyncio
+    async def test_other_employee_and_other_month_excluded(self, shifts_db):
+        await upsert_shift(shifts_db, 42, "2026-07-10", 8.0, 0.0, "user")
+        await upsert_shift(shifts_db, 99, "2026-07-10", 6.0, 0.0, "user")   # чужой сотрудник
+        await upsert_shift(shifts_db, 42, "2026-06-30", 5.0, 0.0, "user")   # другой месяц
+        await upsert_shift(shifts_db, 42, "2026-08-01", 5.0, 0.0, "user")   # другой месяц
+
+        rows = await get_shifts_for_period(shifts_db, 42, 2026, 7, "full")
+        assert [(r["telegram_id"], r["shift_date"]) for r in rows] == [(42, "2026-07-10")]
+
+    @pytest.mark.asyncio
+    async def test_empty_result_is_empty_list(self, shifts_db):
+        assert await get_shifts_for_period(shifts_db, 42, 2026, 7, "full") == []
+
+    @pytest.mark.asyncio
+    async def test_sorted_by_shift_date_and_row_format(self, shifts_db):
+        await upsert_shift(shifts_db, 42, "2026-07-20", 8.0, 1.0, "user")
+        await upsert_shift(shifts_db, 42, "2026-07-02", 6.0, 0.0, "user")
+        await upsert_shift(shifts_db, 42, "2026-07-11", 7.0, 0.0, "user")
+
+        rows = await get_shifts_for_period(shifts_db, 42, 2026, 7, "full")
+        assert [r["shift_date"] for r in rows] == ["2026-07-02", "2026-07-11", "2026-07-20"]
+        assert set(rows[0]) == {
+            "telegram_id", "shift_date", "hours", "extra_hours",
+            "source", "created_at", "updated_at",
+        }
+        assert rows[2]["hours"] == 8.0 and rows[2]["extra_hours"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_invalid_half_raises_value_error(self, shifts_db):
+        with pytest.raises(ValueError):
+            await get_shifts_for_period(shifts_db, 42, 2026, 7, "third")

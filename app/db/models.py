@@ -826,11 +826,10 @@ async def add_check_filling(db_path: str, fill_date: str, count: int) -> int:
     return total
 
 
-async def get_check_filling_summary(db_path: str, year: int, month: int, half: str) -> int:
+def _half_date_range(caller: str, year: int, month: int, half: str) -> tuple[str, str]:
     """
-    Сумма наполняемости чеков за половину/весь месяц.
-    half: "first" (дни 1-15), "second" (16-конец месяца), "full" (весь месяц).
-    Возвращает 0, если записей за диапазон нет.
+    ISO-границы периода месяца: "first" (дни 1-15), "second" (16-конец), "full".
+    Невалидный half → ValueError.
     """
     days_in_month = calendar.monthrange(year, month)[1]
     if half == "first":
@@ -840,10 +839,20 @@ async def get_check_filling_summary(db_path: str, year: int, month: int, half: s
     elif half == "full":
         start_day, end_day = 1, days_in_month
     else:
-        raise ValueError(f"get_check_filling_summary: недопустимый half='{half}'")
+        raise ValueError(f"{caller}: недопустимый half='{half}'")
+    return (
+        f"{year:04d}-{month:02d}-{start_day:02d}",
+        f"{year:04d}-{month:02d}-{end_day:02d}",
+    )
 
-    start_date = f"{year:04d}-{month:02d}-{start_day:02d}"
-    end_date = f"{year:04d}-{month:02d}-{end_day:02d}"
+
+async def get_check_filling_summary(db_path: str, year: int, month: int, half: str) -> int:
+    """
+    Сумма наполняемости чеков за половину/весь месяц.
+    half: "first" (дни 1-15), "second" (16-конец месяца), "full" (весь месяц).
+    Возвращает 0, если записей за диапазон нет.
+    """
+    start_date, end_date = _half_date_range("get_check_filling_summary", year, month, half)
 
     async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
         async with db.execute(
@@ -857,6 +866,28 @@ async def get_check_filling_summary(db_path: str, year: int, month: int, half: s
         year, month, half, start_date, end_date, total,
     )
     return total
+
+
+async def get_shifts_for_period(
+    db_path: str, telegram_id: int, year: int, month: int, half: str,
+) -> list[Dict]:
+    """
+    Смены сотрудника за половину/весь месяц, отсортированные по shift_date.
+    half: "first" (дни 1-15), "second" (16-конец месяца), "full" (весь месяц).
+    Формат строк — как у _shift_row_to_dict. Пустой период → [].
+    """
+    start_date, end_date = _half_date_range("get_shifts_for_period", year, month, half)
+
+    async with aiosqlite.connect(db_path, timeout=10.0, isolation_level=None) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT {_SHIFT_FIELDS} FROM shifts "
+            "WHERE telegram_id = ? AND shift_date BETWEEN ? AND ? "
+            "ORDER BY shift_date",
+            (telegram_id, start_date, end_date),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [_shift_row_to_dict(r) for r in rows]
 
 
 # --- Pending approvals: данные апрувов вместо callback_data (Фаза 2c) ---

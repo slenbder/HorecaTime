@@ -1,4 +1,4 @@
-"""Tests for summarize_shifts (расчёт часов из shifts, контракт get_summary_hours)."""
+"""Tests for summarize_shifts (расчёт часов из shifts, контракт ключей сводки)."""
 import pytest
 
 from app.services.shift_summary import summarize_shifts

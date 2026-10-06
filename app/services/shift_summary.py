@@ -5,7 +5,7 @@ _HALF_BOUNDARY_DAY = 15  # день <= 15 — первая половина (к�
 
 def summarize_shifts(rows: list[dict], year: int, month: int) -> dict[str, float]:
     """
-    Сводка часов сотрудника за месяц по строкам shifts (контракт get_summary_hours).
+    Сводка часов сотрудника за месяц по строкам shifts (контракт ключей: h_/ah_ first/second/total и h_weekend_*).
 
     rows — смены одного сотрудника за весь месяц, элементы с ключами
     shift_date ('YYYY-MM-DD'), hours, extra_hours (None трактуется как 0).

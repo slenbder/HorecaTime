@@ -57,7 +57,7 @@ async def _load_hours_summary(
 ) -> dict | None:
     """
     Часы сотрудника за календарный месяц из SQLite (shifts), ключи как у
-    прежнего get_summary_hours. Нет смен: нули, либо None при require_shifts=True.
+    прежнего чтения итогов из Sheets. Нет смен: нули, либо None при require_shifts=True.
     """
     rows = await get_shifts_for_period(DB_PATH, tg_id, year, month, "full")
     if require_shifts and not rows:

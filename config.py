@@ -50,6 +50,7 @@ SHEET_URL = os.getenv("SHEET_URL", "")
 
 # Sentry
 SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
+SENTRY_ENVIRONMENT: str = os.getenv("SENTRY_ENVIRONMENT", "production")
 
 # Фантомный сотрудник для наполняемости чеков
 PHANTOM_CHECK_FILLING_ID = 1984002026

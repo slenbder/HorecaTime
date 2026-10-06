@@ -106,7 +106,7 @@ def _init_telegram_handler() -> None:
 
 
 def _init_sentry() -> None:
-    from config import SENTRY_DSN
+    from config import SENTRY_DSN, SENTRY_ENVIRONMENT
     if not SENTRY_DSN:
         return
     import sentry_sdk
@@ -116,6 +116,7 @@ def _init_sentry() -> None:
 
     sentry_sdk.init(
         dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
         integrations=[
             LoggingIntegration(
                 level=logging.ERROR,

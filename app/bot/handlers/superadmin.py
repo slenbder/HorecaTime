@@ -333,8 +333,8 @@ async def cb_promote_select(callback: CallbackQuery, state: FSMContext):
     dept = employee["department"] or ""
 
     logger.info(
-        "promote_select: суперадмин %s выбрал сотрудника %s (%s)",
-        callback.from_user.id, employee_id, full_name,
+        "promote_select: суперадмин %s выбрал сотрудника %s",
+        callback.from_user.id, employee_id,
     )
 
     await state.update_data(promote_target_id=employee_id)
@@ -384,8 +384,8 @@ async def cb_promote_confirm(callback: CallbackQuery, state: FSMContext):
         position=position,
     )
     logger.info(
-        "promote_confirm: %s (id=%s) повышен до %s суперадмином %s",
-        full_name, employee_id, new_role, callback.from_user.id,
+        "promote_confirm: id=%s повышен до %s суперадмином %s",
+        employee_id, new_role, callback.from_user.id,
     )
 
     await set_commands_for_role(callback.bot, employee_id, new_role)
@@ -512,8 +512,8 @@ async def cb_demote_select(callback: CallbackQuery, state: FSMContext):
     dept = employee["department"] or ""
 
     logger.info(
-        "demote_select: суперадмин %s выбрал администратора %s (%s)",
-        callback.from_user.id, employee_id, full_name,
+        "demote_select: суперадмин %s выбрал администратора %s",
+        callback.from_user.id, employee_id,
     )
 
     await state.update_data(demote_target_id=employee_id)
@@ -557,8 +557,8 @@ async def cb_demote_confirm(callback: CallbackQuery, state: FSMContext):
         position=position,
     )
     logger.info(
-        "demote_confirm: %s (id=%s) понижен до user суперадмином %s",
-        full_name, employee_id, callback.from_user.id,
+        "demote_confirm: id=%s понижен до user суперадмином %s",
+        employee_id, callback.from_user.id,
     )
 
     await set_commands_for_role(callback.bot, employee_id, "user")

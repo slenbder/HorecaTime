@@ -102,7 +102,7 @@ try:
     sheets_client = GoogleSheetsClient()
     logger.info("GoogleSheetsClient успешно инициализирован")
 except Exception as e:
-    logger.exception(f"Ошибка при инициализации GoogleSheetsClient: {e}")
+    logger.exception("Ошибка при инициализации GoogleSheetsClient: %s", e)
     sheets_client = None
 
 
@@ -169,7 +169,7 @@ async def cmd_start(message: Message, state: FSMContext):
             await state.clear()
             return
     except Exception as e:
-        logger.exception(f"Ошибка при проверке авторизации пользователя {tg_id}: {e}")
+        logger.exception("Ошибка при проверке авторизации пользователя %s: %s", tg_id, e)
         await message.answer(
             "Произошла ошибка при проверке авторизации. Попробуй ещё раз позже."
         )
@@ -392,7 +392,7 @@ async def process_fio(message: Message, state: FSMContext):
         await _notify_mirror_failure(
             message.bot,
             f"регистрация {tg_id}, отдел={department}, позиция={position}, "
-            f"должность={custom_position or '—'}",
+            f"кастомная должность: {'есть' if bool(custom_position) else 'нет'}",
         )
 
     # Вычисляем отображаемые позицию и должность
@@ -460,7 +460,7 @@ async def process_fio(message: Message, state: FSMContext):
                 )
                 logger.info(f"Заявка отправлена админу {admin_id}")
             except Exception as e:
-                logger.exception(f"Не удалось отправить заявку админу {admin_id}: {e}")
+                logger.exception("Не удалось отправить заявку админу %s: %s", admin_id, e)
     else:
         logger.warning("Нет ID админов для отправки заявки")
 
@@ -1326,6 +1326,7 @@ async def _register_user_in_sheets(
         )
     except Exception as e:
         logger.exception(
+            "%s",
             format_alert(
                 "register_user_in_sheets",
                 error=e,
@@ -1469,7 +1470,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             await approve_employee(DB_PATH, user_tg_id)
             await set_employee_role(DB_PATH, user_tg_id, "user")
         except Exception:
-            logger.exception(f"approve: ошибка записи одобрения в SQLite для {user_tg_id}")
+            logger.exception("approve: ошибка записи одобрения в SQLite для %s", user_tg_id)
             await callback.answer(
                 "❌ Ошибка сохранения одобрения. Попробуйте ещё раз.", show_alert=True
             )
@@ -1488,8 +1489,8 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
             )
             logger.info(f"Синхронизация в график завершена для {user_tg_id}")
         except Exception:
-            logger.exception(f"approve: зеркало Sheets не обновлено для {user_tg_id}")
-            await _notify_mirror_failure(callback.bot, f"апрув {user_tg_id} ({fio})")
+            logger.exception("approve: зеркало Sheets не обновлено для %s", user_tg_id)
+            await _notify_mirror_failure(callback.bot, f"апрув {user_tg_id}")
 
         # Настройка доступа (ставка + кеш + команды)
         await _setup_user_access(
@@ -1513,7 +1514,7 @@ async def process_approve(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Пользователь одобрен!")
 
     except Exception as e:
-        logger.exception(f"Ошибка при одобрении заявки: {e}")
+        logger.exception("Ошибка при одобрении заявки: %s", e)
         await callback.answer("Ошибка при обработке заявки", show_alert=True)
 
 
@@ -1565,7 +1566,7 @@ async def process_reject(callback: CallbackQuery):
         await callback.answer("Заявка отклонена")
 
     except Exception as e:
-        logger.exception(f"Ошибка при отклонении заявки: {e}")
+        logger.exception("Ошибка при отклонении заявки: %s", e)
         await callback.answer("Ошибка при обработке заявки", show_alert=True)
 
 
@@ -1951,15 +1952,15 @@ async def dismiss_confirm_handler(callback: CallbackQuery, state: FSMContext):
         try:
             success = sheets_client.dismiss_employee(target_id)
             if not success:
-                await _notify_mirror_failure(callback.bot, f"увольнение {target_id} ({full_name})")
+                await _notify_mirror_failure(callback.bot, f"увольнение {target_id}")
         except Exception:
             error_logger.exception("dismiss: ошибка при вызове dismiss_employee для %s", target_id)
-            await _notify_mirror_failure(callback.bot, f"увольнение {target_id} ({full_name})")
+            await _notify_mirror_failure(callback.bot, f"увольнение {target_id}")
     else:
         error_logger.error(
             "dismiss: sheets_client не инициализирован, зеркало пропущено для %s", target_id
         )
-        await _notify_mirror_failure(callback.bot, f"увольнение {target_id} ({full_name})")
+        await _notify_mirror_failure(callback.bot, f"увольнение {target_id}")
 
     # e) Удалить из SQLite users (кеш ролей, уйдёт в Фазе 3)
     try:

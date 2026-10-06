@@ -36,11 +36,6 @@ def get_next_sheet_name() -> tuple[str, int, int]:
     return f"{MONTH_NAMES_RU[m]} {now.year}", m, now.year
 
 
-def _get_current_sheet_name() -> str:
-    now = datetime.now(ZoneInfo("Europe/Moscow"))
-    return f"{MONTH_NAMES_RU[now.month]} {now.year}"
-
-
 # Обратный словарь: "Январь" → 1, "Февраль" → 2, ...
 _MONTH_NAME_TO_NUM = {name: num for num, name in MONTH_NAMES_RU.items()}
 

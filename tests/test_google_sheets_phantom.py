@@ -1,5 +1,5 @@
-"""Тесты функций write_check_filling_to_phantom и get_phantom_checks_summary."""
-from unittest.mock import MagicMock, patch
+"""Тесты функции write_check_filling_to_phantom."""
+from unittest.mock import MagicMock
 
 import gspread.utils
 import pytest
@@ -104,82 +104,3 @@ class TestWriteCheckFillingToPhantom:
         client.write_check_filling_to_phantom("31.05.26", 1)
         _, col_day31 = gspread.utils.a1_to_rowcol(mock_ws.update.call_args[0][1])
         assert col_day31 == 35  # 19 + (31-15) = 35
-
-
-# ---------------------------------------------------------------------------
-# Tests: get_phantom_checks_summary
-# ---------------------------------------------------------------------------
-
-class TestGetPhantomChecksSummary:
-
-    def _setup_ws(self, client, col: int, cell_value: str, phantom_row_idx: int = 5) -> tuple:
-        """Создаёт мок с cell_value в ячейке (phantom_row_idx, col) фантома."""
-        mock_ws, all_values = _make_sheet_with_phantom(phantom_row_idx=phantom_row_idx)
-        # Вставляем значение непосредственно в all_values (col — 1-based)
-        all_values[phantom_row_idx - 1][col - 1] = cell_value
-        client._spreadsheet.worksheet.return_value = mock_ws
-        return client, mock_ws
-
-    def test_get_phantom_checks_first(self, sheets_client):
-        """period='first' → читает колонку 19 (S), возвращает 47."""
-        client, mock_ws = self._setup_ws(sheets_client, col=19, cell_value="47")
-
-        result = client.get_phantom_checks_summary("first")
-
-        assert result == 47
-        mock_ws.cell.assert_not_called()
-
-    def test_get_phantom_checks_second(self, sheets_client):
-        """period='second' → читает колонку 36 (AJ), возвращает 23."""
-        client, mock_ws = self._setup_ws(sheets_client, col=36, cell_value="23")
-
-        result = client.get_phantom_checks_summary("second")
-
-        assert result == 23
-        mock_ws.cell.assert_not_called()
-
-    def test_get_phantom_checks_last(self, sheets_client):
-        """period='last' → читает колонку 37 (AK) прошлого месяца, возвращает 15."""
-        client, mock_ws = self._setup_ws(sheets_client, col=37, cell_value="15")
-
-        with patch("app.services.google_sheets.datetime") as mock_dt:
-            mock_now = MagicMock()
-            mock_now.month = 5
-            mock_now.year = 2026
-            mock_dt.now.return_value = mock_now
-
-            result = client.get_phantom_checks_summary("last")
-
-        assert result == 15
-        mock_ws.cell.assert_not_called()
-
-    def test_get_phantom_checks_not_found(self, sheets_client):
-        """Фантом не найден → возвращает 0."""
-        client = sheets_client
-        mock_ws = MagicMock()
-        mock_ws.get_all_values.return_value = [
-            ["Иванов", "11111", "Официант"] + [""] * 5,
-        ]
-        client._spreadsheet.worksheet.return_value = mock_ws
-
-        result = client.get_phantom_checks_summary("first")
-
-        assert result == 0
-
-    def test_get_phantom_checks_float_value(self, sheets_client):
-        """Значение '47.0' (формула) → парсится в 47."""
-        client, _ = self._setup_ws(sheets_client, col=36, cell_value="47.0")
-        result = client.get_phantom_checks_summary("second")
-        assert result == 47
-
-    def test_get_phantom_checks_complex_formula_value(self, sheets_client):
-        """S содержит '2/0' (complex formula H/AH) → извлекается H-часть = 2."""
-        client, _ = self._setup_ws(sheets_client, col=19, cell_value="2/0")
-        result = client.get_phantom_checks_summary("first")
-        assert result == 2
-
-    def test_get_phantom_checks_comma_locale(self, sheets_client):
-        """Значение '47,0' (русская локаль) → парсится в 47."""
-        client, _ = self._setup_ws(sheets_client, col=19, cell_value="47,0")
-        result = client.get_phantom_checks_summary("first")
-        assert result == 47

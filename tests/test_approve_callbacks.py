@@ -196,7 +196,7 @@ class TestApproveFilllingCallback:
 
     @pytest.mark.asyncio
     async def test_approve_filling_second_half_period(self):
-        """День > 15 → период 'second' передаётся в get_phantom_checks_summary."""
+        """День > 15 → период 'second' передаётся в get_check_filling_summary."""
         from app.bot.handlers.auth import approve_filling_callback
         import app.bot.handlers.auth as auth_module
 
